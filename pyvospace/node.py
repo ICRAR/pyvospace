@@ -45,7 +45,10 @@ def generate_property_xml(node_property):
     return ''.join(node_property_array)
 
 
-def generate_create_node_response(node_path, node_type, node_property, node_views):
+def generate_create_node_response(node_path,
+                                  node_type,
+                                  node_property,
+                                  node_views):
     xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
           f' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
@@ -55,6 +58,30 @@ def generate_create_node_response(node_path, node_type, node_property, node_view
           f'<vos:accepts>{ generate_accept_xml(node_views) }</vos:accepts>' \
           f'<vos:provides/><vos:capabilities/></vos:node>'
     return xml
+
+
+async def delete_node(db_pool, path):
+
+    path_array = list(filter(None, path.split('/')))
+    path_tree = '.'.join(path_array)
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            delete_result = await conn.fetch("select * from nodes "
+                                             "where path <@ $1 for update",
+                                             path_tree)
+
+            if len(delete_result) == 0:
+                raise VOSpaceError(404, f"Node Not Found. {path}")
+
+            for row in delete_result:
+                if row['type'] == NodeType.LinkNode:
+                    raise VOSpaceError(400, f"Link Found. "
+                                            f"Link Node {row['name']} found in path.")
+
+            await conn.execute("delete from nodes "
+                               "where path <@ $1",
+                               path_tree)
 
 
 async def create_node(db_pool, xml_text, url_path):
@@ -114,16 +141,16 @@ async def create_node(db_pool, xml_text, url_path):
                                           user_path_parent_tree)
 
                 if user_path_parent_len != len(result):
-                    raise VOSpaceError(404, f"ContainerNotFound. "
+                    raise VOSpaceError(404, f"Container Not Found. "
                                             f"Container path {url_path} does not exist.")
 
                 for row in result:
                     if row['type'] == NodeType.LinkNode:
-                        raise VOSpaceError(400, f"LinkFound. "
+                        raise VOSpaceError(400, f"Link Found. "
                                                 f"Link Node {row['name']} found in path.")
 
                     if row['type'] != NodeType.ContainerNode:
-                        raise VOSpaceError(404, f"ContainerNotFound. "
+                        raise VOSpaceError(404, f"Container Not Found. "
                                                 f"{row['name']} is not a container.")
 
                 node_result = await conn.fetchrow(("INSERT INTO nodes (type, name, path) "

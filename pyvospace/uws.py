@@ -31,7 +31,26 @@ PhaseLookup = {0: 'PENDING',
                9: 'ARCHIVED'}
 
 
-def generate_uws_job_info(job_id, phase, destruction, job_info):
+def generate_uws_results(results):
+    if not results:
+        return ''
+    return f"<uws:result>{results}</uws:result>"
+
+
+def generate_uws_error(errors):
+    if not errors:
+        return ''
+
+    return f"<uws:errorSummary><uws:message>{errors}" \
+           f"</uws:message></uws:errorSummary>"
+
+
+def generate_uws_job_xml(job_id,
+                         phase,
+                         destruction,
+                         job_info,
+                         results=None,
+                         errors=None):
     xml = f'<?xml version = "1.0" encoding = "UTF-8"?>' \
     f'<uws:job xmlns:uws="http://www.ivoa.net/xml/UWS/v1.0" xmlns:xlink="http://www.w3.org/1999/xlink">' \
     f'<uws:jobId>{job_id}</uws:jobId>' \
@@ -43,7 +62,8 @@ def generate_uws_job_info(job_id, phase, destruction, job_info):
     f'<uws:executionDuration>43200</uws:executionDuration>' \
     f'<uws:destruction>{destruction}</uws:destruction>' \
     f'<uws:parameters/>' \
-    f'<uws:results/>' \
+    f'{generate_uws_results(results)}' \
+    f'{generate_uws_error(errors)}' \
     f'<uws:jobInfo>{job_info}</uws:jobInfo>' \
     f'</uws:job>'
     return xml
@@ -63,9 +83,10 @@ class UWSJobExecutor(object):
         try:
             await set_uws_phase(db_pool, job['id'], UWSPhase.Executing)
             await func(db_pool, job)
+            await set_uws_phase(db_pool, job['id'], UWSPhase.Completed)
 
         except VOSpaceError as e:
-            await set_uws_error(db_pool, job['id'], e.error)
+            await set_uws_phase(db_pool, job['id'], UWSPhase.Error, e.error)
 
     def _done(self, task):
         del self.job_tasks[task]
@@ -78,12 +99,7 @@ async def create_uws_job(db_pool, job_info):
             result = await conn.fetchrow("insert into uws_jobs (phase, destruction, job_info) "
                                          "values ($1, $2, $3) returning id",
                                          UWSPhase.Pending, destruction, job_info)
-
-            xml = generate_uws_job_info(result['id'],
-                                        UWSPhase.Pending,
-                                        destruction,
-                                        job_info)
-            return xml
+            return result['id']
 
 
 async def get_uws_job(db_pool, job_id):
@@ -98,15 +114,9 @@ async def get_uws_job(db_pool, job_id):
             return result
 
 
-async def set_uws_phase(db_pool, job_id, phase):
+async def set_uws_phase(db_pool, job_id, phase, error=None):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("update uws_jobs set phase=$1 where id=$2",
-                                phase, job_id)
+            await conn.execute("update uws_jobs set phase=$2, error=$3 where id=$1",
+                               job_id, phase, error)
 
-
-async def set_uws_error(db_pool, job_id, error):
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(f"update uws_jobs set phase={UWSPhase.Error}, error=$1 where id=$2",
-                                error, job_id)

@@ -4,8 +4,9 @@ import configparser
 from aiohttp import web
 
 from .exception import VOSpaceError
-from .node import create_node
-from .uws import UWSJobExecutor, create_uws_job, get_uws_job, PhaseLookup
+from .node import create_node, delete_node
+from .uws import UWSJobExecutor, \
+    create_uws_job, get_uws_job, generate_uws_job_xml, PhaseLookup
 from .transfer import do_transfer
 
 class VOSpaceServer(web.Application):
@@ -23,9 +24,11 @@ class VOSpaceServer(web.Application):
         self.router.add_post('/vospace/transfers',
                              self.transfer_node)
         self.router.add_get('/vospace/transfers/{job_id}',
-                            self.get_transfer_job_phase)
-        self.router.add_post('/vospace/transfers/{job_id}/phase',
-                             self.transfer_node_job_phase)
+                            self.get_transfer_job)
+        self.router.add_route('*', '/vospace/transfers/{job_id}/phase',
+                              self.transfer_node_job_phase)
+        self.router.add_get('/vospace/transfers/{job_id}/error',
+                            self.get_transfer_job)
 
     @classmethod
     async def create(cls, config_file, *args, **kwargs):
@@ -59,18 +62,13 @@ class VOSpaceServer(web.Application):
     async def delete_node(self, request):
         try:
             url_path = request.path.replace('/vospace/nodes', '')
-            path_array = list(filter(None, url_path.split('/')))
-            path_tree = '.'.join(path_array)
 
-            async with self.db_pool.acquire() as conn:
-                async with conn.transaction():
-                    move_tree_result = await conn.fetch("select * from nodes "
-                                                        "where path <@ $1",
-                                                        path_tree)
+            await delete_node(self.db_pool, url_path)
 
-                    print(move_tree_result)
+            return web.Response(status=204)
 
-            return web.Response(status=200)
+        except VOSpaceError as f:
+            return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
             return web.Response(status=500)
@@ -79,34 +77,38 @@ class VOSpaceServer(web.Application):
         try:
             xml_text = await request.text()
 
-            xml_response = await create_uws_job(self.db_pool,
-                                                xml_text)
+            id = await create_uws_job(self.db_pool,
+                                      xml_text)
 
-            return web.Response(status=200,
-                                content_type='text/xml',
-                                text=xml_response)
+            return web.HTTPSeeOther(location=f'/vospace/transfers/{id}')
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            print(e)
             return web.Response(status=500)
 
-    async def get_transfer_job_phase(self, request):
+    async def get_transfer_job(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
 
             job = await get_uws_job(self.db_pool, job_id)
 
-            return web.Response(status=200, text=PhaseLookup[job['phase']])
+            xml = generate_uws_job_xml(job['id'],
+                                       job['phase'],
+                                       job['destruction'],
+                                       job['job_info'],
+                                       None,
+                                       job['error'])
+
+            return web.Response(status=200,
+                                content_type='text/xml',
+                                text=xml)
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
     async def transfer_node_job_phase(self, request):
