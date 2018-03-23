@@ -1,0 +1,252 @@
+import asyncpg
+
+import xml.etree.ElementTree as ET
+
+from urllib.parse import urlparse
+from collections import namedtuple
+from xml.etree.ElementTree import ParseError
+
+from .exception import VOSpaceError
+
+
+Node_Type = namedtuple('NodeType', 'Node '
+                                   'DataNode '
+                                   'UnstructuredDataNode  '
+                                   'StructuredDataNode '
+                                   'ContainerNode '
+                                   'LinkNode')
+
+NodeLookup = {'vos:Node': 0,
+              'vos:DataNode': 1,
+              'vos:UnstructuredDataNode': 2,
+              'vos:StructuredDataNode': 3,
+              'vos:ContainerNode': 4,
+              'vos:LinkNode': 5}
+
+NodeTextLookup = {0: 'vos:Node',
+                  1: 'vos:DataNode',
+                  2: 'vos:UnstructuredDataNode',
+                  3: 'vos:StructuredDataNode',
+                  4: 'vos:ContainerNode',
+                  5: 'vos:LinkNode'}
+
+NodeType = Node_Type(0, 1, 2, 3, 4, 5)
+
+Property = ['ivo://ivoa.net/vospace/core#description',
+            'ivo://ivoa.net/vospace/core#title']
+
+Views = ['ivo://ivoa.net/vospace/core#anyview']
+Provides = ['ivo://ivoa.net/vospace/core#binaryview']
+
+NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
+
+VOSpaceName = 'vos://icrar.org!vospace'
+
+
+def generate_view_xml(node_views):
+    node_view_array = []
+    for view in node_views:
+        node_view_array.append(f'<vos:view uri="{view}"/>')
+    return ''.join(node_view_array)
+
+
+def generate_property_xml(node_property):
+    node_property_array = []
+    for prop in node_property:
+        uri = prop['uri']
+        value = prop['value']
+        ro = prop['read_only']
+        node_property_array.append(f'<vos:property uri="{uri}" '
+                                   f'readOnly="{"true" if ro else "false"}">'
+                                   f'{value}</vos:property>')
+    return ''.join(node_property_array)
+
+
+def generate_node_summary_xml(nodes):
+    if not nodes:
+        return ''
+
+    node_array = []
+    for node in nodes:
+        uri = node['path'].replace('.', '/')
+        uri_str = f"{VOSpaceName}/{uri}"
+        node_type = node['type']
+        node_array.append(f'<vos:node uri="{uri_str}" '
+                          f'xsi:type="{NodeTextLookup[node_type]}"/>')
+    return f"<vos:nodes>{''.join(node_array)}</vos:nodes>"
+
+
+def generate_node_response(node_path,
+                           node_type,
+                           node_property=[],
+                           node_accepts_views=[],
+                           node_provides_views=[],
+                           node_container=[]):
+    xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
+          f' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
+          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
+          f' xsi:type="{node_type}"' \
+          f' uri="{VOSpaceName}/{node_path}">' \
+          f'<vos:properties>{ generate_property_xml(node_property) }</vos:properties>' \
+          f'<vos:accepts>{ generate_view_xml(node_accepts_views) }</vos:accepts>' \
+          f'<vos:provides>{ generate_view_xml(node_provides_views) }</vos:provides>' \
+          f'<vos:capabilities/>' \
+          f'{generate_node_summary_xml(node_container)}' \
+          f'</vos:node>'
+    return xml
+
+
+async def get_node(db_pool, path, params):
+    path_array = list(filter(None, path.split('/')))
+
+    if len(path_array) == 0:
+        raise VOSpaceError(400, f"Invalid URI. "
+                                f"Path is empty")
+
+    path_tree = '.'.join(path_array)
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            results = await conn.fetch("select * from nodes "
+                                       "where path <@ $1 for update",
+                                        path_tree)
+            if len(results) == 0:
+                raise VOSpaceError(404, f"Node Not Found. {path}")
+
+            properties = await conn.fetch("select * from properties "
+                                          "where node_id=$1", results[0]['id'])
+
+    node_type = NodeTextLookup[results[0]['type']]
+    # remove root element in tree so we can output children
+    results.pop(0)
+
+    xml_response = generate_node_response(path,
+                                          node_type,
+                                          properties,
+                                          Views,
+                                          Provides,
+                                          results)
+    return xml_response
+
+
+async def delete_node(db_pool, path):
+
+    path_array = list(filter(None, path.split('/')))
+    path_tree = '.'.join(path_array)
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            '''delete_result = await conn.fetch("select * from nodes "
+                                             "where path <@ $1 for update",
+                                             path_tree)
+
+            if len(delete_result) == 0:
+                raise VOSpaceError(404, f"Node Not Found. {path}")'''
+
+            await conn.execute("delete from nodes "
+                               "where path <@ $1",
+                               path_tree)
+
+
+async def create_node(db_pool, xml_text, url_path):
+    try:
+        root = ET.fromstring(xml_text)
+
+        uri = root.attrib.get('uri', None)
+        if uri is None:
+            raise VOSpaceError(400, "Invalid URI. "
+                                    "URI does not exist.")
+
+        node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema}type', None)
+        if node_type is None:
+            node_type = NodeType.Node # if not specified then default is Node
+            node_type_text = 'vos:Node'
+        else:
+            node_type_text = node_type
+            node_type = NodeLookup.get(node_type_text, None)
+            if node_type is None:
+                raise VOSpaceError(400, f"Type Not Supported. "
+                                        f"Invalid type.")
+
+        uri_path = urlparse(uri)
+
+        if '.' in url_path:
+            raise VOSpaceError(400, f"Invalid URI. "
+                                    f"Invalid character: '.' in URI")
+
+        # make sure the request path and the URL are the same
+        # exclude '.' characters as they are used in ltree
+        if url_path != uri_path.path:
+            raise VOSpaceError(400, f"Invalid URI. "
+                                    f"URI node path does not "
+                                    f"match request: {url_path} != {uri_path.path}")
+
+        user_props_insert = []
+        user_props_dict = []
+        for properties in root.findall('vos:properties', NS):
+            for node_property in properties.findall('vos:property', NS):
+                prop_uri = node_property.attrib.get('uri', None)
+                if prop_uri is not None:
+                    prop_uri = prop_uri.lower()
+                    if prop_uri in Property:
+                        user_props_insert.append([prop_uri, node_property.text, True])
+                        user_props_dict.append({'uri': prop_uri,
+                                                'value': node_property.text,
+                                                 'read_only': True})
+
+        # remove empty entries as a result of strip
+        user_path = list(filter(None, url_path.split('/')))
+
+        if len(user_path) == 0:
+            raise VOSpaceError(400, f"Invalid URI. "
+                                    f"Path is empty")
+
+        user_path_parent = user_path[:-1]
+        node_name = user_path[-1]
+
+        user_path_parent_tree = '.'.join(user_path_parent)
+        user_path_tree = '.'.join(user_path)
+
+        user_path_parent_len = len(user_path_parent)
+
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                result = await conn.fetch("SELECT id, type, name, path, nlevel(path) "
+                                          "FROM nodes WHERE path @> $1 for update",
+                                          user_path_parent_tree)
+
+                if user_path_parent_len != len(result):
+                    raise VOSpaceError(404, f"Container Not Found. "
+                                            f"Container path {url_path} does not exist.")
+
+                for row in result:
+                    if row['type'] == NodeType.LinkNode:
+                        raise VOSpaceError(400, f"Link Found. "
+                                                f"Link Node {row['name']} found in path.")
+
+                    if row['type'] != NodeType.ContainerNode:
+                        raise VOSpaceError(404, f"Container Not Found. "
+                                                f"{row['name']} is not a container.")
+
+                node_result = await conn.fetchrow(("INSERT INTO nodes (type, name, path) "
+                                                   "VALUES ($1, $2, $3) RETURNING id"),
+                                                   node_type, node_name, user_path_tree)
+                for prop in user_props_insert:
+                    prop.append(node_result['id'])
+
+                await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_id) "
+                                        "VALUES ($1, $2, $3, $4)"),
+                                       user_props_insert)
+
+        xml_response = generate_node_response(node_name,
+                                              node_type_text,
+                                              user_props_dict,
+                                              Views)
+
+        return xml_response
+
+    except ParseError as p:
+        raise VOSpaceError(500, f"Internal Error. XML error: {str(p)}.")
+
+    except asyncpg.exceptions.UniqueViolationError as f:
+        raise VOSpaceError(409, f"Duplicate Node. {node_name} already exists.")

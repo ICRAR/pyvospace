@@ -91,6 +91,12 @@ class UWSJobExecutor(object):
     def _done(self, task):
         del self.job_tasks[task]
 
+    async def close(self):
+        while True:
+            if len(self.job_tasks) == 0:
+                return
+            await asyncio.sleep(0.25)
+
 
 async def create_uws_job(db_pool, job_info):
     async with db_pool.acquire() as conn:
