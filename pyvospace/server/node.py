@@ -86,7 +86,7 @@ def generate_node_response(node_path,
           f' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           f' xsi:type="{node_type}"' \
-          f' uri="{VOSpaceName}/{node_path}">' \
+          f' uri="{VOSpaceName}{node_path}">' \
           f'<vos:properties>{ generate_property_xml(node_property) }</vos:properties>' \
           f'<vos:accepts>{ generate_view_xml(node_accepts_views) }</vos:accepts>' \
           f'<vos:provides>{ generate_view_xml(node_provides_views) }</vos:provides>' \
@@ -97,6 +97,26 @@ def generate_node_response(node_path,
 
 
 async def get_node(db_pool, path, params):
+
+    detail = params.get('detail', 'max')
+    if detail:
+        if detail not in ['min', 'max', 'properties']:
+            raise VOSpaceError(400, f'Invalid URI. '
+                                    f'detail invalid: {detail}')
+
+    limit_str = ''
+    limit = params.get('limit', None)
+    if limit:
+        try:
+            limit_int = int(limit)
+            if limit_int <= 0:
+                raise Exception()
+            # add +1 to include the root element when doing the limit query
+            limit_str = f'limit {limit_int+1}'
+        except:
+            raise VOSpaceError(400, f'Invalid URI. '
+                                    f'limit invalid: {limit}')
+
     path_array = list(filter(None, path.split('/')))
 
     if len(path_array) == 0:
@@ -105,26 +125,41 @@ async def get_node(db_pool, path, params):
 
     path_tree = '.'.join(path_array)
 
+    properties = []
+    views = []
+    provides = []
+
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            results = await conn.fetch("select * from nodes "
-                                       "where path <@ $1 for update",
-                                        path_tree)
+            results = await conn.fetch(f"select * from nodes "
+                                       f"where path <@ $1 and "
+                                       f"nlevel(path)-nlevel($1)<=1 "
+                                       f"order by path asc for update {limit_str}",
+                                       path_tree)
             if len(results) == 0:
                 raise VOSpaceError(404, f"Node Not Found. {path}")
 
-            properties = await conn.fetch("select * from properties "
-                                          "where node_id=$1", results[0]['id'])
+            if detail != 'min':
+                properties = await conn.fetch("select * from properties "
+                                              "where node_id=$1", results[0]['id'])
 
-    node_type = NodeTextLookup[results[0]['type']]
+    node_type_int = results[0]['type']
+    node_type = NodeTextLookup[node_type_int]
+    if NodeType.Node <= node_type_int <= NodeType.ContainerNode:
+        if detail == 'max':
+            views = Views
+            provides = Provides
+
     # remove root element in tree so we can output children
     results.pop(0)
+    if limit:
+        results = results[:int(limit)]
 
     xml_response = generate_node_response(path,
                                           node_type,
                                           properties,
-                                          Views,
-                                          Provides,
+                                          views,
+                                          provides,
                                           results)
     return xml_response
 
@@ -157,7 +192,7 @@ async def create_node(db_pool, xml_text, url_path):
             raise VOSpaceError(400, "Invalid URI. "
                                     "URI does not exist.")
 
-        node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema}type', None)
+        node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
         if node_type is None:
             node_type = NodeType.Node # if not specified then default is Node
             node_type_text = 'vos:Node'
@@ -192,7 +227,7 @@ async def create_node(db_pool, xml_text, url_path):
                         user_props_insert.append([prop_uri, node_property.text, True])
                         user_props_dict.append({'uri': prop_uri,
                                                 'value': node_property.text,
-                                                 'read_only': True})
+                                                'read_only': True})
 
         # remove empty entries as a result of strip
         user_path = list(filter(None, url_path.split('/')))
