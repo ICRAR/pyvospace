@@ -111,15 +111,18 @@ async def create_uws_job(db_pool, job_info):
 
 
 async def get_uws_job(db_pool, job_id):
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            result = await conn.fetchrow("select * from uws_jobs where id=$1",
-                                         job_id)
-            if not result:
-                raise VOSpaceError(400, f"Invalid Request. "
-                                        f"UWS job {job_id} does not exist.")
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                result = await conn.fetchrow("select * from uws_jobs where id=$1",
+                                             job_id)
+                if not result:
+                    raise VOSpaceError(400, f"Invalid Request. "
+                                            f"UWS job {job_id} does not exist.")
 
-            return result
+                return result
+    except ValueError as e:
+        raise VOSpaceError(400, f"Invalid jobId: {str(e)}")
 
 
 async def set_uws_phase(db_pool, job_id, phase, error=None):

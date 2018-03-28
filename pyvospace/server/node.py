@@ -141,7 +141,7 @@ async def get_node(db_pool, path, params):
 
             if detail != 'min':
                 properties = await conn.fetch("select * from properties "
-                                              "where node_id=$1", results[0]['id'])
+                                              "where node_path=$1", results[0]['path'])
 
     node_type_int = results[0]['type']
     node_type = NodeTextLookup[node_type_int]
@@ -171,13 +171,6 @@ async def delete_node(db_pool, path):
 
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            '''delete_result = await conn.fetch("select * from nodes "
-                                             "where path <@ $1 for update",
-                                             path_tree)
-
-            if len(delete_result) == 0:
-                raise VOSpaceError(404, f"Node Not Found. {path}")'''
-
             await conn.execute("delete from nodes "
                                "where path <@ $1",
                                path_tree)
@@ -246,7 +239,7 @@ async def create_node(db_pool, xml_text, url_path):
 
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                result = await conn.fetch("SELECT id, type, name, path, nlevel(path) "
+                result = await conn.fetch("SELECT type, name, path, nlevel(path) "
                                           "FROM nodes WHERE path @> $1 for update",
                                           user_path_parent_tree)
 
@@ -264,12 +257,12 @@ async def create_node(db_pool, xml_text, url_path):
                                                 f"{row['name']} is not a container.")
 
                 node_result = await conn.fetchrow(("INSERT INTO nodes (type, name, path) "
-                                                   "VALUES ($1, $2, $3) RETURNING id"),
+                                                   "VALUES ($1, $2, $3) RETURNING path"),
                                                    node_type, node_name, user_path_tree)
                 for prop in user_props_insert:
-                    prop.append(node_result['id'])
+                    prop.append(node_result['path'])
 
-                await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_id) "
+                await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_path) "
                                         "VALUES ($1, $2, $3, $4)"),
                                        user_props_insert)
 

@@ -94,11 +94,30 @@ async def transfer_nodes(db_pool, root, perform_copy):
                                             f"is invalid.")
 
                 if perform_copy:
+                    # copy properties
+                    prop_results = await conn.fetch("select properties.uri, properties.value, "
+                                                    "properties.read_only, "
+                                                    "$2||subpath(node_path, nlevel($1)-1) as concat "
+                                                    "from nodes inner join properties "
+                                                    "on nodes.path = properties.node_path "
+                                                    "where path <@ $1",
+                                                     target_path_tree,
+                                                     destination_path_tree)
+
                     await conn.execute("insert into nodes(name, type, path) ( "
                                        "select name, type, $2||subpath(path, nlevel($1)-1) as concat "
                                        "from nodes where path <@ $1)",
                                        target_path_tree,
                                        destination_path_tree)
+
+                    user_props_insert = []
+                    for prop in prop_results:
+                        user_props_insert.append(tuple(prop))
+
+                    await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_path) "
+                                            "VALUES ($1, $2, $3, $4)"),
+                                           user_props_insert)
+
                 else:
                     await conn.execute("update nodes set "
                                        "path = $2 || subpath(path, nlevel($1)-1) "
