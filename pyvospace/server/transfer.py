@@ -94,9 +94,9 @@ async def transfer_nodes(db_pool, root, perform_copy):
                                             f"is invalid.")
 
                 if perform_copy:
-                    await conn.execute("insert into nodes(name, type, path) ( " 
-                                       "select name, type, $2||path as concat from nodes "
-                                       "where path <@ $1 order by path asc)",
+                    await conn.execute("insert into nodes(name, type, path) ( "
+                                       "select name, type, $2||subpath(path, nlevel($1)-1) as concat "
+                                       "from nodes where path <@ $1)",
                                        target_path_tree,
                                        destination_path_tree)
                 else:

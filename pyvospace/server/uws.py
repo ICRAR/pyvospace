@@ -51,21 +51,23 @@ def generate_uws_job_xml(job_id,
                          job_info,
                          results=None,
                          errors=None):
-    xml = f'<?xml version = "1.0" encoding = "UTF-8"?>' \
-    f'<uws:job xmlns:uws="http://www.ivoa.net/xml/UWS/v1.0" xmlns:xlink="http://www.w3.org/1999/xlink">' \
-    f'<uws:jobId>{job_id}</uws:jobId>' \
-    f'<uws:ownerId xs:nill="true"/>' \
-    f'<uws:phase>{PhaseLookup[phase]}</uws:phase>' \
-    f'<uws:quote></uws:quote>' \
-    f'<uws:startTime xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:nil="true"/>' \
-    f'<uws:endTime xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:nil="true"/>' \
-    f'<uws:executionDuration>43200</uws:executionDuration>' \
-    f'<uws:destruction>{destruction}</uws:destruction>' \
-    f'<uws:parameters/>' \
-    f'{generate_uws_results(results)}' \
-    f'{generate_uws_error(errors)}' \
-    f'<uws:jobInfo>{job_info}</uws:jobInfo>' \
-    f'</uws:job>'
+    xml = f'<?xml version="1.0" encoding="UTF-8"?>' \
+          f'<uws:job xmlns:uws="http://www.ivoa.net/xml/UWS/v1.0" ' \
+          f'xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" ' \
+          f'xmlns:xlink="http://www.w3.org/1999/xlink">' \
+          f'<uws:jobId>{job_id}</uws:jobId>' \
+          f'<uws:ownerId xs:nill="true"/>' \
+          f'<uws:phase>{PhaseLookup[phase]}</uws:phase>' \
+          f'<uws:quote></uws:quote>' \
+          f'<uws:startTime xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:nil="true"/>' \
+          f'<uws:endTime xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:nil="true"/>' \
+          f'<uws:executionDuration>43200</uws:executionDuration>' \
+          f'<uws:destruction>{destruction}</uws:destruction>' \
+          f'<uws:parameters/>' \
+          f'{generate_uws_results(results)}' \
+          f'{generate_uws_error(errors)}' \
+          f'<uws:jobInfo>{job_info}</uws:jobInfo>' \
+          f'</uws:job>'
     return xml
 
 
@@ -95,7 +97,7 @@ class UWSJobExecutor(object):
         while True:
             if len(self.job_tasks) == 0:
                 return
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.1)
 
 
 async def create_uws_job(db_pool, job_info):

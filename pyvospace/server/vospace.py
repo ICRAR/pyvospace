@@ -51,15 +51,22 @@ class VOSpaceServer(web.Application):
         return VOSpaceServer(db_pool, *args, **kwargs)
 
     async def get_node(self, request):
-        url_path = request.path.replace('/vospace/nodes', '')
+        try:
+            url_path = request.path.replace('/vospace/nodes', '')
 
-        xml_response = await get_node(self['db_pool'],
-                                      url_path,
-                                      request.query)
+            xml_response = await get_node(self['db_pool'],
+                                          url_path,
+                                          request.query)
 
-        return web.Response(status=200,
-                            content_type='text/xml',
-                            text=xml_response)
+            return web.Response(status=200,
+                                content_type='text/xml',
+                                text=xml_response)
+
+        except VOSpaceError as e:
+            return web.Response(status=e.code, text=e.error)
+
+        except Exception as g:
+            return web.Response(status=500, text=str(g))
 
     async def create_node(self, request):
         try:
@@ -77,8 +84,6 @@ class VOSpaceServer(web.Application):
             return web.Response(status=e.code, text=e.error)
 
         except Exception as g:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def delete_node(self, request):
@@ -98,7 +103,6 @@ class VOSpaceServer(web.Application):
     async def transfer_node(self, request):
         try:
             xml_text = await request.text()
-
             id = await create_uws_job(self['db_pool'],
                                       xml_text)
 
@@ -151,14 +155,12 @@ class VOSpaceServer(web.Application):
                 raise VOSpaceError(400, f"Invalid Request. "
                                         f"Job not PENDING, can not be RUN.")
 
-            await self['db_pool'].execute(do_transfer, self.db_pool, job)
+            await self['executor'].execute(do_transfer, self['db_pool'], job)
 
-            return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
+            return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}/phase')
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
