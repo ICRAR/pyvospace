@@ -5,8 +5,8 @@ from aiohttp import web
 
 from .exception import VOSpaceError
 from .node import create_node, delete_node, get_node
-from .uws import UWSJobExecutor, \
-    create_uws_job, get_uws_job, generate_uws_job_xml, PhaseLookup
+from .uws import UWSJobExecutor, create_uws_job, get_uws_job, \
+    generate_uws_job_xml, PhaseLookup, UWSPhase
 from .transfer import do_transfer
 
 
@@ -140,10 +140,9 @@ class VOSpaceServer(web.Application):
     async def transfer_node_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            uws_cmd = await request.text()
-
             job = await get_uws_job(self['db_pool'], job_id)
 
+            uws_cmd = await request.text()
             if not uws_cmd:
                 return web.Response(status=200, text=PhaseLookup[job['phase']])
 
@@ -151,7 +150,8 @@ class VOSpaceServer(web.Application):
                 raise VOSpaceError(400, f"Invalid Request. "
                                         f"Unknown UWS phase input {uws_cmd}")
 
-            if job['phase'] > 0:
+            if job['phase'] != UWSPhase.Pending:
+                print(job)
                 raise VOSpaceError(400, f"Invalid Request. "
                                         f"Job not PENDING, can not be RUN.")
 
@@ -163,4 +163,6 @@ class VOSpaceServer(web.Application):
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return web.Response(status=500)
