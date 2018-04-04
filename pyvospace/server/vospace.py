@@ -4,7 +4,7 @@ import configparser
 from aiohttp import web
 
 from .exception import VOSpaceError
-from .node import create_node, delete_node, get_node
+from .node import create_node, delete_node, get_node, set_node_properties
 from .uws import UWSJobExecutor, create_uws_job, get_uws_job, \
     generate_uws_job_xml, PhaseLookup, UWSPhase
 from .transfer import do_transfer
@@ -22,6 +22,8 @@ class VOSpaceServer(web.Application):
                             self.get_node)
         self.router.add_put('/vospace/nodes/{name:.*}',
                             self.create_node)
+        self.router.add_post('/vospace/nodes/{name:.*}',
+                             self.set_node_properties)
         self.router.add_delete('/vospace/nodes/{name:.*}',
                                self.delete_node)
         self.router.add_post('/vospace/transfers',
@@ -49,6 +51,25 @@ class VOSpaceServer(web.Application):
         db_pool = await asyncpg.create_pool(dsn=dsn)
 
         return VOSpaceServer(db_pool, *args, **kwargs)
+
+    async def set_node_properties(self, request):
+        try:
+            xml_text = await request.text()
+            url_path = request.path.replace('/vospace/nodes', '')
+            xml_response = await set_node_properties(self['db_pool'],
+                                                     xml_text,
+                                                     url_path)
+            return web.Response(status=200,
+                                content_type='text/xml',
+                                text=xml_response)
+
+        except VOSpaceError as e:
+            return web.Response(status=e.code, text=e.error)
+
+        except Exception as g:
+            import traceback
+            traceback.print_exc()
+            return web.Response(status=500, text=str(g))
 
     async def get_node(self, request):
         try:
@@ -151,7 +172,6 @@ class VOSpaceServer(web.Application):
                                         f"Unknown UWS phase input {uws_cmd}")
 
             if job['phase'] != UWSPhase.Pending:
-                print(job)
                 raise VOSpaceError(400, f"Invalid Request. "
                                         f"Job not PENDING, can not be RUN.")
 
@@ -163,6 +183,4 @@ class VOSpaceServer(web.Application):
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)

@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 
 class Property(object):
 
-    def __init__(self, uri, value, read_only):
+    def __init__(self, uri, value, read_only=None):
         self.uri = uri
         self.value = value
         self.read_only = read_only
@@ -15,9 +15,19 @@ class Property(object):
         return self.uri == other.uri and \
                self.value == other.value
 
+    def _ro_tostring(self):
+        if self.read_only is None:
+            return ''
+
+        ro_test = 'false'
+        if self.read_only:
+            ro_test = 'true'
+
+        return f'readOnly="{ro_test}"'
+
     def tostring(self):
         return f'<vos:property uri="{self.uri}" ' \
-               f'readOnly="{self.read_only}">' \
+               f'{self._ro_tostring()}>' \
                f'{self.value}</vos:property>'
 
     def __str__(self):
@@ -25,6 +35,16 @@ class Property(object):
 
     def __repr__(self):
         return f'{self.uri, self.value}'
+
+
+class DeleteProperty(Property):
+
+    def __init__(self, uri):
+        super().__init__(uri, None, None)
+
+    def tostring(self):
+        return f'<vos:property uri="{self.uri}" ' \
+               f'xsi:nil="true"></vos:property>'
 
 
 class Capability(object):
@@ -76,10 +96,17 @@ class Node(object):
         for properties in root.findall('vos:properties', Node.NS):
             for node_property in properties.findall('vos:property', Node.NS):
                 prop_uri = node_property.attrib.get('uri', None)
-                prop_ro = node_property.attrib.get('readOnly', None)
-                prop_text = node_property.text
                 if prop_uri is None:
                     raise Exception("Property URI does not exist.")
+
+                prop_ro = node_property.attrib.get('readOnly', None)
+                if prop_ro:
+                    prop_ro_bool = False
+                    if prop_ro == 'true':
+                        prop_ro_bool = True
+                    prop_ro = prop_ro_bool
+
+                prop_text = node_property.text
                 self._properties.append(Property(prop_uri, prop_text, prop_ro))
 
         self._sort_properties()
@@ -148,6 +175,7 @@ class Node(object):
 
     def tostring(self):
         create_node_xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
+                          f' xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
                           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
                           f' xsi:type="{self.node_type}"' \
                           f' uri="{self.uri}">' \

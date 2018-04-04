@@ -41,6 +41,7 @@ class TestCreate(unittest.TestCase):
     def tearDown(self):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/test1'))
         self.loop.run_until_complete(self.runner.cleanup())
+        self.loop.close()
 
     async def delete(self, url):
         async with aiohttp.ClientSession() as session:
@@ -93,6 +94,11 @@ class TestCreate(unittest.TestCase):
 
     def test_create_node(self):
         async def run():
+            # Invalid Path
+            node1 = ContainerNode('vos://icrar.org!vospace/')
+            resp = await self.put('http://localhost:8080/vospace/nodes/', node1.tostring())
+            self.assertEqual(400, resp.status, msg=await resp.text())
+
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Test", True),
                           Property('ivo://ivoa.net/vospace/core#description', "Hello", True)]
             node = ContainerNode('vos://icrar.org!vospace/test1', properties=properties)
