@@ -9,7 +9,8 @@ import xml.etree.ElementTree as ET
 
 from aiohttp import web
 
-from pyvospace.client.model import Node, ContainerNode, LinkNode, Property, Move, Copy
+from pyvospace.client.model import Node, ContainerNode, LinkNode, \
+    Property, DeleteProperty, Move, Copy
 from pyvospace.server.vospace import VOSpaceServer
 
 
@@ -44,7 +45,9 @@ class TestCreate(unittest.TestCase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data0'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data1'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data2'))
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/test1'))
         self.loop.run_until_complete(self.runner.cleanup())
+        self.loop.close()
 
     async def delete(self, url):
         async with aiohttp.ClientSession() as session:
@@ -65,6 +68,35 @@ class TestCreate(unittest.TestCase):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as resp:
                 return resp
+
+    def test_set_properties(self):
+        async def run():
+            properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello1"),
+                          Property('ivo://ivoa.net/vospace/core#description', "Hello2")]
+            node1 = ContainerNode('vos://icrar.org!vospace/test1', properties=properties)
+            resp = await self.put('http://localhost:8080/vospace/nodes/test1', node1.tostring())
+            self.assertEqual(201, resp.status, msg=await resp.text())
+
+            # Set properties
+            properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello2"),
+                          DeleteProperty('ivo://ivoa.net/vospace/core#description')]
+            node1 = ContainerNode('vos://icrar.org!vospace/test1', properties=properties)
+            resp = await self.post('http://localhost:8080/vospace/nodes/test1', node1.tostring())
+            response = await resp.text()
+            self.assertEqual(200, resp.status, msg=response)
+
+            params = {'detail': 'max'}
+            resp = await self.get('http://localhost:8080/vospace/nodes/test1', params)
+            response = await resp.text()
+            self.assertEqual(200, resp.status, msg=response)
+
+            node = Node.fromstring(response)
+            prop = [Property('ivo://ivoa.net/vospace/core#title', "Hello2")]
+            orig_node = ContainerNode('vos://icrar.org!vospace/test1',
+                                      properties=prop)
+            self.assertEqual(node, orig_node)
+
+        self.loop.run_until_complete(run())
 
     def test_move_node(self):
         async def run():

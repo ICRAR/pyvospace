@@ -217,7 +217,7 @@ async def create_node(db_pool, xml_text, url_path):
                 if prop_uri is not None:
                     prop_uri = prop_uri.lower()
                     if prop_uri in Property:
-                        user_props_insert.append([prop_uri, node_property.text, True])
+                        user_props_insert.append([prop_uri, node_property.text, False])
                         user_props_dict.append({'uri': prop_uri,
                                                 'value': node_property.text,
                                                 'read_only': True})
@@ -235,19 +235,13 @@ async def create_node(db_pool, xml_text, url_path):
         user_path_parent_tree = '.'.join(user_path_parent)
         user_path_tree = '.'.join(user_path)
 
-        user_path_parent_len = len(user_path_parent)
-
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                result = await conn.fetch("SELECT type, name, path, nlevel(path) "
-                                          "FROM nodes WHERE path @> $1 for update",
+                # get parent node and check if its valid to add node to it
+                row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
+                                          "FROM nodes WHERE path=$1 for update",
                                           user_path_parent_tree)
-
-                if user_path_parent_len != len(result):
-                    raise VOSpaceError(404, f"Container Not Found. "
-                                            f"Container path {url_path} does not exist.")
-
-                for row in result:
+                if row:
                     if row['type'] == NodeType.LinkNode:
                         raise VOSpaceError(400, f"Link Found. "
                                                 f"Link Node {row['name']} found in path.")
@@ -258,7 +252,9 @@ async def create_node(db_pool, xml_text, url_path):
 
                 node_result = await conn.fetchrow(("INSERT INTO nodes (type, name, path) "
                                                    "VALUES ($1, $2, $3) RETURNING path"),
-                                                   node_type, node_name, user_path_tree)
+                                                  node_type,
+                                                  node_name,
+                                                  user_path_tree)
                 for prop in user_props_insert:
                     prop.append(node_result['path'])
 
@@ -278,3 +274,102 @@ async def create_node(db_pool, xml_text, url_path):
 
     except asyncpg.exceptions.UniqueViolationError as f:
         raise VOSpaceError(409, f"Duplicate Node. {node_name} already exists.")
+
+
+async def set_node_properties(db_pool, xml_text, url_path):
+    try:
+        root = ET.fromstring(xml_text)
+
+        uri = root.attrib.get('uri', None)
+        if uri is None:
+            raise VOSpaceError(400, "Invalid URI. "
+                                    "URI does not exist.")
+
+        node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type',
+                                    None)
+        if node_type is None:
+            raise VOSpaceError(400, "Invalid URI. "
+                                    "Type does not exist.")
+
+        node_type = NodeLookup.get(node_type, None)
+        if node_type is None:
+            raise VOSpaceError(400, f"Type Not Supported. "
+                                    f"Invalid type.")
+
+        uri_path = urlparse(uri)
+
+        if '.' in url_path:
+            raise VOSpaceError(400, f"Invalid URI. "
+                                    f"Invalid character: '.' in URI")
+
+        # make sure the request path and the URL are the same
+        # exclude '.' characters as they are used in ltree
+        if url_path != uri_path.path:
+            raise VOSpaceError(400, f"Invalid URI. "
+                                    f"URI node path does not "
+                                    f"match request: {url_path} != {uri_path.path}")
+
+        # remove empty entries as a result of strip
+        node_url_path = list(filter(None, url_path.split('/')))
+
+        if len(node_url_path) == 0:
+            raise VOSpaceError(400, f"Invalid URI. "
+                                    f"Path is empty")
+
+        node_path_tree = '.'.join(node_url_path)
+
+        node_props_insert = []
+        node_props_delete = []
+        for properties in root.findall('vos:properties', NS):
+            for node_property in properties.findall('vos:property', NS):
+                prop_uri = node_property.attrib.get('uri', None)
+                prop_nil = node_property.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}nil',
+                                                    None)
+                if prop_uri is not None:
+                    prop_uri = prop_uri.lower()
+                    if prop_uri in Property:
+                        if prop_nil == 'true':
+                            node_props_delete.append(prop_uri)
+                        else:
+                            node_props_insert.append([prop_uri,
+                                                      node_property.text,
+                                                      True,
+                                                      node_path_tree])
+
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                results = await conn.fetch(f"select * from nodes "
+                                           f"where path=$1 and "
+                                           f"type=$2 for update",
+                                           node_path_tree,
+                                           node_type)
+                if len(results) == 0:
+                    raise VOSpaceError(404, f"Node Not Found. {url_path}")
+
+                # if a property already exists then update it, only if read_only = False
+                await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
+                                       "VALUES ($1, $2, $3, $4) on conflict (uri, node_path) "
+                                       "do update set value=$2 where properties.read_only=False",
+                                       node_props_insert)
+
+                # only delete properties where read_only=False
+                await conn.execute("DELETE FROM properties WHERE "
+                                   "uri=any($1::text[]) "
+                                   "AND node_path=$2 and read_only=False",
+                                   node_props_delete,
+                                   node_path_tree)
+
+                properties_result = await conn.fetch("select * from properties "
+                                                     "where node_path=$1",
+                                                     node_path_tree)
+
+        xml_response = generate_node_response(node_path=url_path,
+                                              node_type=NodeTextLookup[node_type],
+                                              node_property=properties_result)
+        return xml_response
+
+    except ParseError as p:
+        raise VOSpaceError(500, f"Internal Error. XML error: {str(p)}.")
+
+    except asyncpg.exceptions.UniqueViolationError as f:
+        raise VOSpaceError(409, f"Duplicate Node. {url_path} already exists.")
