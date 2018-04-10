@@ -11,7 +11,7 @@ from xml.etree.ElementTree import tostring
 
 from aiohttp import web
 
-from pyvospace.client.model import Node, ContainerNode, LinkNode, Property
+from pyvospace.core.model import Node, ContainerNode, LinkNode, Property
 from pyvospace.server.vospace import VOSpaceServer
 
 
@@ -30,6 +30,7 @@ class TestCreate(unittest.TestCase):
         config = configparser.ConfigParser()
         if not os.path.exists(config_filename):
             config['Database'] = {'dsn': 'postgres://test:test@localhost:5432/vos'}
+            config['StoragePlugin'] = {'path': '', 'name': 'posix'}
             config.write(open(config_filename, 'w'))
 
         app = self.loop.run_until_complete(VOSpaceServer.create(config_filename))

@@ -1,6 +1,7 @@
+import os
 import asyncpg
 
-import xml.etree.ElementTree as ET
+import lxml.etree as ET
 
 from urllib.parse import urlparse
 from collections import namedtuple
@@ -44,6 +45,9 @@ VOSpaceName = 'vos://icrar.org!vospace'
 
 
 def generate_view_xml(node_views):
+    if not node_views:
+        return ''
+
     node_view_array = []
     for view in node_views:
         node_view_array.append(f'<vos:view uri="{view}"/>')
@@ -51,6 +55,9 @@ def generate_view_xml(node_views):
 
 
 def generate_property_xml(node_property):
+    if not node_property:
+        return ''
+
     node_property_array = []
     for prop in node_property:
         uri = prop['uri']
@@ -130,18 +137,19 @@ async def get_node(db_pool, path, params):
     provides = []
 
     async with db_pool.acquire() as conn:
-        async with conn.transaction():
+        async with conn.transaction(isolation='repeatable_read'):
             results = await conn.fetch(f"select * from nodes "
                                        f"where path <@ $1 and "
                                        f"nlevel(path)-nlevel($1)<=1 "
-                                       f"order by path asc for update {limit_str}",
+                                       f"order by path asc for share {limit_str}",
                                        path_tree)
             if len(results) == 0:
                 raise VOSpaceError(404, f"Node Not Found. {path}")
 
             if detail != 'min':
                 properties = await conn.fetch("select * from properties "
-                                              "where node_path=$1", results[0]['path'])
+                                              "where node_path=$1 for share",
+                                              results[0]['path'])
 
     node_type_int = results[0]['type']
     node_type = NodeTextLookup[node_type_int]
@@ -170,22 +178,55 @@ async def delete_node(db_pool, path):
     path_tree = '.'.join(path_array)
 
     async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute("delete from nodes "
-                               "where path <@ $1",
-                               path_tree)
+        async with conn.transaction(isolation='repeatable_read'):
+            result = await conn.fetch("delete from nodes "
+                                      "where path <@ $1 returning path",
+                                      path_tree)
+    if not result:
+        raise VOSpaceError(404, f"Node Not Found. {path}")
 
 
-async def create_node(db_pool, xml_text, url_path):
+async def create_node_request(db_pool, xml_text, url_path):
+    root = ET.fromstring(xml_text)
+    uri_xml = root.attrib.get('uri', None)
+
+    uri_path = urlparse(uri_xml)
+
+    if not uri_path.path:
+        raise VOSpaceError(400, "Invalid URI. "
+                                "URI does not exist.")
+
+    # make sure the request path and the URL are the same
+    # exclude '.' characters as they are used in ltree
+    if '.' in uri_path.path:
+        raise VOSpaceError(400, f"Invalid URI. "
+                                f"Invalid character: '.' in URI")
+
+    uri_path_norm = os.path.normpath(uri_path.path)
+
+    if os.path.normpath(url_path) != uri_path_norm:
+        raise VOSpaceError(400, f"Invalid URI. "
+                                f"URI node path does not "
+                                f"match request: {url_path} != {uri_path.path}")
+
+    node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
+
+    props = []
+    for properties in root.findall('vos:properties', NS):
+        for node_property in properties.findall('vos:property', NS):
+            prop_uri = node_property.attrib.get('uri', None)
+            if prop_uri is not None:
+                prop_uri = prop_uri.lower()
+                if prop_uri in Property:
+                    props.append({'uri': prop_uri,
+                                  'value': node_property.text,
+                                  'read_only': False})
+
+    return await create_node(db_pool, uri_path_norm, node_type, props)
+
+
+async def create_node(db_pool, uri_path, node_type, properties):
     try:
-        root = ET.fromstring(xml_text)
-
-        uri = root.attrib.get('uri', None)
-        if uri is None:
-            raise VOSpaceError(400, "Invalid URI. "
-                                    "URI does not exist.")
-
-        node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
         if node_type is None:
             node_type = NodeType.Node # if not specified then default is Node
             node_type_text = 'vos:Node'
@@ -196,51 +237,28 @@ async def create_node(db_pool, xml_text, url_path):
                 raise VOSpaceError(400, f"Type Not Supported. "
                                         f"Invalid type.")
 
-        uri_path = urlparse(uri)
-
-        if '.' in url_path:
-            raise VOSpaceError(400, f"Invalid URI. "
-                                    f"Invalid character: '.' in URI")
-
-        # make sure the request path and the URL are the same
-        # exclude '.' characters as they are used in ltree
-        if url_path != uri_path.path:
-            raise VOSpaceError(400, f"Invalid URI. "
-                                    f"URI node path does not "
-                                    f"match request: {url_path} != {uri_path.path}")
-
-        user_props_insert = []
-        user_props_dict = []
-        for properties in root.findall('vos:properties', NS):
-            for node_property in properties.findall('vos:property', NS):
-                prop_uri = node_property.attrib.get('uri', None)
-                if prop_uri is not None:
-                    prop_uri = prop_uri.lower()
-                    if prop_uri in Property:
-                        user_props_insert.append([prop_uri, node_property.text, False])
-                        user_props_dict.append({'uri': prop_uri,
-                                                'value': node_property.text,
-                                                'read_only': True})
-
         # remove empty entries as a result of strip
-        user_path = list(filter(None, url_path.split('/')))
+        path = list(filter(None, uri_path.split('/')))
 
-        if len(user_path) == 0:
+        if len(path) == 0:
             raise VOSpaceError(400, f"Invalid URI. "
                                     f"Path is empty")
 
-        user_path_parent = user_path[:-1]
-        node_name = user_path[-1]
+        path_parent = path[:-1]
+        node_name = path[-1]
 
-        user_path_parent_tree = '.'.join(user_path_parent)
-        user_path_tree = '.'.join(user_path)
+        path_parent_tree = '.'.join(path_parent)
+        path_tree = '.'.join(path)
+
+        if properties:
+            properties_list = [list(p.values()) for p in properties]
 
         async with db_pool.acquire() as conn:
-            async with conn.transaction():
+            async with conn.transaction(isolation='repeatable_read'):
                 # get parent node and check if its valid to add node to it
                 row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
-                                          "FROM nodes WHERE path=$1 for update",
-                                          user_path_parent_tree)
+                                          "FROM nodes WHERE path=$1 for share",
+                                          path_parent_tree)
                 if row:
                     if row['type'] == NodeType.LinkNode:
                         raise VOSpaceError(400, f"Link Found. "
@@ -254,17 +272,19 @@ async def create_node(db_pool, xml_text, url_path):
                                                    "VALUES ($1, $2, $3) RETURNING path"),
                                                   node_type,
                                                   node_name,
-                                                  user_path_tree)
-                for prop in user_props_insert:
-                    prop.append(node_result['path'])
+                                                  path_tree)
 
-                await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_path) "
-                                        "VALUES ($1, $2, $3, $4)"),
-                                       user_props_insert)
+                if properties:
+                    for prop in properties_list:
+                        prop.append(node_result['path'])
+
+                    await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_path) "
+                                            "VALUES ($1, $2, $3, $4)"),
+                                           properties_list)
 
         xml_response = generate_node_response(node_name,
                                               node_type_text,
-                                              user_props_dict,
+                                              properties,
                                               Views)
 
         return xml_response
@@ -337,10 +357,10 @@ async def set_node_properties(db_pool, xml_text, url_path):
                                                       node_path_tree])
 
         async with db_pool.acquire() as conn:
-            async with conn.transaction():
+            async with conn.transaction(isolation='repeatable_read'):
                 results = await conn.fetch(f"select * from nodes "
                                            f"where path=$1 and "
-                                           f"type=$2 for update",
+                                           f"type=$2 for share",
                                            node_path_tree,
                                            node_type)
                 if len(results) == 0:
@@ -360,7 +380,7 @@ async def set_node_properties(db_pool, xml_text, url_path):
                                    node_path_tree)
 
                 properties_result = await conn.fetch("select * from properties "
-                                                     "where node_path=$1",
+                                                     "where node_path=$1 for share",
                                                      node_path_tree)
 
         xml_response = generate_node_response(node_path=url_path,
