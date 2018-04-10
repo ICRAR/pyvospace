@@ -55,6 +55,27 @@ class Capability(object):
         self.param = param
 
 
+class Protocol(object):
+
+    def __init__(self, uri):
+        self.uri = uri
+
+    def __eq__(self, other):
+        if not isinstance(other, Protocol):
+            return False
+
+        return self.uri == other.uri
+
+    def tostring(self):
+        return f'<vos:protocol uri="{self.uri}"></vos:protocol>'
+
+
+class HTTPPut(Protocol):
+
+    def __init__(self):
+        super().__init__('ivo://ivoa.net/vospace/core#httpput')
+
+
 class View(object):
 
     def __init__(self, uri):
@@ -65,6 +86,9 @@ class View(object):
             return False
 
         return self.uri == other.uri
+
+    def tostring(self):
+        return f'<vos:view uri="{self.uri}"/>'
 
 
 class Node(object):
@@ -405,6 +429,16 @@ class StructuredDataNode(DataNode):
 
 class Transfer(object):
 
+    def __init__(self, target, direction):
+        self.target = target
+        self.direction = direction
+
+    def tostring(self):
+        return Exception('Not implemented')
+
+
+class NodeTransfer(Transfer):
+
     def __init__(self, target, direction, keep_bytes):
         self.target = target
         self.direction = direction
@@ -424,7 +458,7 @@ class Transfer(object):
         return create_node_xml
 
 
-class Copy(Transfer):
+class Copy(NodeTransfer):
 
     def __init__(self, target, direction):
         super().__init__(target=target,
@@ -432,9 +466,41 @@ class Copy(Transfer):
                          keep_bytes=True)
 
 
-class Move(Transfer):
+class Move(NodeTransfer):
 
     def __init__(self, target, direction):
         super().__init__(target=target,
                          direction=direction,
                          keep_bytes=False)
+
+
+class PushToSpace(Transfer):
+
+    def __init__(self, target, protocols, view=None):
+        super().__init__(target=target,
+                         direction='pushToVoSpace')
+
+        self.protocols = protocols
+        self.view = view
+
+    def _view_tostring(self):
+        if not self.view:
+            return ''
+
+        return self.view.tostring()
+
+    def _protocols_tostring(self):
+        protocol_array = []
+        for protocol in self.protocols:
+            protocol_array.append(protocol.tostring())
+        return ''.join(protocol_array)
+
+    def tostring(self):
+        create_node_xml = f'<vos:transfer xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
+                          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
+                          f'<vos:target>{self.target.uri}</vos:target>' \
+                          f'<vos:direction>{self.direction}</vos:direction>' \
+                          f'{self._view_tostring()}' \
+                          f'{self._protocols_tostring()}' \
+                          f'</vos:transfer>'
+        return create_node_xml

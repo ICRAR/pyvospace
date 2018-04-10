@@ -9,8 +9,7 @@ import xml.etree.ElementTree as ET
 
 from aiohttp import web
 
-from pyvospace.client.model import Node, ContainerNode, LinkNode, \
-    Property, DeleteProperty, Move, Copy
+from pyvospace.core.model import Node, ContainerNode, Property, DeleteProperty, Move, Copy
 from pyvospace.server.vospace import VOSpaceServer
 
 
@@ -29,6 +28,7 @@ class TestCreate(unittest.TestCase):
         config = configparser.ConfigParser()
         if not os.path.exists(config_filename):
             config['Database'] = {'dsn': 'postgres://test:test@localhost:5432/vos'}
+            config['StoragePlugin'] = {'path': '', 'name': 'posix'}
             config.write(open(config_filename, 'w'))
 
         app = self.loop.run_until_complete(VOSpaceServer.create(config_filename))
@@ -78,7 +78,7 @@ class TestCreate(unittest.TestCase):
             self.assertEqual(201, resp.status, msg=await resp.text())
 
             # Set properties
-            properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello2"),
+            properties = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle"),
                           DeleteProperty('ivo://ivoa.net/vospace/core#description')]
             node1 = ContainerNode('vos://icrar.org!vospace/test1', properties=properties)
             resp = await self.post('http://localhost:8080/vospace/nodes/test1', node1.tostring())
@@ -91,9 +91,10 @@ class TestCreate(unittest.TestCase):
             self.assertEqual(200, resp.status, msg=response)
 
             node = Node.fromstring(response)
-            prop = [Property('ivo://ivoa.net/vospace/core#title', "Hello2")]
+            prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle")]
             orig_node = ContainerNode('vos://icrar.org!vospace/test1',
                                       properties=prop)
+
             self.assertEqual(node, orig_node)
 
         self.loop.run_until_complete(run())
