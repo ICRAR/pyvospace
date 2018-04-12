@@ -59,6 +59,14 @@ class TestCreate(unittest.TestCase):
             async with session.get(url, params=params) as resp:
                 return resp
 
+    def test_get_protocol(self):
+        async def run():
+            resp = await self.get('http://localhost:8080/vospace/protocols', None)
+            response = await resp.text()
+            self.assertEqual(200, resp.status, msg=response)
+
+        self.loop.run_until_complete(run())
+
     def test_create_node_fail(self):
         async def run():
             # XML Parse Error
@@ -108,11 +116,17 @@ class TestCreate(unittest.TestCase):
 
             node1 = ContainerNode('vos://icrar.org!vospace/test1/test2')
             resp = await self.put('http://localhost:8080/vospace/nodes/test1/test2', node1.tostring())
-            self.assertEqual(201, resp.status, msg=await resp.text())
+            response = await resp.text()
+            self.assertEqual(201, resp.status, msg=response)
+
+            #log.debug(response)
 
             node2 = Node('vos://icrar.org!vospace/test1/data')
             resp = await self.put('http://localhost:8080/vospace/nodes/test1/data', node2.tostring())
-            self.assertEqual(201, resp.status, msg=await resp.text())
+            response = await resp.text()
+            self.assertEqual(201, resp.status, msg=response)
+
+            #log.debug(response)
 
             # Duplicate Node
             resp = await self.put('http://localhost:8080/vospace/nodes/test1/test2', node1.tostring())
@@ -139,6 +153,12 @@ class TestCreate(unittest.TestCase):
             resp = await self.get('http://localhost:8080/vospace/nodes/mynode', params)
             response = await resp.text()
             self.assertEqual(404, resp.status, msg=response)
+
+            # Container Node not found
+            node_not_found = Node('vos://icrar.org!vospace/test1/test2/test10/test11')
+            resp = await self.put('http://localhost:8080/vospace/nodes/test1/test2/test10/test11',
+                                  node_not_found.tostring())
+            self.assertEqual(404, resp.status, msg=await resp.text())
 
             # Invalid parameters
             params = {'detail': 'invalid'}
