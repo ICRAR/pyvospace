@@ -9,6 +9,11 @@ from xml.etree.ElementTree import ParseError
 
 from .exception import VOSpaceError
 
+Create_Response = namedtuple('CreateResponse', 'node_name '
+                                               'node_type_text '
+                                               'node_properties  '
+                                               'node_import_views '
+                                               'node_updated')
 
 Node_Type = namedtuple('NodeType', 'Node '
                                    'DataNode '
@@ -103,7 +108,31 @@ def generate_node_response(node_path,
     return xml
 
 
-async def get_node(db_pool, path, params):
+def generate_protocol_xml(protocol):
+    if not protocol:
+        return ''
+
+    protocol_array = []
+    for prot in protocol:
+        protocol_array.append(f'<vos:protocol uri="{prot}"></vos:protocol>')
+
+    return ''.join(protocol_array)
+
+
+def generate_protocol_response(accepts, provides):
+    xml = f'<vos:protocols xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
+          f'xmlns:xs="http://www.w3.org/2001/XMLSchema-instance">' \
+          f'<vos:accepts>' \
+          f'{generate_protocol_xml(accepts)}' \
+          f'</vos:accepts>' \
+          f'<vos:provides>' \
+          f'{generate_protocol_xml(provides)}' \
+          f'</vos:provides>' \
+          f'</vos:protocols>'
+    return xml
+
+
+async def get_node(app, path, params):
 
     detail = params.get('detail', 'max')
     if detail:
@@ -136,7 +165,7 @@ async def get_node(db_pool, path, params):
     views = []
     provides = []
 
-    async with db_pool.acquire() as conn:
+    async with app['db_pool'].acquire() as conn:
         async with conn.transaction(isolation='repeatable_read'):
             results = await conn.fetch(f"select * from nodes "
                                        f"where path <@ $1 and "
@@ -172,12 +201,12 @@ async def get_node(db_pool, path, params):
     return xml_response
 
 
-async def delete_node(db_pool, path):
+async def delete_node(app, path):
 
     path_array = list(filter(None, path.split('/')))
     path_tree = '.'.join(path_array)
 
-    async with db_pool.acquire() as conn:
+    async with app['db_pool'].acquire() as conn:
         async with conn.transaction(isolation='repeatable_read'):
             result = await conn.fetch("delete from nodes "
                                       "where path <@ $1 returning path",
@@ -186,7 +215,7 @@ async def delete_node(db_pool, path):
         raise VOSpaceError(404, f"Node Not Found. {path}")
 
 
-async def create_node_request(db_pool, xml_text, url_path):
+async def create_node_request(app, xml_text, url_path):
     root = ET.fromstring(xml_text)
     uri_xml = root.attrib.get('uri', None)
 
@@ -222,10 +251,15 @@ async def create_node_request(db_pool, xml_text, url_path):
                                   'value': node_property.text,
                                   'read_only': False})
 
-    return await create_node(db_pool, uri_path_norm, node_type, props)
+    create_response = await create_node(app, uri_path_norm, node_type, props)
+
+    if create_response.node_updated is True:
+        raise VOSpaceError(409, f"Duplicate Node. {uri_path_norm} already exists.")
+
+    return create_response
 
 
-async def create_node(db_pool, uri_path, node_type, properties):
+async def create_node(app, uri_path, node_type, properties, check_valid_view_uri=None):
     try:
         if node_type is None:
             node_type = NodeType.Node # if not specified then default is Node
@@ -253,12 +287,18 @@ async def create_node(db_pool, uri_path, node_type, properties):
         if properties:
             properties_list = [list(p.values()) for p in properties]
 
-        async with db_pool.acquire() as conn:
+        async with app['db_pool'].acquire() as conn:
             async with conn.transaction(isolation='repeatable_read'):
                 # get parent node and check if its valid to add node to it
                 row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
                                           "FROM nodes WHERE path=$1 for share",
                                           path_parent_tree)
+
+                # if the parent is not found but its expected to exist
+                if not row and len(path_parent) > 0:
+                    raise VOSpaceError(404, f"Container Not Found. "
+                                            f"Container Node {'/'.join(path_parent)} not found.")
+
                 if row:
                     if row['type'] == NodeType.LinkNode:
                         raise VOSpaceError(400, f"Link Found. "
@@ -269,11 +309,12 @@ async def create_node(db_pool, uri_path, node_type, properties):
                                                 f"{row['name']} is not a container.")
 
                 node_result = await conn.fetchrow(("INSERT INTO nodes (type, name, path) "
-                                                   "VALUES ($1, $2, $3) RETURNING path"),
+                                                   "VALUES ($1, $2, $3) ON CONFLICT (path)"
+                                                   "DO UPDATE SET name=EXCLUDED.name "
+                                                   "RETURNING type, path, (xmax::text::int>0) AS updated"),
                                                   node_type,
                                                   node_name,
                                                   path_tree)
-
                 if properties:
                     for prop in properties_list:
                         prop.append(node_result['path'])
@@ -282,12 +323,17 @@ async def create_node(db_pool, uri_path, node_type, properties):
                                             "VALUES ($1, $2, $3, $4)"),
                                            properties_list)
 
-        xml_response = generate_node_response(node_name,
-                                              node_type_text,
-                                              properties,
-                                              Views)
+                import_views = app['plugin'].get_supported_import_views(node_type_text)
+                if check_valid_view_uri is not None:
+                    if check_valid_view_uri not in import_views:
+                        raise VOSpaceError(400, f"View Not Supported. "
+                                                f"View {check_valid_view_uri} not supported.")
 
-        return xml_response
+        return Create_Response(node_name,
+                               node_type_text,
+                               properties,
+                               import_views,
+                               node_result['updated'])
 
     except ParseError as p:
         raise VOSpaceError(500, f"Internal Error. XML error: {str(p)}.")
@@ -296,7 +342,7 @@ async def create_node(db_pool, uri_path, node_type, properties):
         raise VOSpaceError(409, f"Duplicate Node. {node_name} already exists.")
 
 
-async def set_node_properties(db_pool, xml_text, url_path):
+async def set_node_properties(app, xml_text, url_path):
     try:
         root = ET.fromstring(xml_text)
 
@@ -356,7 +402,7 @@ async def set_node_properties(db_pool, xml_text, url_path):
                                                       True,
                                                       node_path_tree])
 
-        async with db_pool.acquire() as conn:
+        async with app['db_pool'].acquire() as conn:
             async with conn.transaction(isolation='repeatable_read'):
                 results = await conn.fetch(f"select * from nodes "
                                            f"where path=$1 and "

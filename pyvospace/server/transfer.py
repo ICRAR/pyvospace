@@ -1,15 +1,62 @@
 import os
+import json
 import asyncpg
 import lxml.etree as ET
 
 from urllib.parse import urlparse
 
-from .uws import set_uws_results_and_phase, results_dict_list_to_xml, set_uws_phase, UWSPhase
+from .uws import set_uws_extras_and_phase, set_uws_phase, UWSPhase, get_uws_job
 from .node import NS, NodeType, create_node, NodeTextLookup, VOSpaceName
 from .exception import VOSpaceError
 
 
-async def do_transfer(db_pool, job_id, job):
+def transfer_details_response(target, direction, protocol_endpoints):
+    prot = protocol_endpoints['protocol']
+    endpoints = protocol_endpoints['endpoint']
+
+    prot_end = []
+    for end in endpoints:
+        end_str = f'<vos:protocol uri="{prot}">' \
+                  f'<vos:endpoint>{end}</vos:endpoint>' \
+                  f'</vos:protocol>'
+        prot_end.append(end_str)
+
+    xml = f'<?xml version="1.0" encoding="UTF-8"?>' \
+          f'<vos:transfer xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
+          f'<vos:target>{target}</vos:target>' \
+          f'<vos:direction>{direction}</vos:direction>' \
+          f'{"".join(prot_end)}' \
+          f'</vos:transfer>'
+
+    return xml
+
+
+async def get_transfer_details(app, job_id):
+    job = await get_uws_job(app['db_pool'], job_id)
+
+    if not job['extras']:
+        raise VOSpaceError(500, 'Internal Fault. Job details not found.')
+
+    extras = json.loads(job['extras'])
+    node_type = extras['node']['type']
+    node_path = extras['node']['path']
+    target = extras['transfer']['target']
+    direction = extras['transfer']['direction']
+    protocol = extras['transfer']['protocol']
+    view = extras['transfer']['view']
+    params = extras['transfer']['params']
+
+    end_points = app['plugin'].get_protocol_endpoints(node_path,
+                                                      node_type,
+                                                      direction,
+                                                      protocol,
+                                                      view,
+                                                      params)
+
+    return transfer_details_response(target, direction, end_points)
+
+
+async def do_transfer(app, job_id, job):
     try:
         job_xml = job['job_info']
         root = ET.fromstring(job_xml)
@@ -46,25 +93,50 @@ async def do_transfer(db_pool, job_id, job):
 
                 trans_params.append({'uri': param_uri, 'value': params.text})
 
-            try:
-                await create_node(db_pool=db_pool,
-                                  uri_path=target_path_norm,
-                                  node_type=NodeTextLookup[NodeType.DataNode],
-                                  properties=None)
+            prot = root.find('vos:protocol', NS)
+            if prot is None:
+                raise VOSpaceError(400, "Invalid Argument. Protocol not found.")
 
-            except VOSpaceError as e:
-                # if its a duplicate node then just continue
-                if e.code != 409:
-                    raise e
+            prot_uri = prot.attrib.get('uri', None)
+            if prot_uri is None:
+                raise VOSpaceError(400, "Invalid Argument. Protocol uri not found.")
+
+            provides_protocols = app['plugin'].get_provides_protocols()
+            if prot_uri not in provides_protocols:
+                raise VOSpaceError(400, f"Protocol Not Supported. "
+                                        f"Protocol {prot_uri} not supported.")
+
+            node_view_uri = None
+            node_view = root.find('vos:view', NS)
+            if node_view is not None:
+                node_view_uri = node_view.attrib.get('uri', None)
+                if node_view_uri is None:
+                    raise VOSpaceError(400, "Invalid Argument. View uri not found.")
+
+            response = await create_node(app=app,
+                                         uri_path=target_path_norm,
+                                         node_type=NodeTextLookup[NodeType.DataNode],
+                                         properties=None,
+                                         check_valid_view_uri=node_view_uri)
 
             results = [{'id': 'transferDetails',
                         'xlink:href': f'/vospace/transfers/{job_id}/results/transferDetails'},
                        {'id': "dataNode",
                         'xlink:href': f'{VOSpaceName}{target_path_norm}'}]
 
-            xml_results = results_dict_list_to_xml(results)
+            extras = {'node': {'path': target_path_norm,
+                               'type': response.node_type_text},
+                      'transfer': {'direction': 'pushToVoSpace',
+                                   'target': target.text,
+                                   'protocol': prot_uri,
+                                   'view': node_view_uri,
+                                   'params': trans_params},
+                      'results': results}
 
-            await set_uws_results_and_phase(db_pool, job_id, xml_results, UWSPhase.Executing)
+            await set_uws_extras_and_phase(app['db_pool'],
+                                           job_id,
+                                           UWSPhase.Executing,
+                                           json.dumps(extras))
 
         else:
             direction_path = urlparse(direction.text)
@@ -87,14 +159,14 @@ async def do_transfer(db_pool, job_id, job):
             else:
                 raise VOSpaceError(500, "Unknown keepBytes value.")
 
-            await set_uws_phase(db_pool, job_id, UWSPhase.Executing)
+            await set_uws_phase(app['db_pool'], job_id, UWSPhase.Executing)
 
-            await move_nodes(db_pool=db_pool,
+            await move_nodes(app=app,
                              target_path=target_path_norm,
                              direction_path=direction_path_norm,
                              perform_copy=copy_node)
 
-            await set_uws_phase(db_pool, job_id, UWSPhase.Completed)
+            await set_uws_phase(app['db_pool'], job_id, UWSPhase.Completed)
 
     except VOSpaceError as f:
         raise f
@@ -105,7 +177,7 @@ async def do_transfer(db_pool, job_id, job):
         raise VOSpaceError(500, str(e))
 
 
-async def move_nodes(db_pool, target_path, direction_path, perform_copy):
+async def move_nodes(app, target_path, direction_path, perform_copy):
 
     try:
         target_path_array = list(filter(None, target_path.split('/')))
@@ -114,7 +186,7 @@ async def move_nodes(db_pool, target_path, direction_path, perform_copy):
         target_path_tree = '.'.join(target_path_array)
         destination_path_tree = '.'.join(direction_path_array)
 
-        async with db_pool.acquire() as conn:
+        async with app['db_pool'].acquire() as conn:
             async with conn.transaction(isolation='repeatable_read'):
                 result = await conn.fetch("select name, type, path, "
                                           "path = subltree($2, 0, nlevel(path)) as common "

@@ -79,17 +79,17 @@ class UWSJobExecutor(object):
     def __init__(self):
         self.job_tasks = {}
 
-    async def execute(self, func, db_pool, job):
-        task = asyncio.ensure_future(self._run(func, db_pool, job))
+    async def execute(self, func, app, job):
+        task = asyncio.ensure_future(self._run(func, app, job))
         self.job_tasks[task] = job
         task.add_done_callback(self._done)
 
-    async def _run(self, func, db_pool, job):
+    async def _run(self, func, app, job):
         try:
-            await func(db_pool, job['id'], job)
+            await func(app, job['id'], job)
 
         except VOSpaceError as e:
-            await set_uws_phase(db_pool, job['id'], UWSPhase.Error, e.error)
+            await set_uws_phase(app['db_pool'], job['id'], UWSPhase.Error, e.error)
 
     def _done(self, task):
         del self.job_tasks[task]
@@ -102,9 +102,9 @@ class UWSJobExecutor(object):
 
 
 async def create_uws_job(db_pool, job_info):
+    destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=300)
     async with db_pool.acquire() as conn:
         async with conn.transaction(isolation='repeatable_read'):
-            destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=300)
             result = await conn.fetchrow("insert into uws_jobs (phase, destruction, job_info) "
                                          "values ($1, $2, $3) returning id",
                                          UWSPhase.Pending, destruction, job_info)
@@ -133,8 +133,8 @@ async def set_uws_phase(db_pool, job_id, phase, error=None):
                                job_id, phase, error)
 
 
-async def set_uws_results_and_phase(db_pool, job_id, results, phase):
+async def set_uws_extras_and_phase(db_pool, job_id, phase, extras):
     async with db_pool.acquire() as conn:
         async with conn.transaction(isolation='repeatable_read'):
-            await conn.execute("update uws_jobs set phase=$3, results=$2 where id=$1",
-                               job_id, results, phase)
+            await conn.execute("update uws_jobs set phase=$3, extras=$2 where id=$1",
+                               job_id, extras, phase)
