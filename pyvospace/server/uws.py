@@ -32,6 +32,9 @@ PhaseLookup = {0: 'PENDING',
 
 
 def results_dict_list_to_xml(results):
+    if not results:
+        return '<uws:results/>'
+
     attr_vals = []
     for attr in results:
         attr_vals.append(f'<uws:result id="{attr["id"]}" '
@@ -89,7 +92,10 @@ class UWSJobExecutor(object):
             await func(app, job['id'], job)
 
         except VOSpaceError as e:
-            await set_uws_phase(app['db_pool'], job['id'], UWSPhase.Error, e.error)
+            await set_uws_phase(app['db_pool'],
+                                job['id'],
+                                UWSPhase.Error,
+                                e.error)
 
     def _done(self, task):
         del self.job_tasks[task]
@@ -101,20 +107,27 @@ class UWSJobExecutor(object):
             await asyncio.sleep(0.1)
 
 
-async def create_uws_job(db_pool, job_info):
-    destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=300)
-    async with db_pool.acquire() as conn:
-        async with conn.transaction(isolation='repeatable_read'):
-            result = await conn.fetchrow("insert into uws_jobs (phase, destruction, job_info) "
-                                         "values ($1, $2, $3) returning id",
-                                         UWSPhase.Pending, destruction, job_info)
-            return result['id']
+async def create_uws_job(conn, target, direction, job_info, extras):
+    path_array = list(filter(None, target.split('/')))
+    path_tree = '.'.join(path_array)
+
+    destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=3000)
+    result = await conn.fetchrow("insert into uws_jobs (target, direction, "
+                                 "phase, destruction, job_info, extras) "
+                                 "values ($1, $2, $3, $4, $5, $6) returning id",
+                                 path_tree,
+                                 direction,
+                                 UWSPhase.Pending,
+                                 destruction,
+                                 job_info,
+                                 extras)
+    return result['id']
 
 
 async def get_uws_job(db_pool, job_id):
     try:
         async with db_pool.acquire() as conn:
-            async with conn.transaction(isolation='repeatable_read'):
+            async with conn.transaction():
                 result = await conn.fetchrow("select * from uws_jobs where id=$1",
                                              job_id)
                 if not result:
@@ -128,13 +141,13 @@ async def get_uws_job(db_pool, job_id):
 
 async def set_uws_phase(db_pool, job_id, phase, error=None):
     async with db_pool.acquire() as conn:
-        async with conn.transaction(isolation='repeatable_read'):
-            await conn.execute("update uws_jobs set phase=$2, error=$3 where id=$1",
+        async with conn.transaction():
+            await conn.execute("update uws_jobs set phase=$2, error=$3 "
+                               "where id=$1",
                                job_id, phase, error)
 
 
-async def set_uws_extras_and_phase(db_pool, job_id, phase, extras):
-    async with db_pool.acquire() as conn:
-        async with conn.transaction(isolation='repeatable_read'):
-            await conn.execute("update uws_jobs set phase=$3, extras=$2 where id=$1",
-                               job_id, extras, phase)
+async def set_uws_extras(conn, job_id, phase, extras):
+    await conn.execute("update uws_jobs set phase=$2, extras=$3 "
+                       "where id=$1",
+                       job_id, phase, extras)

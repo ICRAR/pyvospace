@@ -17,6 +17,7 @@ class VOSpacePluginBase(object):
         raise NotImplementedError()
 
     def get_protocol_endpoints(self,
+                               uws_job_id: str,
                                target_path: str,
                                node_type: str,
                                direction: str,

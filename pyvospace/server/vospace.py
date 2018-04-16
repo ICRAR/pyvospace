@@ -10,9 +10,9 @@ from pluginbase import PluginBase
 from .exception import VOSpaceError
 from .node import create_node_request, delete_node, get_node, set_node_properties, \
     generate_protocol_response, generate_node_response
-from .uws import UWSJobExecutor, create_uws_job, get_uws_job, \
+from .uws import UWSJobExecutor, get_uws_job, \
     generate_uws_job_xml, PhaseLookup, UWSPhase, results_dict_list_to_xml
-from .transfer import do_transfer, get_transfer_details
+from .transfer import create_transfer_job, run_job, generate_xml_transfer_details
 from .plugin import VOSpacePluginBase
 
 
@@ -59,8 +59,8 @@ class VOSpaceServer(web.Application):
         db_pool = await asyncpg.create_pool(dsn=dsn)
         self['db_pool'] = db_pool
 
-        plugin_path = config['StoragePlugin']['path']
-        plugin_name = config['StoragePlugin']['name']
+        plugin_path = config['Plugin']['path']
+        plugin_name = config['Plugin']['name']
 
         # For easier usage calculate the path relative to here.
         here = os.path.abspath(os.path.dirname(__file__))
@@ -197,8 +197,8 @@ class VOSpaceServer(web.Application):
     async def transfer_node(self, request):
         try:
             xml_text = await request.text()
-            id = await create_uws_job(self['db_pool'],
-                                      xml_text)
+
+            id = await create_transfer_job(self, xml_text)
 
             return web.HTTPSeeOther(location=f'/vospace/transfers/{id}')
 
@@ -206,6 +206,8 @@ class VOSpaceServer(web.Application):
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return web.Response(status=500)
 
     async def get_transfer_job(self, request):
@@ -217,7 +219,8 @@ class VOSpaceServer(web.Application):
             results = []
             if job['extras']:
                 extras = json.loads(job['extras'])
-                results = results_dict_list_to_xml(extras['results'])
+                results = results_dict_list_to_xml(
+                    extras.get('results', None))
 
             xml = generate_uws_job_xml(job['id'],
                                        job['phase'],
@@ -244,7 +247,8 @@ class VOSpaceServer(web.Application):
         try:
             job_id = request.match_info.get('job_id', None)
 
-            xml = await get_transfer_details(self, job_id)
+            xml = await generate_xml_transfer_details(self,
+                                                      job_id)
 
             return web.Response(status=200,
                                 content_type='text/xml',
@@ -287,10 +291,9 @@ class VOSpaceServer(web.Application):
                                         f"Unknown UWS phase input {uws_cmd}")
 
             if job['phase'] != UWSPhase.Pending:
-                raise VOSpaceError(400, f"Invalid Request. "
-                                        f"Job not PENDING, can not be RUN.")
+                return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
-            await self['executor'].execute(do_transfer, self, job)
+            await self['executor'].execute(run_job, self, job)
 
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
