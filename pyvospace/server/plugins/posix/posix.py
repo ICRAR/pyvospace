@@ -1,11 +1,5 @@
-import asyncio
-import configparser
-
 from pyvospace.server.plugin import VOSpacePluginBase
 
-from aiohttp import web
-
-from .process import AsyncProcess
 
 TAR_VIEW = 'ivo://ivoa.net/vospace/core#tar'
 BINARY_VIEW = 'ivo://ivoa.net/vospace/core#binaryview'
@@ -15,37 +9,8 @@ PROVIDES_PROTOCOLS = ['ivo://ivoa.net/vospace/core#httpput',
                       'ivo://ivoa.net/vospace/core#httpget']
 
 
-
 def create(app):
     return PosixPlugin(app)
-
-
-class PosixFileServer(web.Application):
-
-    def __init__(self, config, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.router.add_get('/vospace/upload/{name:.*}',
-                            self.upload_data)
-
-        self.on_shutdown.append(self.shutdown)
-
-    async def shutdown(self):
-        pass
-
-    @classmethod
-    def start_server(cls, config, port, address):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        app = PosixFileServer(config)
-        web.run_app(app,
-                    host=address,
-                    port=port,
-                    reuse_port=True)
-
-    async def upload_data(self, request):
-        return web.Response(status=200,
-                            text="hello")
 
 
 class PosixPlugin(VOSpacePluginBase):
@@ -53,38 +18,17 @@ class PosixPlugin(VOSpacePluginBase):
     def __init__(self, app):
         super().__init__()
         self.app = app
-        self.server_process = None
-        self.server_task = None
-        self.port = 8090
-        self.address = 'localhost'
+
+        self.host = None
+        self.port = None
 
     async def setup(self):
         config = self.app['config']
-
-        try:
-            self.port = config.getint('PosixFileServer', 'port')
-        except configparser.NoSectionError:
-            pass
-
-        try:
-            self.address = config.get('PosixFileServer', 'address')
-        except configparser.NoSectionError:
-            pass
-
-        self.server_process = AsyncProcess(name='posix_file_server',
-                                           target=PosixFileServer.start_server,
-                                           args=(config,
-                                                 self.port,
-                                                 self.address))
-
-        self.server_task = asyncio.ensure_future(self.server_process.apply())
+        self.port = config.getint('PosixPlugin', 'port')
+        self.host = config.get('PosixPlugin', 'host')
 
     async def shutdown(self):
-        await self.server_process.terminate()
-        await self.server_process.join()
-
-        if self.server_task:
-            await self.server_task
+        pass
 
     def get_supported_import_views(self, node_type: str) -> list:
         if node_type == 'vos:ContainerNode':
@@ -99,6 +43,7 @@ class PosixPlugin(VOSpacePluginBase):
         return PROVIDES_PROTOCOLS
 
     def get_protocol_endpoints(self,
+                               uws_job_id: str,
                                target_path: str,
                                node_type: str,
                                direction: str,
@@ -107,8 +52,9 @@ class PosixPlugin(VOSpacePluginBase):
                                params: list) -> dict:
 
         protocol_endpoints = {'protocol': protocol,
-                              'endpoint': [f'http://{self.address}:{self.port}'
-                                           f'/vospace/upload{target_path}']}
+                              'endpoint': [f'http://{self.host}:{self.port}'
+                                           f'/vospace/upload/{uws_job_id}'
+                                           f'{target_path}']}
 
         return protocol_endpoints
 

@@ -1,6 +1,9 @@
 import os
+import io
 import sys
 import asyncio
+import aiofiles
+import aiofiles.os
 import logging
 import unittest
 import aiohttp
@@ -11,7 +14,7 @@ from aiohttp import web
 
 from pyvospace.core.model import PushToSpace, Node, HTTPPut
 from pyvospace.server.vospace import VOSpaceServer
-
+from pyvospace.server.plugins.posix.posix_server import PosixFileServer
 
 logging.basicConfig(stream=sys.stderr)
 logging.getLogger('test').setLevel(logging.DEBUG)
@@ -28,17 +31,33 @@ class TestCreate(unittest.TestCase):
         config = configparser.ConfigParser()
         if not os.path.exists(config_filename):
             config['Database'] = {'dsn': 'postgres://test:test@localhost:5432/vos'}
-            config['StoragePlugin'] = {'path': '', 'name': 'posix'}
+            config['Plugin'] = {'path': '', 'name': 'posix'}
+            config['PosixPlugin'] = {'host': 'localhost',
+                                     'port': 8081,
+                                     'root_dir': '/tmp/store/'}
             config.write(open(config_filename, 'w'))
 
-        app = self.loop.run_until_complete(VOSpaceServer.create(config_filename))
-        self.runner = web.AppRunner(app)
+        self.loop.run_until_complete(self._setup())
+
+        posix_server = self.loop.run_until_complete(PosixFileServer.create(config_filename))
+        self.posix_runner = web.AppRunner(posix_server)
+        self.loop.run_until_complete(self.posix_runner.setup())
+        posix_site = web.TCPSite(self.posix_runner, 'localhost', 8081)
+        self.loop.run_until_complete(posix_site.start())
+
+        self.app = self.loop.run_until_complete(VOSpaceServer.create(config_filename))
+        self.runner = web.AppRunner(self.app)
         self.loop.run_until_complete(self.runner.setup())
         site = web.TCPSite(self.runner, 'localhost', 8080)
         self.loop.run_until_complete(site.start())
 
+    async def _setup(self):
+        await self.create_file('/tmp/datafile.dat')
+
+
     def tearDown(self):
-        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
+        #self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
+        self.loop.run_until_complete(self.posix_runner.cleanup())
         self.loop.run_until_complete(self.runner.cleanup())
         self.loop.close()
 
@@ -47,10 +66,10 @@ class TestCreate(unittest.TestCase):
             async with session.delete(url) as resp:
                 return resp
 
-    async def put(self, url, xml):
+    async def put(self, url, **kwargs):
         async with aiohttp.ClientSession() as session:
-            async with session.put(url, data=xml) as resp:
-                return resp
+            async with session.put(url, **kwargs) as resp:
+                return resp.status, await resp.text()
 
     async def post(self, url, xml):
         async with aiohttp.ClientSession() as session:
@@ -61,6 +80,20 @@ class TestCreate(unittest.TestCase):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as resp:
                 return resp.status, await resp.text()
+
+    async def create_file(self, file_name):
+        try:
+            await aiofiles.os.stat(file_name)
+        except FileNotFoundError:
+            async with aiofiles.open(file_name, mode='wb') as f:
+                await f.truncate(1024*io.DEFAULT_BUFFER_SIZE)
+
+    async def file_sender(self, file_name=None):
+        async with aiofiles.open(file_name, 'rb') as f:
+            chunk = await f.read(64 * 1024)
+            while chunk:
+                yield chunk
+                chunk = await f.read(64 * 1024)
 
     def test_push_to_space(self):
         async def run():
@@ -110,9 +143,9 @@ class TestCreate(unittest.TestCase):
             prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            status, response = await self.get(end.text, None)
+            status, response = await self.put(end.text,
+                                              data=self.file_sender(file_name='/tmp/datafile.dat'))
             self.assertEqual(200, status, msg=response)
-
 
         self.loop.run_until_complete(run())
 
