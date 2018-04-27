@@ -6,6 +6,10 @@ from collections import namedtuple
 from .exception import VOSpaceError
 
 
+class InvalidUWSState(Exception):
+    pass
+
+
 UWS_Phase = namedtuple('NodeType', 'Pending '
                                    'Queued '
                                    'Executing '
@@ -82,7 +86,7 @@ class UWSJobExecutor(object):
     def __init__(self):
         self.job_tasks = {}
 
-    async def execute(self, func, app, job):
+    def execute(self, func, app, job):
         task = asyncio.ensure_future(self._run(func, app, job))
         self.job_tasks[task] = job
         task.add_done_callback(self._done)
@@ -92,10 +96,9 @@ class UWSJobExecutor(object):
             await func(app, job['id'], job)
 
         except VOSpaceError as e:
-            await set_uws_phase(app['db_pool'],
-                                job['id'],
-                                UWSPhase.Error,
-                                e.error)
+            await set_uws_phase_to_error(app['db_pool'],
+                                         job['id'],
+                                         e.error)
 
     def _done(self, task):
         del self.job_tasks[task]
@@ -107,7 +110,12 @@ class UWSJobExecutor(object):
             await asyncio.sleep(0.1)
 
 
-async def create_uws_job(conn, target, direction, job_info, extras):
+async def create_uws_job(conn,
+                         target,
+                         direction,
+                         job_info,
+                         extras,
+                         phase=UWSPhase.Pending):
     path_array = list(filter(None, target.split('/')))
     path_tree = '.'.join(path_array)
 
@@ -117,7 +125,7 @@ async def create_uws_job(conn, target, direction, job_info, extras):
                                  "values ($1, $2, $3, $4, $5, $6) returning id",
                                  path_tree,
                                  direction,
-                                 UWSPhase.Pending,
+                                 phase,
                                  destruction,
                                  job_info,
                                  extras)
@@ -125,29 +133,59 @@ async def create_uws_job(conn, target, direction, job_info, extras):
 
 
 async def get_uws_job(db_pool, job_id):
-    try:
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                result = await conn.fetchrow("select * from uws_jobs where id=$1",
-                                             job_id)
-                if not result:
-                    raise VOSpaceError(400, f"Invalid Request. "
-                                            f"UWS job {job_id} does not exist.")
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            return await get_uws_job_conn(conn, job_id)
 
-                return result
+
+async def get_uws_job_conn(conn, job_id):
+    try:
+        result = await conn.fetchrow("select * from uws_jobs "
+                                     "where id=$1 for share",
+                                     job_id)
+        if not result:
+            raise VOSpaceError(400, f"Invalid Request. "
+                                    f"UWS job {job_id} does not exist.")
+
+        return result
     except ValueError as e:
         raise VOSpaceError(400, f"Invalid jobId: {str(e)}")
 
 
-async def set_uws_phase(db_pool, job_id, phase, error=None):
+async def set_uws_phase_to_executing(db_pool, job_id, extras=None):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("update uws_jobs set phase=$2, error=$3 "
-                               "where id=$1",
-                               job_id, phase, error)
+
+            if extras:
+                return await conn.fetchrow("update uws_jobs set phase=$2, extras=$4 "
+                                           "where id=$1 and phase=$3 returning id",
+                                           job_id,
+                                           UWSPhase.Executing,
+                                           UWSPhase.Pending,
+                                           extras)
+
+            return await conn.fetchrow("update uws_jobs set phase=$2 "
+                                       "where id=$1 and phase=$3 returning id",
+                                       job_id,
+                                       UWSPhase.Executing,
+                                       UWSPhase.Pending)
 
 
-async def set_uws_extras(conn, job_id, phase, extras):
-    await conn.execute("update uws_jobs set phase=$2, extras=$3 "
-                       "where id=$1",
-                       job_id, phase, extras)
+async def set_uws_phase_to_completed(db_pool, job_id):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            return await conn.fetchrow("update uws_jobs set phase=$2 "
+                                       "where id=$1 and phase=$3 returning id",
+                                       job_id,
+                                       UWSPhase.Completed,
+                                       UWSPhase.Executing)
+
+
+async def set_uws_phase_to_error(db_pool, job_id, error):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            return await conn.fetchrow("update uws_jobs set phase=$2, error=$3"
+                                       "where id=$1 returning id",
+                                       job_id,
+                                       UWSPhase.Error,
+                                       error)

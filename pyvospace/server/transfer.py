@@ -5,8 +5,8 @@ import lxml.etree as ET
 
 from urllib.parse import urlparse
 
-from .uws import set_uws_extras, set_uws_phase, \
-    UWSPhase, get_uws_job, create_uws_job
+from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
+    get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, InvalidUWSState
 from .node import NS, NodeType, create_node, NodeTextLookup, \
     VOSpaceName, NodeLookup, delete_properties
 from .exception import VOSpaceError
@@ -60,13 +60,13 @@ async def generate_xml_transfer_details(app, job_id):
     return transfer_details_response(target, direction, end_points)
 
 
-async def create_transfer_job(app, job_xml):
+async def create_transfer_job(app, job_xml, phase=UWSPhase.Pending):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            return await _create_transfer_job(app, conn, job_xml)
+            return await __create_transfer_job(app, conn, job_xml, phase)
 
 
-async def _create_transfer_job(app, conn, job_xml):
+async def __create_transfer_job(app, conn, job_xml, phase):
     try:
         root = ET.fromstring(job_xml)
 
@@ -124,7 +124,6 @@ async def _create_transfer_job(app, conn, job_xml):
                 if node_view_uri is None:
                     raise VOSpaceError(400, "Invalid Argument. View uri not found.")
 
-
             # If there is no Node at the target URI, then the service SHALL
             # create a new Node using the uri and the default xsi:type for the space.
             response = await create_node(app=app,
@@ -174,21 +173,42 @@ async def _create_transfer_job(app, conn, job_xml):
                       'direction': direction_path_norm,
                       'copy': copy_node}
 
-        id = await create_uws_job(conn,
-                                  target_path_norm,
-                                  direction_path_norm,
-                                  job_xml,
-                                  json.dumps(extras))
-
-        return id
-
+        return await create_uws_job(conn,
+                                    target_path_norm,
+                                    direction_path_norm,
+                                    job_xml,
+                                    json.dumps(extras),
+                                    phase)
     except VOSpaceError as f:
         raise f
+
+    except asyncpg.exceptions.ForeignKeyViolationError:
+        raise VOSpaceError(404, f'Node Not Found. '
+                                f'{target_path_norm} not found.')
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise VOSpaceError(500, str(e))
+
+
+async def run_transfer_job(app, job_id, uws_cmd):
+
+    if not uws_cmd:
+        raise VOSpaceError(400, f"Invalid Request. "
+                                f"Empty UWS phase input.")
+
+    if uws_cmd.upper() != "PHASE=RUN":
+        raise VOSpaceError(400, f"Invalid Request. "
+                                f"Unknown UWS phase input {uws_cmd}")
+
+    async with app['db_pool'].acquire() as conn:
+        async with conn.transaction():
+            job = await get_uws_job_conn(conn, job_id)
+            # Can only start a PENDING Job
+            if job['phase'] != UWSPhase.Pending:
+                raise InvalidUWSState()
+            app['executor'].execute(run_job, app, job)
 
 
 async def run_job(app, job_id, job):
@@ -207,12 +227,9 @@ async def run_job(app, job_id, job):
 
         extras['results'] = results
 
-        async with app['db_pool'].acquire() as conn:
-            async with conn.transaction():
-                await set_uws_extras(conn,
-                                     job_id,
-                                     UWSPhase.Executing,
-                                     json.dumps(extras))
+        await set_uws_phase_to_executing(app['db_pool'],
+                                         job_id,
+                                         json.dumps(extras))
 
     else:
         extras = json.loads(job['extras'])
@@ -221,18 +238,14 @@ async def run_job(app, job_id, job):
         direction_path_norm = extras['direction']
         copy_node = extras['copy']
 
-        await set_uws_phase(app['db_pool'],
-                            job_id,
-                            UWSPhase.Executing)
+        await set_uws_phase_to_executing(app['db_pool'], job_id)
 
         await move_nodes(app=app,
                          target_path=target_path_norm,
                          direction_path=direction_path_norm,
                          perform_copy=copy_node)
 
-        await set_uws_phase(app['db_pool'],
-                            job_id,
-                            UWSPhase.Completed)
+        await set_uws_phase_to_completed(app['db_pool'], job_id)
 
 
 async def move_nodes(app, target_path, direction_path, perform_copy):

@@ -135,31 +135,28 @@ def generate_protocol_response(accepts, provides):
 
 
 async def get_transfer_job(conn, job_id):
-    job_results = await conn.fetchrow(f"select * from uws_jobs "
-                                      f"where id=$1",
-                                      job_id)
 
-    if not job_results:
-        raise VOSpaceError(404, f"Job does not exist. "
+    results = await conn.fetchrow(f'select * from uws_jobs inner join '
+                                  f'nodes on uws_jobs.target = nodes.path '
+                                  f'where uws_jobs.id = $1 '
+                                  f'for share of nodes',
+                                  job_id)
+
+    if not results:
+        raise VOSpaceError(404, f"Job or node does not exist. "
                                 f"JobID: {job_id}")
 
-    if job_results['phase'] != UWSPhase.Executing:
+    if results['phase'] != UWSPhase.Executing:
         raise VOSpaceError(400, f"Job not in EXECUTING phase."
                                 f"JobID: {job_results['phase']}")
 
-    results = await conn.fetchrow(f"select * from nodes "
-                                  f"where path=$1 for share",
-                                  job_results['target'])
-
-    if not results:
-        raise VOSpaceError(404, f"Node Not Found. "
-                                f"Node: {job_results['target']}")
-
-    if results['busy'] is True:
+    # Want to allow nodes to be appended to containers in parallel.
+    # Every other node should be blocked while uploading.
+    if results['busy'] is True and results['type'] != NodeType.ContainerNode:
         raise VOSpaceError(400, f"Node Busy. "
                                 f"Node: {results['path']} is busy.")
 
-    return job_results, results
+    return results
 
 
 async def set_node_busy(conn, path, busy):
@@ -172,7 +169,7 @@ async def set_node_busy(conn, path, busy):
                                busy)
     if not path:
         raise VOSpaceError(404, f"Node Not Found. "
-                                f"Node {path} not found.")
+                                f"{path} not found.")
 
 
 async def get_node(app, path, params):
@@ -217,7 +214,7 @@ async def get_node(app, path, params):
                                        path_tree)
             if len(results) == 0:
                 raise VOSpaceError(404, f"Node Not Found. "
-                                        f"Node: {path}")
+                                        f"{path} not found.")
 
             if detail != 'min':
                 properties = await conn.fetch("select * from properties "
@@ -257,7 +254,7 @@ async def delete_node(app, path):
                                       path_tree)
     if not result:
         raise VOSpaceError(404, f"Node Not Found. "
-                                f"Node: {path}")
+                                f"{path} not found.")
 
 
 async def create_node_request(app, xml_text, url_path):
@@ -310,7 +307,12 @@ async def create_node_request(app, xml_text, url_path):
     return create_response
 
 
-async def create_node(app, conn, uri_path, node_type, properties, check_valid_view_uri=None):
+async def create_node(app,
+                      conn,
+                      uri_path,
+                      node_type,
+                      properties,
+                      check_valid_view_uri=None):
     try:
         if node_type is None:
             node_type = NodeType.Node # if not specified then default is Node
@@ -346,12 +348,12 @@ async def create_node(app, conn, uri_path, node_type, properties, check_valid_vi
         # if the parent is not found but its expected to exist
         if not row and len(path_parent) > 0:
             raise VOSpaceError(404, f"Container Not Found. "
-                                    f"Container Node {'/'.join(path_parent)} not found.")
+                                    f"{'/'.join(path_parent)} not found.")
 
         if row:
             if row['type'] == NodeType.LinkNode:
                 raise VOSpaceError(400, f"Link Found. "
-                                        f"Link Node {row['name']} found in path.")
+                                        f"{row['name']} found in path.")
 
             if row['type'] != NodeType.ContainerNode:
                 raise VOSpaceError(404, f"Container Not Found. "
@@ -460,7 +462,7 @@ async def set_node_properties(app, xml_text, url_path):
                                            node_type)
                 if len(results) == 0:
                     raise VOSpaceError(404, f"Node Not Found. "
-                                            f"Node: {url_path}")
+                                            f"{url_path} not found.")
 
                 # if a property already exists then update it, only if read_only = False
                 await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
