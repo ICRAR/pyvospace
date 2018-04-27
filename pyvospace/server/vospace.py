@@ -11,8 +11,8 @@ from .exception import VOSpaceError
 from .node import create_node_request, delete_node, get_node, set_node_properties, \
     generate_protocol_response, generate_node_response
 from .uws import UWSJobExecutor, get_uws_job, \
-    generate_uws_job_xml, PhaseLookup, UWSPhase, results_dict_list_to_xml
-from .transfer import create_transfer_job, run_job, generate_xml_transfer_details
+    generate_uws_job_xml, PhaseLookup, UWSPhase, results_dict_list_to_xml, InvalidUWSState
+from .transfer import create_transfer_job, run_transfer_job, generate_xml_transfer_details
 from .plugin import VOSpacePluginBase
 
 
@@ -37,6 +37,8 @@ class VOSpaceServer(web.Application):
                                self.delete_node)
         self.router.add_post('/vospace/transfers',
                              self.transfer_node)
+        self.router.add_post('/vospace/synctrans',
+                             self.sync_transfer_node)
         self.router.add_get('/vospace/transfers/{job_id}',
                             self.get_transfer_job)
         self.router.add_post('/vospace/transfers/{job_id}/phase',
@@ -82,11 +84,11 @@ class VOSpaceServer(web.Application):
         plugin = plugin_source.load_plugin(plugin_name)
         plugin_obj = plugin.create(self)
 
-        await plugin_obj.setup()
-
         if not isinstance(plugin_obj, VOSpacePluginBase):
             raise ImportError(f"{repr(plugin_obj)} is not an "
                               f"instance of VOSpacePluginBase")
+
+        await plugin_obj.setup()
 
         self['plugin'] = plugin_obj
         self['plugin_source'] = plugin_source
@@ -140,11 +142,9 @@ class VOSpaceServer(web.Application):
     async def get_node(self, request):
         try:
             url_path = request.path.replace('/vospace/nodes', '')
-
             xml_response = await get_node(self,
                                           url_path,
                                           request.query)
-
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml_response)
@@ -183,10 +183,20 @@ class VOSpaceServer(web.Application):
     async def delete_node(self, request):
         try:
             url_path = request.path.replace('/vospace/nodes', '')
-
             await delete_node(self, url_path)
-
             return web.Response(status=204)
+
+        except VOSpaceError as f:
+            return web.Response(status=f.code, text=f.error)
+
+        except Exception as e:
+            return web.Response(status=500)
+
+    async def sync_transfer_node(self, request):
+        try:
+            xml_text = await request.text()
+            id = await create_transfer_job(self, xml_text, UWSPhase.Executing)
+            return web.HTTPSeeOther(location=f'/vospace/transfers/{id}/results/transferDetails')
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
@@ -197,9 +207,7 @@ class VOSpaceServer(web.Application):
     async def transfer_node(self, request):
         try:
             xml_text = await request.text()
-
             id = await create_transfer_job(self, xml_text)
-
             return web.HTTPSeeOther(location=f'/vospace/transfers/{id}')
 
         except VOSpaceError as f:
@@ -213,7 +221,6 @@ class VOSpaceServer(web.Application):
     async def get_transfer_job(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-
             job = await get_uws_job(self['db_pool'], job_id)
 
             results = []
@@ -234,22 +241,15 @@ class VOSpaceServer(web.Application):
                                 text=xml)
 
         except VOSpaceError as f:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
     async def transfer_details(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-
-            xml = await generate_xml_transfer_details(self,
-                                                      job_id)
-
+            xml = await generate_xml_transfer_details(self, job_id)
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml)
@@ -265,9 +265,7 @@ class VOSpaceServer(web.Application):
     async def get_transfer_node_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-
             job = await get_uws_job(self['db_pool'], job_id)
-
             return web.Response(status=200, text=PhaseLookup[job['phase']])
 
         except VOSpaceError as f:
@@ -279,22 +277,11 @@ class VOSpaceServer(web.Application):
     async def change_transfer_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            job = await get_uws_job(self['db_pool'], job_id)
-
             uws_cmd = await request.text()
-            if not uws_cmd:
-                raise VOSpaceError(400, f"Invalid Request. "
-                                        f"Empty UWS phase input.")
+            await run_transfer_job(self, job_id, uws_cmd)
+            return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
-            if uws_cmd.upper() != "PHASE=RUN":
-                raise VOSpaceError(400, f"Invalid Request. "
-                                        f"Unknown UWS phase input {uws_cmd}")
-
-            if job['phase'] != UWSPhase.Pending:
-                return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
-
-            await self['executor'].execute(run_job, self, job)
-
+        except InvalidUWSState:
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
         except VOSpaceError as f:
