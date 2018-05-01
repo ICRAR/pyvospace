@@ -17,7 +17,7 @@ class PosixFileServer(web.Application):
         config.read(cfg_file)
         self['config'] = config
 
-        self.router.add_put('/vospace/upload/{job_id}/{name:.*}',
+        self.router.add_put('/vospace/upload/{job_id}',
                             self.upload_data)
 
         self.on_shutdown.append(self.shutdown)

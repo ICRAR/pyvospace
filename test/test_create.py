@@ -29,19 +29,17 @@ class TestCreate(TestBase):
             self.assertEqual(500, status, msg=response)
 
             # Empty Path
-            node = Node('vos://icrar.org!vospace/')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/',
-                                              data=node.tostring())
-            self.assertEqual(400, status, msg=response)
+            node = Node('')
+            await self.create_node(node, expected_status=400)
 
             # URI name in node does not match URL path
-            node = Node('vos://icrar.org!vospace/data1')
+            node = Node('data1')
             status, response = await self.put('http://localhost:8080/vospace/nodes/data',
                                               data=node.tostring())
             self.assertEqual(400, status, msg=response)
 
             # Invalid attribute
-            node = Node('vos://icrar.org!vospace/data1')
+            node = Node('data1')
             root = ET.fromstring(node.tostring())
             root.attrib.pop('uri')
             xml = tostring(root)
@@ -50,7 +48,7 @@ class TestCreate(TestBase):
             self.assertEqual(400, status, msg=response)
 
             # Invalid node type
-            node = Node('vos://icrar.org!vospace/data1')
+            node = Node('data1')
             root = ET.fromstring(node.tostring())
             root.attrib['{http://www.w3.org/2001/XMLSchema-instance}type'] = 'vos:unknown'
             xml = tostring(root)
@@ -63,116 +61,81 @@ class TestCreate(TestBase):
     def test_create_node(self):
         async def run():
             # Invalid Path
-            node1 = ContainerNode('vos://icrar.org!vospace/')
+            node1 = ContainerNode('')
             status, response = await self.put('http://localhost:8080/vospace/nodes/',
                                               data=node1.tostring())
             self.assertEqual(400, status, msg=response)
 
-            #node1 = ContainerNode('/test')
-            #resp = await self.put('http://localhost:8080/vospace/nodes/test', node1.tostring())
-            #self.assertEqual(400, resp.status, msg=await resp.text())
-
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Test", True),
                           Property('ivo://ivoa.net/vospace/core#description', "Hello", True)]
-            node = ContainerNode('vos://icrar.org!vospace/test1', properties=properties)
+            node = ContainerNode('test1', properties=properties)
             status, response = await self.put('http://localhost:8080/vospace/nodes/test1',
                                               data=node.tostring())
             self.assertEqual(201, status, msg=response)
 
-            node1 = ContainerNode('vos://icrar.org!vospace/test1/test2')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/test1/test2',
-                                              data=node1.tostring())
-            self.assertEqual(201, status, msg=response)
+            node1 = ContainerNode('/test1/test2')
+            await self.create_node(node1)
 
-            #log.debug(response)
-
-            node2 = Node('vos://icrar.org!vospace/test1/data')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/test1/data',
-                                              data=node2.tostring())
-            self.assertEqual(201, status, msg=response)
-
-            #log.debug(response)
+            node2 = Node('/test1/data')
+            await self.create_node(node2)
 
             # Duplicate Node
-            status, response = await self.put('http://localhost:8080/vospace/nodes/test1/test2',
-                                              data=node1.tostring())
-            self.assertEqual(409, status, msg=response)
+            await self.create_node(node1, expected_status=409)
 
             # Link Node
-            node2 = LinkNode('vos://icrar.org!vospace/test1/test2/test3', 'http://google.com')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/test1/test2/test3',
-                                              data=node2.tostring())
-            self.assertEqual(201, status, msg=response)
+            link_node = LinkNode('/test1/test2/test3', 'http://google.com')
+            await self.create_node(link_node)
 
             # Check that Link Node is in Path
-            node3 = Node('vos://icrar.org!vospace/test1/test2/test3/test4')
-            status, respomse = await self.put('http://localhost:8080/vospace/nodes/test1/test2/test3/test4',
-                                              data=node3.tostring())
-            self.assertEqual(400, status, msg=response)
+            node3 = Node('/test1/test2/test3/test4')
+            await self.create_node(node3, expected_status=400)
 
             # Test failure cases of getNode
             params = {'detail': 'max'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/',
-                                              params=params)
-            self.assertEqual(400, status, msg=response)
+            await self.get_node('', params, expected_status=400)
 
             # Node not found
             params = {'detail': 'max'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/mynode',
-                                              params=params)
-            self.assertEqual(404, status, msg=response)
+            await self.get_node('mynode', params, expected_status=404)
 
             # Container Node not found
-            node_not_found = Node('vos://icrar.org!vospace/test1/test2/test10/test11')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/test1/test2/test10/test11',
-                                              data=node_not_found.tostring())
-            self.assertEqual(404, status, msg=response)
+            node_not_found = Node('/test1/test2/test10/test11')
+            await self.create_node(node_not_found, expected_status=404)
 
             # Invalid parameters
             params = {'detail': 'invalid'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/test1',
-                                              params=params)
-            self.assertEqual(400, status, msg=response)
+            await self.get_node('test1', params, expected_status=400)
 
             params = {'limit': -1}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/test1',
-                                              params=params)
-            self.assertEqual(400, status, msg=response)
+            await self.get_node('test1', params, expected_status=400)
 
             params = {'limit': "string"}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/test1',
-                                              params=params)
-            self.assertEqual(400, status, msg=response)
+            await self.get_node('test1', params, expected_status=400)
 
             # get only one child of the container node, other should not be there.
             # Should be in alphabetical order
             params = {'detail': 'max', 'limit': 1}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/test1',
-                                              params=params)
-            self.assertEqual(200, status, msg=response)
+            node = await self.get_node('test1', params)
 
-            node = Node.fromstring(response)
-            cmp_node = ContainerNode('vos://icrar.org!vospace/test1',
+            cmp_node = ContainerNode('/test1',
                                      properties=properties,
-                                     nodes=[Node('vos://icrar.org!vospace/test1/data')])
+                                     nodes=[Node('/test1/data')])
+
             self.assertEqual(node, cmp_node)
 
             params = {'detail': 'min'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/test1',
-                                              params=params)
-            self.assertEqual(200, status, msg=response)
+            node = await self.get_node('test1', params)
 
             # detail = min should not have properties
-            node = Node.fromstring(response)
-            cmp_node = ContainerNode('vos://icrar.org!vospace/test1',
+            cmp_node = ContainerNode('/test1',
                                      properties=properties,
-                                     nodes=[Node('vos://icrar.org!vospace/test1/data'),
-                                            ContainerNode('vos://icrar.org!vospace/test1/test2')])
+                                     nodes=[Node('/test1/data'),
+                                            ContainerNode('/test1/test2')])
             self.assertNotEqual(node, cmp_node)
 
-            cmp_node = ContainerNode('vos://icrar.org!vospace/test1',
-                                     nodes=[Node('vos://icrar.org!vospace/test1/data'),
-                                            ContainerNode('vos://icrar.org!vospace/test1/test2')])
+            cmp_node = ContainerNode('test1',
+                                     nodes=[Node('/test1/data'),
+                                            ContainerNode('/test1/test2')])
             self.assertEqual(node, cmp_node)
 
         self.loop.run_until_complete(run())

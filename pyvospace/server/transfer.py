@@ -1,22 +1,22 @@
 import os
-import json
 import asyncpg
 import lxml.etree as ET
 
 from urllib.parse import urlparse
 
 from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
-    get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, InvalidUWSState
+    get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, InvalidUWSState, \
+    update_uws_job, set_uws_phase_to_error
 from .node import NS, NodeType, create_node, NodeTextLookup, \
-    VOSpaceName, NodeLookup, delete_properties
+    delete_properties, get_node
 from .exception import VOSpaceError
 
 
-def transfer_details_response(target, direction, protocol_endpoints):
+def xml_transfer_details(target, direction, protocol_endpoints):
+    prot_end = []
     prot = protocol_endpoints['protocol']
     endpoints = protocol_endpoints['endpoint']
 
-    prot_end = []
     for end in endpoints:
         end_str = f'<vos:protocol uri="{prot}">' \
                   f'<vos:endpoint>{end}</vos:endpoint>' \
@@ -27,73 +27,116 @@ def transfer_details_response(target, direction, protocol_endpoints):
           f'<vos:transfer xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
           f'<vos:target>{target}</vos:target>' \
           f'<vos:direction>{direction}</vos:direction>' \
-          f'{"".join(prot_end)}' \
+          f'{ "".join(prot_end) }' \
           f'</vos:transfer>'
 
     return xml
 
 
-async def generate_xml_transfer_details(app, job_id):
+async def get_transfer_details(app, job_id):
     job = await get_uws_job(app['db_pool'], job_id)
 
-    if not job['extras']:
-        raise VOSpaceError(500, 'Internal Fault. '
-                                'Job details not found.')
+    if job['phase'] < UWSPhase.Executing:
+        raise VOSpaceError(400, f'Job not EXECUTING. Job: {job_id}')
 
-    extras = json.loads(job['extras'])
-    node_type = extras['node']['type']
-    node_path = extras['node']['path']
-    target = extras['transfer']['target']
-    direction = extras['transfer']['direction']
-    protocol = extras['transfer']['protocol']
-    view = extras['transfer']['view']
-    params = extras['transfer']['params']
+    if not job['transfer']:
+        raise VOSpaceError(400, f'No transferDetails for this job. Job: {job_id}')
 
-    end_points = app['plugin'].get_protocol_endpoints(job_id,
-                                                      node_path,
-                                                      node_type,
-                                                      direction,
-                                                      protocol,
-                                                      view,
-                                                      params)
+    return job['transfer']
 
-    return transfer_details_response(target, direction, end_points)
+
+async def get_transfer_job(conn, job_id):
+
+    results = await conn.fetchrow(f'select * from uws_jobs inner join '
+                                  f'nodes on uws_jobs.target = nodes.path '
+                                  f'where uws_jobs.id = $1 '
+                                  f'for share of nodes',
+                                  job_id)
+
+    if not results:
+        raise VOSpaceError(404, f"Job or node does not exist. JobID: {job_id}")
+
+    if results['phase'] != UWSPhase.Executing:
+        raise VOSpaceError(400, f"Job not in EXECUTING phase. JobID: {job_id}")
+
+    # Want to allow nodes to be appended to containers in parallel.
+    # Every other node should be blocked while uploading.
+    if results['busy'] is True and results['type'] != NodeType.ContainerNode:
+        raise VOSpaceError(400, f"Node Busy. Node: {results['path']} is busy.")
+    return results
+
+
+async def run_transfer_job(app, job_id, uws_cmd):
+
+    if not uws_cmd:
+        raise VOSpaceError(400, "Invalid Request. Empty UWS phase input.")
+
+    if uws_cmd.upper() != "PHASE=RUN":
+        raise VOSpaceError(400, f"Invalid Request. Unknown UWS phase input {uws_cmd}")
+
+    async with app['db_pool'].acquire() as conn:
+        async with conn.transaction():
+            job = await get_uws_job_conn(conn, job_id)
+            # Can only start a PENDING Job
+            if job['phase'] != UWSPhase.Pending:
+                raise InvalidUWSState()
+            app['executor'].execute(run_job, app, job)
+
+
+async def run_job(app, job_id, job):
+    async with app['db_pool'].acquire() as conn:
+        async with conn.transaction():
+            await perform_transfer_job(app=app, conn=conn, job_id=job_id,
+                                       job_xml=job['job_info'], phase=UWSPhase.Executing)
 
 
 async def create_transfer_job(app, job_xml, phase=UWSPhase.Pending):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            return await __create_transfer_job(app, conn, job_xml, phase)
+            job_id = await create_uws_job(conn=conn, target=None, direction=None,
+                                          job_info=job_xml, result=None, transfer=None,
+                                          phase=phase)
+            # If the phase is Executing its assumes its a sync transfer, so run it now
+            if phase == UWSPhase.Executing:
+                await perform_transfer_job(app=app, conn=conn, job_id=job_id,
+                                           job_xml=job_xml, phase=phase)
+            return job_id
 
 
-async def __create_transfer_job(app, conn, job_xml, phase):
+async def perform_transfer_job(app, conn, job_id, job_xml, phase):
+    try:
+        await __perform_transfer_job(app=app, conn=conn, job_id=job_id,
+                                     job_xml=job_xml, phase=phase)
+    except VOSpaceError as e:
+        await set_uws_phase_to_error(app['db_pool'], job_id, e.error)
+    except BaseException as f:
+        await set_uws_phase_to_error(app['db_pool'], job_id, str(f))
+
+
+async def __perform_transfer_job(app, conn, job_id, job_xml, phase):
     try:
         root = ET.fromstring(job_xml)
 
         transfer = root.tag
         if transfer is None:
-            raise VOSpaceError(500, "Internal Fault. "
-                                    "vos:transfer root does not exist")
+            raise VOSpaceError(500, "Internal Fault. vos:transfer root does not exist")
 
         target = root.find('vos:target', NS)
         if target is None:
-            raise VOSpaceError(500, "Internal Fault. "
-                                    "vos:target does not exist")
+            raise VOSpaceError(500, "Internal Fault. vos:target does not exist")
 
         direction = root.find('vos:direction', NS)
         if direction is None:
-            raise VOSpaceError(500, "Internal Fault. "
-                                    "vos:direction does not exist")
+            raise VOSpaceError(500, "Internal Fault. vos:direction does not exist")
 
         target_path = urlparse(target.text)
         if not target_path.path:
-            raise VOSpaceError(400, "Invalid URI. "
-                                    "URI does not exist.")
+            raise VOSpaceError(400, "Invalid URI. URI does not exist.")
 
-        target_path_norm = os.path.normpath(target_path.path)
+        target_path_norm = os.path.normpath(target_path.path).lstrip('/')
 
         # check transfer type
-        if direction.text == 'pushToVoSpace':
+        if direction.text == 'pushToVoSpace' or direction.text == 'pullFromVoSpace':
             direction_path_norm = direction.text
 
             trans_params = []
@@ -112,11 +155,6 @@ async def __create_transfer_job(app, conn, job_xml, phase):
             if prot_uri is None:
                 raise VOSpaceError(400, "Invalid Argument. Protocol uri not found.")
 
-            provides_protocols = app['plugin'].get_provides_protocols()
-            if prot_uri not in provides_protocols:
-                raise VOSpaceError(400, f"Protocol Not Supported. "
-                                        f"Protocol {prot_uri} not supported.")
-
             node_view_uri = None
             node_view = root.find('vos:view', NS)
             if node_view is not None:
@@ -124,42 +162,84 @@ async def __create_transfer_job(app, conn, job_xml, phase):
                 if node_view_uri is None:
                     raise VOSpaceError(400, "Invalid Argument. View uri not found.")
 
-            # If there is no Node at the target URI, then the service SHALL
-            # create a new Node using the uri and the default xsi:type for the space.
-            response = await create_node(app=app,
-                                         conn=conn,
-                                         uri_path=target_path_norm,
-                                         node_type=NodeTextLookup[NodeType.DataNode],
-                                         properties=None,
-                                         check_valid_view_uri=node_view_uri)
+            # get the node and its parent and lock it from being updated or deleted
+            node_results = await get_node(conn, target_path_norm)
 
-            # If a Node already exists at the target URI,
-            # then the data SHALL be imported into the existing Node
-            # and the Node properties SHALL be cleared unless the node is a ContainerNode.
-            if response.node_updated is True:
-                if NodeLookup[response.node_type_text] != NodeType.ContainerNode:
-                    await delete_properties(conn, target_path_norm)
+            if direction.text == 'pushToVoSpace':
+                provides_protocols = app['plugin'].get_supported_import_provides_protocols()
+                if prot_uri not in provides_protocols:
+                    raise VOSpaceError(400, f"Protocol Not Supported. "
+                                            f"Protocol {prot_uri} not supported.")
 
-            extras = {'node': {'path': target_path_norm,
-                               'type': response.node_type_text},
-                      'transfer': {'direction': 'pushToVoSpace',
-                                   'target': target.text,
-                                   'protocol': prot_uri,
-                                   'view': node_view_uri,
-                                   'params': trans_params}}
+                if node_results:
+                    node_type_text = NodeTextLookup[node_results['type']]
+                else:
+                    node_type_text = NodeTextLookup[NodeType.DataNode]
 
+                import_views = app['plugin'].get_supported_import_accepts_views(target_path_norm,
+                                                                                node_type_text)
+                if node_view_uri:
+                    if node_view_uri not in import_views:
+                        raise VOSpaceError(400, f"View Not Supported. View {node_view_uri} not supported.")
+
+                # If there is no Node at the target URI, then the service SHALL
+                # create a new Node using the uri and the default xsi:type for the space.
+                if not node_results:
+                    await create_node(app=app,
+                                      conn=conn,
+                                      uri_path=target_path_norm,
+                                      node_type=node_type_text,
+                                      properties=None)
+                else:
+                    # If a Node already exists at the target URI,
+                    # then the data SHALL be imported into the existing Node
+                    # and the Node properties SHALL be cleared unless the node is a ContainerNode.
+                    if node_results['type'] != NodeType.ContainerNode:
+                        await delete_properties(conn, target_path_norm)
+
+            else:
+                if not node_results:
+                    raise VOSpaceError(404, f'Node Not Found. {target_path_norm} not found.')
+
+                provides_protocols = app['plugin'].get_supported_export_provides_protocols()
+                if prot_uri not in provides_protocols:
+                    raise VOSpaceError(400, f"Protocol Not Supported. Protocol {prot_uri} not supported.")
+
+                node_type_text = NodeTextLookup(node_results['type'])
+
+            end_points = app['plugin'].get_protocol_endpoints(uws_job_id=job_id,
+                                                              target_path=target_path_norm,
+                                                              target_type=node_type_text,
+                                                              direction=direction,
+                                                              protocol=prot_uri,
+                                                              view=node_view_uri,
+                                                              params=trans_params)
+
+            xml_transfer = xml_transfer_details(target=target.text,
+                                                direction=direction.text,
+                                                protocol_endpoints=end_points)
+
+            space_name = app['space_name']
+            attr_vals = []
+            attr_vals.append(f'<uws:result id="transferDetails" '
+                             f'xlink:href="/vospace/transfers/{job_id}/results/transferDetails"/>')
+            attr_vals.append(f'<uws:result id="dataNode" '
+                             f'xlink:href="vos://{space_name}!vospace/{target_path_norm}"/>')
+            result = f"<uws:results>{''.join(attr_vals)}</uws:results>"
+
+            await update_uws_job(conn=conn, job_id=job_id, target=target_path_norm,
+                                 direction=direction_path_norm, transfer=xml_transfer,
+                                 result=result, phase=phase)
         else:
             direction_path = urlparse(direction.text)
             if not direction_path.path:
-                raise VOSpaceError(400, "Invalid URI. "
-                                        "URI does not exist.")
+                raise VOSpaceError(400, "Invalid URI. URI does not exist.")
 
             direction_path_norm = os.path.normpath(direction_path.path)
 
             keep_bytes = root.find('vos:keepBytes', NS)
             if keep_bytes is None:
-                raise VOSpaceError(500, "Internal Fault. "
-                                        "vos:keepBytes does not exist")
+                raise VOSpaceError(500, "Internal Fault. vos:keepBytes does not exist")
 
             if keep_bytes.text == 'false' or keep_bytes.text == 'False':
                 copy_node = False
@@ -169,22 +249,21 @@ async def __create_transfer_job(app, conn, job_xml, phase):
             else:
                 raise VOSpaceError(500, "Unknown keepBytes value.")
 
-            extras = {'target': target_path_norm,
-                      'direction': direction_path_norm,
-                      'copy': copy_node}
+            await set_uws_phase_to_executing(app['db_pool'], job_id)
+            await move_nodes(app=app,
+                             target_path=target_path_norm,
+                             direction_path=direction_path_norm,
+                             perform_copy=copy_node)
+            await set_uws_phase_to_completed(app['db_pool'], job_id)
 
-        return await create_uws_job(conn,
-                                    target_path_norm,
-                                    direction_path_norm,
-                                    job_xml,
-                                    json.dumps(extras),
-                                    phase)
     except VOSpaceError as f:
         raise f
 
+    except asyncpg.exceptions.UniqueViolationError as f:
+        raise VOSpaceError(409, f"Duplicate Node. {target_path_norm} already exists.")
+
     except asyncpg.exceptions.ForeignKeyViolationError:
-        raise VOSpaceError(404, f'Node Not Found. '
-                                f'{target_path_norm} not found.')
+        raise VOSpaceError(404, f"Node Not Found. {target_path_norm} not found.")
 
     except Exception as e:
         import traceback
@@ -192,64 +271,7 @@ async def __create_transfer_job(app, conn, job_xml, phase):
         raise VOSpaceError(500, str(e))
 
 
-async def run_transfer_job(app, job_id, uws_cmd):
-
-    if not uws_cmd:
-        raise VOSpaceError(400, f"Invalid Request. "
-                                f"Empty UWS phase input.")
-
-    if uws_cmd.upper() != "PHASE=RUN":
-        raise VOSpaceError(400, f"Invalid Request. "
-                                f"Unknown UWS phase input {uws_cmd}")
-
-    async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
-            job = await get_uws_job_conn(conn, job_id)
-            # Can only start a PENDING Job
-            if job['phase'] != UWSPhase.Pending:
-                raise InvalidUWSState()
-            app['executor'].execute(run_job, app, job)
-
-
-async def run_job(app, job_id, job):
-
-    direction = job['direction']
-
-    if direction == 'pushToVoSpace':
-        extras = json.loads(job['extras'])
-        target_path_norm = extras['node']['path']
-
-        results = [{'id': 'transferDetails',
-                    'xlink:href': f'/vospace/transfers/{job_id}'
-                                  f'/results/transferDetails'},
-                   {'id': "dataNode",
-                    'xlink:href': f'{VOSpaceName}{target_path_norm}'}]
-
-        extras['results'] = results
-
-        await set_uws_phase_to_executing(app['db_pool'],
-                                         job_id,
-                                         json.dumps(extras))
-
-    else:
-        extras = json.loads(job['extras'])
-
-        target_path_norm = extras['target']
-        direction_path_norm = extras['direction']
-        copy_node = extras['copy']
-
-        await set_uws_phase_to_executing(app['db_pool'], job_id)
-
-        await move_nodes(app=app,
-                         target_path=target_path_norm,
-                         direction_path=direction_path_norm,
-                         perform_copy=copy_node)
-
-        await set_uws_phase_to_completed(app['db_pool'], job_id)
-
-
 async def move_nodes(app, target_path, direction_path, perform_copy):
-
     try:
         target_path_array = list(filter(None, target_path.split('/')))
         direction_path_array = list(filter(None, direction_path.split('/')))
@@ -262,7 +284,7 @@ async def move_nodes(app, target_path, direction_path, perform_copy):
                 result = await conn.fetch("select name, type, path, "
                                           "path = subltree($2, 0, nlevel(path)) as common "
                                           "from nodes where path <@ $1 "
-                                          "or path = $2 order by path asc for update",
+                                          "or path <@ $2 order by path asc for update",
                                           target_path_tree,
                                           destination_path_tree)
 
@@ -272,21 +294,17 @@ async def move_nodes(app, target_path, direction_path, perform_copy):
                 dest_record = result_dict.get(destination_path_tree, None)
 
                 if target_record is None:
-                    raise VOSpaceError(404, f"Node Not Found. "
-                                            f"{target_path} not found.")
+                    raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
 
                 if dest_record is None:
-                    raise VOSpaceError(404, f"Node Not Found. "
-                                            f"{destination_path_tree} not found.")
+                    raise VOSpaceError(404, f"Node Not Found. {destination_path_tree} not found.")
 
                 if dest_record['type'] != NodeType.ContainerNode:
-                    raise VOSpaceError(400, f"Duplicate Node. "
-                                            f"{direction_path} already exists "
+                    raise VOSpaceError(400, f"Duplicate Node. {direction_path} already exists "
                                             f"and is not a container.")
 
                 if target_record['common'] is True and target_record['type'] == NodeType.ContainerNode:
-                    raise VOSpaceError(400, f"Invalid URI. "
-                                            f"Moving {target_path} -> {direction_path} "
+                    raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
                                             f"is invalid.")
 
                 if perform_copy:
@@ -296,7 +314,7 @@ async def move_nodes(app, target_path, direction_path, perform_copy):
                                                     "$2||subpath(node_path, nlevel($1)-1) as concat "
                                                     "from nodes inner join properties "
                                                     "on nodes.path = properties.node_path "
-                                                    "where path <@ $1 for update",
+                                                    "where path <@ $1",
                                                      target_path_tree,
                                                      destination_path_tree)
 

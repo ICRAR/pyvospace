@@ -1,5 +1,4 @@
 import os
-import json
 import asyncpg
 import configparser
 
@@ -8,11 +7,11 @@ from functools import partial
 from pluginbase import PluginBase
 
 from .exception import VOSpaceError
-from .node import create_node_request, delete_node, get_node, set_node_properties, \
+from .node import create_node_request, delete_node, get_node_request, set_node_properties, \
     generate_protocol_response, generate_node_response
 from .uws import UWSJobExecutor, get_uws_job, \
-    generate_uws_job_xml, PhaseLookup, UWSPhase, results_dict_list_to_xml, InvalidUWSState
-from .transfer import create_transfer_job, run_transfer_job, generate_xml_transfer_details
+    generate_uws_job_xml, PhaseLookup, UWSPhase, InvalidUWSState
+from .transfer import create_transfer_job, run_transfer_job, get_transfer_details
 from .plugin import VOSpacePluginBase
 
 
@@ -40,13 +39,13 @@ class VOSpaceServer(web.Application):
         self.router.add_post('/vospace/synctrans',
                              self.sync_transfer_node)
         self.router.add_get('/vospace/transfers/{job_id}',
-                            self.get_transfer_job)
+                            self.get_complete_transfer_job)
         self.router.add_post('/vospace/transfers/{job_id}/phase',
                              self.change_transfer_job_phase)
         self.router.add_get('/vospace/transfers/{job_id}/phase',
                              self.get_transfer_node_job_phase)
         self.router.add_get('/vospace/transfers/{job_id}/error',
-                            self.get_transfer_job)
+                            self.get_complete_transfer_job)
         self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails',
                             self.transfer_details)
 
@@ -87,9 +86,10 @@ class VOSpaceServer(web.Application):
         if not isinstance(plugin_obj, VOSpacePluginBase):
             raise ImportError(f"{repr(plugin_obj)} is not an "
                               f"instance of VOSpacePluginBase")
-
+        # allow the plugin to set itself up before starting server
         await plugin_obj.setup()
 
+        self['space_name'] = plugin_obj.get_space_name()
         self['plugin'] = plugin_obj
         self['plugin_source'] = plugin_source
 
@@ -107,11 +107,12 @@ class VOSpaceServer(web.Application):
     async def get_protocols(self, request):
         try:
             accepts = self['plugin'].get_accepts_protocols()
-            provides = self['plugin'].get_provides_protocols()
 
-            xml_response = generate_protocol_response(accepts,
-                                                      provides)
+            push_provides = self['plugin'].get_supported_import_provides_protocols()
+            pull_provides = self['plugin'].get_supported_export_provides_protocols()
+            provides = push_provides + pull_provides
 
+            xml_response = generate_protocol_response(accepts, provides)
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml_response)
@@ -142,9 +143,7 @@ class VOSpaceServer(web.Application):
     async def get_node(self, request):
         try:
             url_path = request.path.replace('/vospace/nodes', '')
-            xml_response = await get_node(self,
-                                          url_path,
-                                          request.query)
+            xml_response = await get_node_request(self, url_path, request.query)
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml_response)
@@ -159,14 +158,16 @@ class VOSpaceServer(web.Application):
         try:
             xml_text = await request.text()
             url_path = request.path.replace('/vospace/nodes', '')
-            response = await create_node_request(self,
-                                                 xml_text,
-                                                 url_path)
+            response = await create_node_request(self, xml_text, url_path)
 
-            xml_response = generate_node_response(node_path=response.node_name,
+            accepts = self['plugin'].get_supported_import_accepts_views(response.node_name,
+                                                                        response.node_type_text)
+
+            xml_response = generate_node_response(space_name=self['space_name'],
+                                                  node_path=response.node_name,
                                                   node_type=response.node_type_text,
                                                   node_property=response.node_properties,
-                                                  node_accepts_views=response.node_import_views)
+                                                  node_accepts_views=accepts)
 
             return web.Response(status=201,
                                 content_type='text/xml',
@@ -218,22 +219,16 @@ class VOSpaceServer(web.Application):
             traceback.print_exc()
             return web.Response(status=500)
 
-    async def get_transfer_job(self, request):
+    async def get_complete_transfer_job(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
             job = await get_uws_job(self['db_pool'], job_id)
-
-            results = []
-            if job['extras']:
-                extras = json.loads(job['extras'])
-                results = results_dict_list_to_xml(
-                    extras.get('results', None))
 
             xml = generate_uws_job_xml(job['id'],
                                        job['phase'],
                                        job['destruction'],
                                        job['job_info'],
-                                       results,
+                                       job['result'],
                                        job['error'])
 
             return web.Response(status=200,
@@ -244,12 +239,14 @@ class VOSpaceServer(web.Application):
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return web.Response(status=500)
 
     async def transfer_details(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            xml = await generate_xml_transfer_details(self, job_id)
+            xml = await get_transfer_details(self, job_id)
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml)

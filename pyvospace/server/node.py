@@ -8,14 +8,11 @@ from collections import namedtuple
 from xml.etree.ElementTree import ParseError
 
 from .exception import VOSpaceError
-from .uws import UWSPhase
 
 
 Create_Response = namedtuple('CreateResponse', 'node_name '
                                                'node_type_text '
-                                               'node_properties '
-                                               'node_import_views '
-                                               'node_updated')
+                                               'node_properties ')
 
 Node_Type = namedtuple('NodeType', 'Node '
                                    'DataNode '
@@ -48,8 +45,6 @@ Provides = ['ivo://ivoa.net/vospace/core#binaryview']
 
 NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
 
-VOSpaceName = 'vos://icrar.org!vospace'
-
 
 def generate_view_xml(node_views):
     if not node_views:
@@ -76,21 +71,22 @@ def generate_property_xml(node_property):
     return ''.join(node_property_array)
 
 
-def generate_node_summary_xml(nodes):
+def generate_node_summary_xml(space_name, nodes):
     if not nodes:
         return ''
 
     node_array = []
     for node in nodes:
         uri = node['path'].replace('.', '/')
-        uri_str = f"{VOSpaceName}/{uri}"
+        uri_str = f"vos://{space_name}!vospace/{uri}"
         node_type = node['type']
         node_array.append(f'<vos:node uri="{uri_str}" '
                           f'xsi:type="{NodeTextLookup[node_type]}"/>')
     return f"<vos:nodes>{''.join(node_array)}</vos:nodes>"
 
 
-def generate_node_response(node_path,
+def generate_node_response(space_name,
+                           node_path,
                            node_type,
                            node_property=[],
                            node_accepts_views=[],
@@ -100,12 +96,12 @@ def generate_node_response(node_path,
           f' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           f' xsi:type="{node_type}"' \
-          f' uri="{VOSpaceName}{node_path}">' \
+          f' uri="vos://{space_name}!vospace/{node_path}">' \
           f'<vos:properties>{ generate_property_xml(node_property) }</vos:properties>' \
           f'<vos:accepts>{ generate_view_xml(node_accepts_views) }</vos:accepts>' \
           f'<vos:provides>{ generate_view_xml(node_provides_views) }</vos:provides>' \
           f'<vos:capabilities/>' \
-          f'{generate_node_summary_xml(node_container)}' \
+          f'{generate_node_summary_xml(space_name, node_container)}' \
           f'</vos:node>'
     return xml
 
@@ -134,51 +130,57 @@ def generate_protocol_response(accepts, provides):
     return xml
 
 
-async def get_transfer_job(conn, job_id):
-
-    results = await conn.fetchrow(f'select * from uws_jobs inner join '
-                                  f'nodes on uws_jobs.target = nodes.path '
-                                  f'where uws_jobs.id = $1 '
-                                  f'for share of nodes',
-                                  job_id)
-
-    if not results:
-        raise VOSpaceError(404, f"Job or node does not exist. "
-                                f"JobID: {job_id}")
-
-    if results['phase'] != UWSPhase.Executing:
-        raise VOSpaceError(400, f"Job not in EXECUTING phase."
-                                f"JobID: {job_results['phase']}")
-
-    # Want to allow nodes to be appended to containers in parallel.
-    # Every other node should be blocked while uploading.
-    if results['busy'] is True and results['type'] != NodeType.ContainerNode:
-        raise VOSpaceError(400, f"Node Busy. "
-                                f"Node: {results['path']} is busy.")
-
-    return results
-
-
 async def set_node_busy(conn, path, busy):
     path_array = list(filter(None, path.split('/')))
     path_tree = '.'.join(path_array)
 
     path = await conn.fetchrow("update nodes set busy=$2 "
                                "where path=$1 returning path",
-                               path_tree,
-                               busy)
+                               path_tree, busy)
     if not path:
-        raise VOSpaceError(404, f"Node Not Found. "
-                                f"{path} not found.")
+        raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
 
-async def get_node(app, path, params):
+async def get_node(conn, path):
+    # remove empty entries as a result of strip
+    path_list = list(filter(None, path.split('/')))
+
+    if len(path_list) == 0:
+        raise VOSpaceError(400, "Invalid URI. Path is empty")
+
+    path_parent = path_list[:-1]
+    path_parent_tree = '.'.join(path_parent)
+    path_tree = '.'.join(path_list)
+
+    # share lock both node and parent, important so we
+    # dont have a dead lock with move/copy/create
+    result = await conn.fetch(f"select * from nodes "
+                              f"where path = $1 or path = $2 "
+                              f"order by path asc for share",
+                              path_tree, path_parent_tree)
+    result_len = len(result)
+    if result_len == 1:
+        # If its just one result and we have a parent tree
+        # it can not be the node. It has to be just the parent!
+        if path_parent_tree:
+            assert result[0]['path'] == path_parent_tree
+
+        # If the only result is the node then return it.
+        # This assumes its a root node.
+        return result[0]
+    elif result_len == 2:
+        # If there are 2 results the first is the parent
+        # the second is the node in question.
+        return result[1]
+    return None
+
+
+async def get_node_request(app, path, params):
 
     detail = params.get('detail', 'max')
     if detail:
         if detail not in ['min', 'max', 'properties']:
-            raise VOSpaceError(400, f'Invalid URI. '
-                                    f'detail invalid: {detail}')
+            raise VOSpaceError(400, f'Invalid URI. detail invalid: {detail}')
 
     limit_str = ''
     limit = params.get('limit', None)
@@ -190,14 +192,12 @@ async def get_node(app, path, params):
             # add +1 to include the root element when doing the limit query
             limit_str = f'limit {limit_int+1}'
         except:
-            raise VOSpaceError(400, f'Invalid URI. '
-                                    f'limit invalid: {limit}')
+            raise VOSpaceError(400, f'Invalid URI. limit invalid: {limit}')
 
     path_array = list(filter(None, path.split('/')))
 
     if len(path_array) == 0:
-        raise VOSpaceError(400, f"Invalid URI. "
-                                f"Path is empty")
+        raise VOSpaceError(400, "Invalid URI. Path is empty")
 
     path_tree = '.'.join(path_array)
 
@@ -213,32 +213,35 @@ async def get_node(app, path, params):
                                        f"order by path asc for share {limit_str}",
                                        path_tree)
             if len(results) == 0:
-                raise VOSpaceError(404, f"Node Not Found. "
-                                        f"{path} not found.")
+                raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
             if detail != 'min':
                 properties = await conn.fetch("select * from properties "
-                                              "where node_path=$1 for share",
+                                              "where node_path=$1",
                                               results[0]['path'])
 
     node_type_int = results[0]['type']
     node_type = NodeTextLookup[node_type_int]
     if NodeType.Node <= node_type_int <= NodeType.ContainerNode:
         if detail == 'max':
-            views = Views
-            provides = Provides
+            node_type_text = NodeTextLookup[node_type_int]
+            views = app['plugin'].get_supported_import_accepts_views(
+                path, node_type_text)
+            provides = app['plugin'].get_supported_export_provides_views(
+                path, node_type_text)
 
     # remove root element in tree so we can output children
     results.pop(0)
     if limit:
         results = results[:int(limit)]
 
-    xml_response = generate_node_response(path,
-                                          node_type,
-                                          properties,
-                                          views,
-                                          provides,
-                                          results)
+    xml_response = generate_node_response(space_name=app['space_name'],
+                                          node_path=path,
+                                          node_type=node_type,
+                                          node_property=properties,
+                                          node_accepts_views=views,
+                                          node_provides_views=provides,
+                                          node_container=results)
     return xml_response
 
 
@@ -253,32 +256,29 @@ async def delete_node(app, path):
                                       "where path <@ $1 returning path",
                                       path_tree)
     if not result:
-        raise VOSpaceError(404, f"Node Not Found. "
-                                f"{path} not found.")
+        raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
 
 async def create_node_request(app, xml_text, url_path):
     root = ET.fromstring(xml_text)
     uri_xml = root.attrib.get('uri', None)
 
-    uri_path = urlparse(uri_xml)
+    uri_path_xml = urlparse(uri_xml)
 
-    if not uri_path.path:
-        raise VOSpaceError(400, "Invalid URI. "
-                                "URI does not exist.")
+    if not uri_path_xml.path:
+        raise VOSpaceError(400, "Invalid URI. URI does not exist.")
 
     # make sure the request path and the URL are the same
     # exclude '.' characters as they are used in ltree
-    if '.' in uri_path.path:
-        raise VOSpaceError(400, f"Invalid URI. "
-                                f"Invalid character: '.' in URI")
+    if '.' in uri_path_xml.path:
+        raise VOSpaceError(400, f"Invalid URI. Invalid character: '.' in URI")
 
-    uri_path_norm = os.path.normpath(uri_path.path)
+    uri_path_norm = os.path.normpath(uri_path_xml.path).lstrip('/')
+    url_path_norm = os.path.normpath(url_path).lstrip('/')
 
-    if os.path.normpath(url_path) != uri_path_norm:
-        raise VOSpaceError(400, f"Invalid URI. "
-                                f"URI node path does not "
-                                f"match request: {url_path} != {uri_path.path}")
+    if url_path_norm != uri_path_norm:
+        raise VOSpaceError(400, f"Invalid URI. URI node path does not "
+                                f"match request: {url_path} != {uri_path_xml.path}")
 
     node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
 
@@ -295,24 +295,14 @@ async def create_node_request(app, xml_text, url_path):
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            create_response = await create_node(app,
-                                                conn,
-                                                uri_path_norm,
-                                                node_type,
-                                                props)
-
-    if create_response.node_updated is True:
-        raise VOSpaceError(409, f"Duplicate Node. {uri_path_norm} already exists.")
-
-    return create_response
+            return await create_node(app, conn, uri_path_norm, node_type, props)
 
 
 async def create_node(app,
                       conn,
                       uri_path,
                       node_type,
-                      properties,
-                      check_valid_view_uri=None):
+                      properties):
     try:
         if node_type is None:
             node_type = NodeType.Node # if not specified then default is Node
@@ -321,15 +311,13 @@ async def create_node(app,
             node_type_text = node_type
             node_type = NodeLookup.get(node_type_text, None)
             if node_type is None:
-                raise VOSpaceError(400, f"Type Not Supported. "
-                                        f"Invalid type.")
+                raise VOSpaceError(400, "Type Not Supported. Invalid type.")
 
         # remove empty entries as a result of strip
         path = list(filter(None, uri_path.split('/')))
 
         if len(path) == 0:
-            raise VOSpaceError(400, f"Invalid URI. "
-                                    f"Path is empty")
+            raise VOSpaceError(400, "Invalid URI. Path is empty")
 
         path_parent = path[:-1]
         node_name = path[-1]
@@ -359,32 +347,18 @@ async def create_node(app,
                 raise VOSpaceError(404, f"Container Not Found. "
                                         f"{row['name']} is not a container.")
 
-        node_result = await conn.fetchrow(("INSERT INTO nodes (type, name, path) "
-                                           "VALUES ($1, $2, $3) ON CONFLICT (path)"
-                                           "DO UPDATE SET name=EXCLUDED.name "
-                                           "RETURNING type, path, (xmax::text::int>0) AS updated"),
-                                          node_type,
-                                          node_name,
-                                          path_tree)
+        await conn.fetchrow(("INSERT INTO nodes (type, name, path) "
+                             "VALUES ($1, $2, $3)"),
+                             node_type, node_name, path_tree)
         if properties:
             for prop in properties_list:
-                prop.append(node_result['path'])
+                prop.append(path_tree)
 
             await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_path) "
                                     "VALUES ($1, $2, $3, $4)"),
                                    properties_list)
 
-        import_views = app['plugin'].get_supported_import_views(node_type_text)
-        if check_valid_view_uri is not None:
-            if check_valid_view_uri not in import_views:
-                raise VOSpaceError(400, f"View Not Supported. "
-                                        f"View {check_valid_view_uri} not supported.")
-
-        return Create_Response(node_name,
-                               node_type_text,
-                               properties,
-                               import_views,
-                               node_result['updated'])
+        return Create_Response(node_name, node_type_text, properties)
 
     except ParseError as p:
         raise VOSpaceError(500, f"Internal Error. XML error: {str(p)}.")
@@ -399,39 +373,33 @@ async def set_node_properties(app, xml_text, url_path):
 
         uri = root.attrib.get('uri', None)
         if uri is None:
-            raise VOSpaceError(400, "Invalid URI. "
-                                    "URI does not exist.")
+            raise VOSpaceError(400, "Invalid URI. URI does not exist.")
 
         node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type',
                                     None)
         if node_type is None:
-            raise VOSpaceError(400, "Invalid URI. "
-                                    "Type does not exist.")
+            raise VOSpaceError(400, "Invalid URI. Type does not exist.")
 
         node_type = NodeLookup.get(node_type, None)
         if node_type is None:
-            raise VOSpaceError(400, f"Type Not Supported. "
-                                    f"Invalid type.")
+            raise VOSpaceError(400, "Type Not Supported. Invalid type.")
 
         uri_path = urlparse(uri)
 
         if '.' in url_path:
-            raise VOSpaceError(400, f"Invalid URI. "
-                                    f"Invalid character: '.' in URI")
+            raise VOSpaceError(400, "Invalid URI. Invalid character: '.' in URI")
 
         # make sure the request path and the URL are the same
         # exclude '.' characters as they are used in ltree
         if url_path != uri_path.path:
-            raise VOSpaceError(400, f"Invalid URI. "
-                                    f"URI node path does not "
+            raise VOSpaceError(400, f"Invalid URI. URI node path does not "
                                     f"match request: {url_path} != {uri_path.path}")
 
         # remove empty entries as a result of strip
         node_url_path = list(filter(None, url_path.split('/')))
 
         if len(node_url_path) == 0:
-            raise VOSpaceError(400, f"Invalid URI. "
-                                    f"Path is empty")
+            raise VOSpaceError(400, "Invalid URI. Path is empty")
 
         node_path_tree = '.'.join(node_url_path)
 
@@ -455,14 +423,12 @@ async def set_node_properties(app, xml_text, url_path):
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
-                results = await conn.fetch(f"select * from nodes "
-                                           f"where path=$1 and "
-                                           f"type=$2 for share",
+                results = await conn.fetch(f"select * from nodes where path=$1 "
+                                           f"and type=$2 for update",
                                            node_path_tree,
                                            node_type)
                 if len(results) == 0:
-                    raise VOSpaceError(404, f"Node Not Found. "
-                                            f"{url_path} not found.")
+                    raise VOSpaceError(404, f"Node Not Found. {url_path} not found.")
 
                 # if a property already exists then update it, only if read_only = False
                 await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
@@ -478,10 +444,11 @@ async def set_node_properties(app, xml_text, url_path):
                                    node_path_tree)
 
                 properties_result = await conn.fetch("select * from properties "
-                                                     "where node_path=$1 for share",
+                                                     "where node_path=$1",
                                                      node_path_tree)
 
-        xml_response = generate_node_response(node_path=url_path,
+        xml_response = generate_node_response(space_name=app['space_name'],
+                                              node_path=url_path,
                                               node_type=NodeTextLookup[node_type],
                                               node_property=properties_result)
         return xml_response
@@ -497,6 +464,5 @@ async def delete_properties(conn, uri_path):
     path = list(filter(None, uri_path.split('/')))
     path_tree = '.'.join(path)
 
-    await conn.execute("delete from properties "
-                       "where node_path=$1",
+    await conn.execute("delete from properties where node_path=$1",
                        path_tree)
