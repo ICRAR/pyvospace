@@ -24,27 +24,25 @@ class TestCreate(TestBase):
         async def run():
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello1"),
                           Property('ivo://ivoa.net/vospace/core#description', "Hello2")]
-            node1 = ContainerNode('vos://icrar.org!vospace/test1', properties=properties)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/test1',
-                                              data=node1.tostring())
-            self.assertEqual(201, status, msg=response)
+            node1 = ContainerNode('/test1', properties=properties)
+
+            await self.create_node(node1)
 
             # Set properties
             properties = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle"),
                           DeleteProperty('ivo://ivoa.net/vospace/core#description')]
-            node1 = ContainerNode('vos://icrar.org!vospace/test1', properties=properties)
-            status, response = await self.post('http://localhost:8080/vospace/nodes/test1',
-                                               data=node1.tostring())
-            self.assertEqual(200, status, msg=response)
+            node1 = ContainerNode('/test1', properties=properties)
+
+            # Node doesnt exist
+            await self.set_node_properties('test2', Node('/test2'), expected_status=404)
+
+            await self.set_node_properties('test1', node1)
 
             params = {'detail': 'max'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/test1',
-                                              params=params)
-            self.assertEqual(200, status, msg=response)
+            node = await self.get_node('test1', params)
 
-            node = Node.fromstring(response)
             prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle")]
-            orig_node = ContainerNode('vos://icrar.org!vospace/test1',
+            orig_node = ContainerNode('/test1',
                                       properties=prop)
 
             self.assertEqual(node, orig_node)
@@ -53,29 +51,29 @@ class TestCreate(TestBase):
 
     def test_move_node(self):
         async def run():
-            root1 = ContainerNode('vos://icrar.org!vospace/root1')
+            root1 = ContainerNode('root1')
             status, response = await self.put('http://localhost:8080/vospace/nodes/root1',
                                               data=root1.tostring())
             self.assertEqual(201, status, msg=response)
 
-            root2 = ContainerNode('vos://icrar.org!vospace/root2')
+            root2 = ContainerNode('/root2')
             status, response = await self.put('http://localhost:8080/vospace/nodes/root2',
                                               data=root2.tostring())
             self.assertEqual(201, status, msg=response)
 
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Test1", True),
                           Property('ivo://ivoa.net/vospace/core#description', "Test2", True)]
-            node1 = ContainerNode('vos://icrar.org!vospace/root1/test2', properties=properties)
+            node1 = ContainerNode('/root1/test2', properties=properties)
             status, response = await self.put('http://localhost:8080/vospace/nodes/root1/test2',
                                               data=node1.tostring())
             self.assertEqual(201, status, msg=response)
 
-            node2 = ContainerNode('vos://icrar.org!vospace/root1/test2/test3')
+            node2 = ContainerNode('/root1/test2/test3')
             status, response = await self.put('http://localhost:8080/vospace/nodes/root1/test2/test3',
                                               data=node2.tostring())
             self.assertEqual(201, status, msg=response)
 
-            node3 = ContainerNode('vos://icrar.org!vospace/root1/test2/test4')
+            node3 = ContainerNode('/root1/test2/test4')
             status, response = await self.put('http://localhost:8080/vospace/nodes/root1/test2/test4',
                                               data=node3.tostring())
             self.assertEqual(201, status, msg=response)
@@ -87,10 +85,10 @@ class TestCreate(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            orig_node = ContainerNode('vos://icrar.org!vospace/root1/test2',
+            orig_node = ContainerNode('/root1/test2',
                                       properties=properties,
-                                      nodes=[ContainerNode('vos://icrar.org!vospace/root1/test2/test4'),
-                                             ContainerNode('vos://icrar.org!vospace/root1/test2/test3')])
+                                      nodes=[ContainerNode('/root1/test2/test4'),
+                                             ContainerNode('/root1/test2/test3')])
             self.assertEqual(node, orig_node)
 
             params = {'detail': 'max'}
@@ -99,33 +97,15 @@ class TestCreate(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            orig_node = ContainerNode('vos://icrar.org!vospace/root2')
+            orig_node = ContainerNode('/root2')
             self.assertEqual(node, orig_node)
 
             # Move tree from node1 to root2
             mv = Move(node1, root2)
-            status, response = await self.post('http://localhost:8080/vospace/transfers',
-                                               data=mv.tostring())
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            job_id = root.find('{http://www.ivoa.net/xml/UWS/v1.0}jobId')
-            self.assertIsNotNone(job_id)
-
-            state = 'PHASE=RUN'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                               data=state)
-            self.assertEqual(200, status, msg=response)
-
-            while True:
-                status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                                  params=state)
-                self.assertEqual(200, status, msg=response)
-                if response == 'COMPLETED' or response == 'ERROR':
-                    break
-                await asyncio.sleep(0.1)
-
-            self.assertEqual('COMPLETED', response)
+            response = await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='COMPLETED')
 
             # Check tree has been moved from node1 to root2
             params = {'detail': 'max'}
@@ -134,10 +114,10 @@ class TestCreate(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            moved_node = ContainerNode('vos://icrar.org!vospace/root2/test2',
+            moved_node = ContainerNode('/root2/test2',
                                        properties=properties,
-                                       nodes=[ContainerNode('vos://icrar.org!vospace/root2/test2/test4'),
-                                              ContainerNode('vos://icrar.org!vospace/root2/test2/test3')])
+                                       nodes=[ContainerNode('/root2/test2/test4'),
+                                              ContainerNode('/root2/test2/test3')])
             self.assertEqual(node, moved_node)
 
             params = {'detail': 'max'}
@@ -146,292 +126,125 @@ class TestCreate(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            orig_node = ContainerNode('vos://icrar.org!vospace/root1')
+            orig_node = ContainerNode('/root1')
             self.assertEqual(node, orig_node)
 
         self.loop.run_until_complete(run())
 
     def test_invalid_copy_move(self):
         async def run():
-            node0 = Node('vos://icrar.org!vospace/data0')
-            node1 = ContainerNode('vos://icrar.org!vospace/data1')
-            node2 = ContainerNode('vos://icrar.org!vospace/data2')
-            node3 = ContainerNode('vos://icrar.org!vospace/data1/data4')
-            node4 = Node('vos://icrar.org!vospace/data2/data4')
+            node0 = Node('/data0')
+            node1 = ContainerNode('/data1')
+            node2 = ContainerNode('/data2')
+            node3 = ContainerNode('/data1/data4')
+            node4 = Node('/data2/data4')
 
             # create nodes for invalid tests
-            status, response = await self.put('http://localhost:8080/vospace/nodes/data0',
-                                              data=node0.tostring())
-            self.assertEqual(201, status, msg=response)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/data1',
-                                              data=node1.tostring())
-            self.assertEqual(201, status, msg=response)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/data2',
-                                              data=node2.tostring())
-            self.assertEqual(201, status, msg=response)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/data1/data4',
-                                              data=node3.tostring())
-            self.assertEqual(201, status, msg=response)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/data2/data4',
-                                              data=node4.tostring())
-            self.assertEqual(201, status, msg=response)
-
-            mv = Move(Node('vos://icrar.org!vospace/data11'), node2)
-            status, response = await self.post('http://localhost:8080/vospace/transfers',
-                                               data=mv.tostring())
-            self.assertEqual(404, status, msg=response)
-
-            mv = Move(node1, node2)
-            status, response = await self.post('http://localhost:8080/vospace/transfers',
-                                               data=mv.tostring())
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            job_id = root.find('{http://www.ivoa.net/xml/UWS/v1.0}jobId')
-            self.assertIsNotNone(job_id)
+            await self.create_node(node0)
+            await self.create_node(node1)
+            await self.create_node(node2)
+            await self.create_node(node3)
+            await self.create_node(node4)
 
             # Invalid Jobid
-            state = 'PHASE=RUN'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/1234/phase',
-                                               data=state)
-            self.assertEqual(400, status, msg=response)
+            await self.change_job_state(1234, 'PHASE=RUN', expected_status=400)
 
+            # Node doesn't exist
+            mv = Move(Node('/data11'), node2)
+            response = await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='ERROR')
+
+            # move node1 -> node2
+            mv = Move(node1, node2)
+            response = await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
             # Invalid Phase
-            state = 'PHASE=STOP'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                               data=state)
-            self.assertEqual(400, status, msg=response)
+            await self.change_job_state(job_id, 'PHASE=STOP', expected_status=400)
 
             # delete node before move
             await self.delete('http://localhost:8080/vospace/nodes/data1')
 
-            state = 'PHASE=RUN'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                               data=state)
-            self.assertEqual(200, status, msg=response)
-
-            while True:
-                status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                                  params=state)
-                self.assertEqual(200, status, msg=response)
-                if response == 'COMPLETED' or response == 'ERROR':
-                    break
-                await asyncio.sleep(0.1)
-
-            self.assertEqual('ERROR', response)
-
+            # start move job
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='ERROR')
             # Check error, node should not exist
-            status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/error',
-                                              params=None)
-            self.assertEqual(200, status, msg=response)
+            await self.get_error_summary(job_id, "Node Not Found")
 
-            root = ET.fromstring(response)
-            error = root.find('{http://www.ivoa.net/xml/UWS/v1.0}errorSummary')
-
-            self.assertIsNotNone(error)
-            self.assertTrue("Node Not Found" in error[0].text)
+            # Create the deleted node from previous test
+            await self.create_node(node1)
 
             # Invalid move to a non-container
-            status, response = await self.put('http://localhost:8080/vospace/nodes/data1',
-                                              data=node1.tostring())
-            self.assertEqual(201, status, msg=response)
-
             mv = Move(node1, node0)
-            status, response = await self.post('http://localhost:8080/vospace/transfers',
-                                               data=mv.tostring())
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            job_id = root.find('{http://www.ivoa.net/xml/UWS/v1.0}jobId')
-            self.assertIsNotNone(job_id)
-
-            state = 'PHASE=RUN'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                               data=state)
-            self.assertEqual(200, status, msg=response)
-
-            while True:
-                status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                                  params=state)
-                self.assertEqual(200, status, msg=response)
-                if response == 'COMPLETED' or response == 'ERROR':
-                    break
-                await asyncio.sleep(0.1)
-
-            self.assertEqual('ERROR', response)
-
-            status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/error',
-                                              params=None)
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            error = root.find('{http://www.ivoa.net/xml/UWS/v1.0}errorSummary')
-
-            self.assertIsNotNone(error)
-            self.assertTrue("Duplicate Node" in error[0].text)
+            response = await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='ERROR')
+            await self.get_error_summary(job_id, error_contains='Duplicate Node')
 
             # Invalid move if node already exists in destination tree
-            status, response = await self.put('http://localhost:8080/vospace/nodes/data1/data4',
-                                              data=node3.tostring())
-            self.assertEqual(201, status, msg=response)
-
+            await self.create_node(node3)
             mv = Move(node3, node2)
-            status, response = await self.post('http://localhost:8080/vospace/transfers',
-                                               data=mv.tostring())
-            self.assertEqual(200, status, msg=response)
+            await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='ERROR')
+            await self.get_error_summary(job_id, error_contains='Duplicate Node')
 
-            root = ET.fromstring(response)
-            job_id = root.find('{http://www.ivoa.net/xml/UWS/v1.0}jobId')
-            self.assertIsNotNone(job_id)
-
-            state = 'PHASE=RUN'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                               data=state)
-            self.assertEqual(200, status, msg=response)
-
-            while True:
-                status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                                  params=state)
-                self.assertEqual(200, status, msg=response)
-                if response == 'COMPLETED' or response == 'ERROR':
-                    break
-                await asyncio.sleep(0.1)
-
-            self.assertEqual('ERROR', response)
-
-            status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/error',
-                                              params=None)
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            error = root.find('{http://www.ivoa.net/xml/UWS/v1.0}errorSummary')
-
-            self.assertIsNotNone(error)
-            self.assertTrue("Duplicate Node" in error[0].text)
-
-            # Move parent to child
+            # Move parent to child which should be invalid because node1 is node3s parent
             mv = Move(node1, node3)
-            status, response = await self.post('http://localhost:8080/vospace/transfers',
-                                               data=mv.tostring())
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            job_id = root.find('{http://www.ivoa.net/xml/UWS/v1.0}jobId')
-            self.assertIsNotNone(job_id)
-
-            state = 'PHASE=RUN'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                               data=state)
-            self.assertEqual(200, status, msg=response)
-
-            while True:
-                status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                                  params=state)
-                self.assertEqual(200, status, msg=response)
-                if response == 'COMPLETED' or response == 'ERROR':
-                    break
-                await asyncio.sleep(0.1)
-
-            self.assertEqual('ERROR', response)
-
-            status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/error',
-                                              params=None)
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            error = root.find('{http://www.ivoa.net/xml/UWS/v1.0}errorSummary')
-
-            self.assertIsNotNone(error)
-            self.assertTrue("Invalid URI." in error[0].text)
+            response = await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='ERROR')
+            await self.get_error_summary(job_id, error_contains='Invalid URI.')
 
         self.loop.run_until_complete(run())
 
     def test_copy_node(self):
         async def run():
-            root1 = ContainerNode('vos://icrar.org!vospace/root3')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/root3',
-                                              data=root1.tostring())
-            self.assertEqual(201, status, msg=response)
+            root1 = ContainerNode('/root3')
+            await self.create_node(root1)
 
-            root2 = ContainerNode('vos://icrar.org!vospace/root4')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/root4',
-                                              data=root2.tostring())
-            self.assertEqual(201, status, msg=response)
+            root2 = ContainerNode('/root4')
+            await self.create_node(root2)
 
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Test1", True),
                           Property('ivo://ivoa.net/vospace/core#description', "Test2", True)]
-            node1 = ContainerNode('vos://icrar.org!vospace/root3/test1', properties=properties)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/root3/test1',
-                                              data=node1.tostring())
-            self.assertEqual(201, status, msg=response)
+            node1 = ContainerNode('/root3/test1', properties=properties)
+            await self.create_node(node1)
 
             properties1 = [Property('ivo://ivoa.net/vospace/core#title', "Hello", True),
                            Property('ivo://ivoa.net/vospace/core#description', "There", True)]
-            node2 = Node('vos://icrar.org!vospace/root3/test1/test2', properties=properties1)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/root3/test1/test2',
-                                              data=node2.tostring())
-            self.assertEqual(201, status, msg=response)
+            node2 = Node('/root3/test1/test2', properties=properties1)
+            await self.create_node(node2)
 
             # Copy tree from node1 to root2
             mv = Copy(node1, root2)
-            status, response = await self.post('http://localhost:8080/vospace/transfers',
-                                               data=mv.tostring())
-            self.assertEqual(200, status, msg=response)
+            response = await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='COMPLETED')
 
-            root = ET.fromstring(response)
-            job_id = root.find('{http://www.ivoa.net/xml/UWS/v1.0}jobId')
-            self.assertIsNotNone(job_id)
-
-            state = 'PHASE=RUN'
-            status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                               data=state)
-            self.assertEqual(200, status, msg=response)
-
-            while True:
-                status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id.text}/phase',
-                                                  params=state)
-                self.assertEqual(200, status, msg=response)
-                if response == 'COMPLETED' or response == 'ERROR':
-                    break
-                await asyncio.sleep(0.1)
-
-            self.assertEqual('COMPLETED', response)
+            # Just chek there isn't any transfer details for a move or copy
+            await self.get_transfer_details(job_id, expected_status=400)
 
             # Check tree has been moved from node1 to root2
             params = {'detail': 'max'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/root4/test1',
-                                              params=params)
-            self.assertEqual(200, status, msg=response)
+            node = await self.get_node('root4/test1', params)
 
-            node = Node.fromstring(response)
-            copy_node = ContainerNode('vos://icrar.org!vospace/root4/test1',
+            copy_node = ContainerNode('/root4/test1',
                                       properties=properties,
-                                      nodes=[Node('vos://icrar.org!vospace/root4/test1/test2')])
-
-            self.assertEqual(node, copy_node)
-
-            # Check descendant properties copied
-            params = {'detail': 'max'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/root4/test1/test2',
-                                              params=params)
-            self.assertEqual(200, status, msg=response)
-
-            node = Node.fromstring(response)
-            copy_node = Node('vos://icrar.org!vospace/root4/test1/test2',
-                             properties=properties1)
-
+                                      nodes=[Node('/root4/test1/test2')])
             self.assertEqual(node, copy_node)
 
             # check original node is still there
             params = {'detail': 'max'}
-            status, response = await self.get('http://localhost:8080/vospace/nodes/root3/test1',
-                                              params=params)
-            self.assertEqual(200, status, msg=response)
-
-            node = Node.fromstring(response)
-            orig_node = ContainerNode('vos://icrar.org!vospace/root3/test1',
+            node = await self.get_node('root3/test1', params)
+            orig_node = ContainerNode('/root3/test1',
                                       properties=properties,
-                                      nodes=[Node('vos://icrar.org!vospace/root3/test1/test2')])
+                                      nodes=[Node('/root3/test1/test2')])
             self.assertEqual(node, orig_node)
 
         self.loop.run_until_complete(run())

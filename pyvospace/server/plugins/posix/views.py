@@ -4,9 +4,10 @@ import asyncio
 import aiofiles
 import uuid
 
-from pyvospace.server.node import get_transfer_job, set_node_busy, NodeType
+from pyvospace.server.node import set_node_busy, NodeType
+from pyvospace.server.transfer import get_transfer_job
 from pyvospace.server.exception import VOSpaceError
-from pyvospace.server.uws import set_uws_phase_to_error, set_uws_phase_to_completed
+from pyvospace.server.uws import set_uws_phase_to_error, set_uws_phase_to_completed, UWSPhase
 
 
 async def make_dir(path):
@@ -36,10 +37,12 @@ async def upload_to_node(app, request):
 
                 root_dir = app['root_dir']
                 file_name = f'{root_dir}/{path_tree}'
+                directory = os.path.dirname(file_name)
+                #print('directory:', directory, 'filename:', file_name)
+                await make_dir(directory)
 
                 if results['type'] == NodeType.ContainerNode:
-                    await make_dir(file_name)
-                    file_name = f'{root_dir}/{path_tree}/{uuid.uuid4().hex}'
+                    file_name = f'{root_dir}/{path_tree}/{uuid.uuid4().hex}.zip'
 
                 async with aiofiles.open(file_name, 'wb') as f:
                     while True:

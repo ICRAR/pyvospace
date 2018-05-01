@@ -35,18 +35,6 @@ PhaseLookup = {0: 'PENDING',
                9: 'ARCHIVED'}
 
 
-def results_dict_list_to_xml(results):
-    if not results:
-        return '<uws:results/>'
-
-    attr_vals = []
-    for attr in results:
-        attr_vals.append(f'<uws:result id="{attr["id"]}" '
-                         f'xlink:href="{attr["xlink:href"]}"/>')
-
-    return f"<uws:results>{''.join(attr_vals)}</uws:results>"
-
-
 def generate_uws_error(errors):
     if not errors:
         return ''
@@ -87,20 +75,14 @@ class UWSJobExecutor(object):
         self.job_tasks = {}
 
     def execute(self, func, app, job):
-        task = asyncio.ensure_future(self._run(func, app, job))
+        task = asyncio.ensure_future(self.__run(func, app, job))
         self.job_tasks[task] = job
-        task.add_done_callback(self._done)
+        task.add_done_callback(self.__done)
 
-    async def _run(self, func, app, job):
-        try:
-            await func(app, job['id'], job)
+    async def __run(self, func, app, job):
+        await func(app, job['id'], job)
 
-        except VOSpaceError as e:
-            await set_uws_phase_to_error(app['db_pool'],
-                                         job['id'],
-                                         e.error)
-
-    def _done(self, task):
+    def __done(self, task):
         del self.job_tasks[task]
 
     async def close(self):
@@ -110,25 +92,35 @@ class UWSJobExecutor(object):
             await asyncio.sleep(0.1)
 
 
-async def create_uws_job(conn,
-                         target,
-                         direction,
-                         job_info,
-                         extras,
-                         phase=UWSPhase.Pending):
-    path_array = list(filter(None, target.split('/')))
-    path_tree = '.'.join(path_array)
+async def create_uws_job(conn, target, direction, job_info, result,
+                         transfer, phase=UWSPhase.Pending):
+    path_tree = None
+
+    if target:
+        path_array = list(filter(None, target.split('/')))
+        path_tree = '.'.join(path_array)
 
     destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=3000)
     result = await conn.fetchrow("insert into uws_jobs (target, direction, "
-                                 "phase, destruction, job_info, extras) "
-                                 "values ($1, $2, $3, $4, $5, $6) returning id",
-                                 path_tree,
-                                 direction,
-                                 phase,
-                                 destruction,
-                                 job_info,
-                                 extras)
+                                 "phase, destruction, job_info, transfer, result) "
+                                 "values ($1, $2, $3, $4, $5, $6, $7) returning id",
+                                 path_tree, direction, phase,
+                                 destruction, job_info, transfer, result)
+    return result['id']
+
+
+async def update_uws_job(conn, job_id, target, direction,
+                         transfer, result, phase=UWSPhase.Pending):
+    path_array = list(filter(None, target.split('/')))
+    path_tree = '.'.join(path_array)
+    # only update job if its pending
+    result = await conn.fetchrow("update uws_jobs set target=$1, direction=$2, "
+                                 "phase=$3, transfer=$4, result=$5 where id=$6 "
+                                 "and phase <= $7 returning id",
+                                 path_tree, direction, phase,
+                                 transfer, result, job_id, UWSPhase.Executing)
+    if not result:
+        return None
     return result['id']
 
 
@@ -144,26 +136,16 @@ async def get_uws_job_conn(conn, job_id):
                                      "where id=$1 for share",
                                      job_id)
         if not result:
-            raise VOSpaceError(400, f"Invalid Request. "
-                                    f"UWS job {job_id} does not exist.")
+            raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
 
         return result
     except ValueError as e:
         raise VOSpaceError(400, f"Invalid jobId: {str(e)}")
 
 
-async def set_uws_phase_to_executing(db_pool, job_id, extras=None):
+async def set_uws_phase_to_executing(db_pool, job_id):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-
-            if extras:
-                return await conn.fetchrow("update uws_jobs set phase=$2, extras=$4 "
-                                           "where id=$1 and phase=$3 returning id",
-                                           job_id,
-                                           UWSPhase.Executing,
-                                           UWSPhase.Pending,
-                                           extras)
-
             return await conn.fetchrow("update uws_jobs set phase=$2 "
                                        "where id=$1 and phase=$3 returning id",
                                        job_id,
