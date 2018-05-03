@@ -66,8 +66,10 @@ class PosixPlugin(VOSpacePluginBase):
                                protocol: str,
                                view: str,
                                params: list) -> dict:
-
-        protocol_endpoints = {'protocol': protocol,
-                              'endpoint': [f'http://{self.host}:{self.port}'
-                                           f'/vospace/upload/{uws_job_id}']}
+        if direction == 'pushToVoSpace':
+            protocol_endpoints = {'protocol': protocol,
+                                  'endpoint': [f'http://{self.host}:{self.port}/vospace/upload/{uws_job_id}']}
+        else:
+            protocol_endpoints = {'protocol': protocol,
+                                  'endpoint': [f'http://{self.host}:{self.port}/vospace/download/{uws_job_id}']}
         return protocol_endpoints

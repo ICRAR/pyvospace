@@ -1,7 +1,3 @@
-import io
-import asyncio
-import aiofiles
-import aiofiles.os
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -9,7 +5,7 @@ import xml.dom.minidom as minidom
 
 from aiohttp import web
 
-from pyvospace.core.model import PushToSpace, Node, ContainerNode, HTTPPut
+from pyvospace.core.model import PushToSpace, PullFromSpace, Node, ContainerNode, HTTPPut, HTTPGet
 from pyvospace.server.plugins.posix.posix_server import PosixFileServer
 from test.test_base import TestBase
 
@@ -45,21 +41,7 @@ class TestCreate(TestBase):
 
         super().tearDown()
 
-    async def create_file(self, file_name):
-        try:
-            await aiofiles.os.stat(file_name)
-        except FileNotFoundError:
-            async with aiofiles.open(file_name, mode='wb') as f:
-                await f.truncate(1024*io.DEFAULT_BUFFER_SIZE)
-
-    async def file_sender(self, file_name=None):
-        async with aiofiles.open(file_name, 'rb') as f:
-            chunk = await f.read(64 * 1024)
-            while chunk:
-                yield chunk
-                chunk = await f.read(64 * 1024)
-
-    def ttest_push_to_space_sync(self):
+    def test_push_to_space_sync(self):
         async def run():
             node = Node('/syncdatanode')
             push = PushToSpace(node, [HTTPPut()])
@@ -71,9 +53,22 @@ class TestCreate(TestBase):
             prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            status, response = await self.put(end.text,
-                                              data=self.file_sender(file_name='/tmp/datafile.dat'))
+            await self.pull_from_space('http://localhost:8081/vospace/download/1234',
+                                       '/tmp/download/', expected_status=400)
+
+            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=200)
+
+            node = Node('/syncdatanode')
+            push = PullFromSpace(node, [HTTPGet()])
+            status, response = await self.post('http://localhost:8080/vospace/synctrans',
+                                               data=push.tostring())
             self.assertEqual(200, status, msg=response)
+
+            root = ET.fromstring(response)
+            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+
+            await self.pull_from_space(end.text, '/tmp/download/')
 
         self.loop.run_until_complete(run())
 
@@ -94,16 +89,24 @@ class TestCreate(TestBase):
             response = await self.transfer_node(push)
             job_id = self.get_job_id(response)
 
+            # Job that is not in the correct phase
+            # This means that the node is not yet associated with the job.
+            # It gets associated when the job is run.
+            await self.push_to_space(f'http://localhost:8081/vospace/upload/{job_id}',
+                                     '/tmp/datafile.dat', expected_status=400)
+
             await self.get_job_details(job_id)
 
             # Get transfer details, should be in invalid state because its not Executing
             await self.get_transfer_details(job_id, expected_status=400)
 
             await self.change_job_state(job_id)
+
             await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
 
             # Check results
-            await self.get_job_details(job_id)
+            response = await self.get_job_details(job_id)
+            #self.log.debug(prettify(response))
 
             # Get transferDetails
             response = await self.get_transfer_details(job_id, expected_status=200)
@@ -112,9 +115,19 @@ class TestCreate(TestBase):
             prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            status, response = await self.put(end.text,
-                                              data=self.file_sender(file_name='/tmp/datafile.dat'))
-            self.assertEqual(200, status, msg=response)
+            # badly formed job id
+            await self.push_to_space('http://localhost:8081/vospace/upload/1234',
+                                     '/tmp/datafile.dat', expected_status=400)
+
+            # job that doesn't exist
+            await self.push_to_space('http://localhost:8081/vospace/upload/1324a40b-4c6a-453b-a756-cd41ca4b7408',
+                                     '/tmp/datafile.dat', expected_status=404)
+
+            #await self.delete('http://localhost:8080/vospace/nodes/datanode')
+
+            # node should not be found
+            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=200)
+
 
         self.loop.run_until_complete(run())
 
