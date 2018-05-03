@@ -74,9 +74,14 @@ class Protocol(object):
 
 
 class HTTPPut(Protocol):
-
     def __init__(self):
         super().__init__('ivo://ivoa.net/vospace/core#httpput')
+
+
+class HTTPGet(Protocol):
+    def __init__(self):
+        super().__init__('ivo://ivoa.net/vospace/core#httpget')
+
 
 
 class View(object):
@@ -486,6 +491,38 @@ class PushToSpace(Transfer):
     def __init__(self, target, protocols, view=None):
         super().__init__(target=target,
                          direction='pushToVoSpace')
+
+        self.protocols = protocols
+        self.view = view
+
+    def __view_tostring(self):
+        if not self.view:
+            return ''
+
+        return self.view.tostring()
+
+    def __protocols_tostring(self):
+        protocol_array = []
+        for protocol in self.protocols:
+            protocol_array.append(protocol.tostring())
+        return ''.join(protocol_array)
+
+    def tostring(self):
+        create_node_xml = f'<vos:transfer xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
+                          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
+                          f'<vos:target>{self.target.to_uri()}</vos:target>' \
+                          f'<vos:direction>{self.direction}</vos:direction>' \
+                          f'{self.__view_tostring()}' \
+                          f'{self.__protocols_tostring()}' \
+                          f'</vos:transfer>'
+        return create_node_xml
+
+
+class PullFromSpace(Transfer):
+
+    def __init__(self, target, protocols, view=None):
+        super().__init__(target=target,
+                         direction='pullFromVoSpace')
 
         self.protocols = protocols
         self.view = view

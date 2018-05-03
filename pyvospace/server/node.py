@@ -80,8 +80,7 @@ def generate_node_summary_xml(space_name, nodes):
         uri = node['path'].replace('.', '/')
         uri_str = f"vos://{space_name}!vospace/{uri}"
         node_type = node['type']
-        node_array.append(f'<vos:node uri="{uri_str}" '
-                          f'xsi:type="{NodeTextLookup[node_type]}"/>')
+        node_array.append(f'<vos:node uri="{uri_str}" xsi:type="{NodeTextLookup[node_type]}"/>')
     return f"<vos:nodes>{''.join(node_array)}</vos:nodes>"
 
 
@@ -92,17 +91,16 @@ def generate_node_response(space_name,
                            node_accepts_views=[],
                            node_provides_views=[],
                            node_container=[]):
-    xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
-          f' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
-          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
-          f' xsi:type="{node_type}"' \
-          f' uri="vos://{space_name}!vospace/{node_path}">' \
+    xml = '<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
+          ' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
+          ' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
+          f' xsi:type="{node_type}" uri="vos://{space_name}!vospace/{node_path}">' \
           f'<vos:properties>{ generate_property_xml(node_property) }</vos:properties>' \
           f'<vos:accepts>{ generate_view_xml(node_accepts_views) }</vos:accepts>' \
           f'<vos:provides>{ generate_view_xml(node_provides_views) }</vos:provides>' \
-          f'<vos:capabilities/>' \
+          '<vos:capabilities/>' \
           f'{generate_node_summary_xml(space_name, node_container)}' \
-          f'</vos:node>'
+          '</vos:node>'
     return xml
 
 
@@ -118,27 +116,12 @@ def generate_protocol_xml(protocol):
 
 
 def generate_protocol_response(accepts, provides):
-    xml = f'<vos:protocols xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
-          f'xmlns:xs="http://www.w3.org/2001/XMLSchema-instance">' \
-          f'<vos:accepts>' \
-          f'{generate_protocol_xml(accepts)}' \
-          f'</vos:accepts>' \
-          f'<vos:provides>' \
-          f'{generate_protocol_xml(provides)}' \
-          f'</vos:provides>' \
+    xml = '<vos:protocols xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
+          ' xmlns:xs="http://www.w3.org/2001/XMLSchema-instance">' \
+          f'<vos:accepts>{generate_protocol_xml(accepts)}</vos:accepts>' \
+          f'<vos:provides>{generate_protocol_xml(provides)}</vos:provides>' \
           f'</vos:protocols>'
     return xml
-
-
-async def set_node_busy(conn, path, busy):
-    path_array = list(filter(None, path.split('/')))
-    path_tree = '.'.join(path_array)
-
-    path = await conn.fetchrow("update nodes set busy=$2 "
-                               "where path=$1 returning path",
-                               path_tree, busy)
-    if not path:
-        raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
 
 async def get_node(conn, path):
@@ -154,9 +137,8 @@ async def get_node(conn, path):
 
     # share lock both node and parent, important so we
     # dont have a dead lock with move/copy/create
-    result = await conn.fetch(f"select * from nodes "
-                              f"where path = $1 or path = $2 "
-                              f"order by path asc for share",
+    result = await conn.fetch("select * from nodes where path = $1 or path = $2 "
+                              "order by path asc for share",
                               path_tree, path_parent_tree)
     result_len = len(result)
     if result_len == 1:
@@ -207,17 +189,15 @@ async def get_node_request(app, path, params):
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            results = await conn.fetch(f"select * from nodes "
-                                       f"where path <@ $1 and "
-                                       f"nlevel(path)-nlevel($1)<=1 "
+            results = await conn.fetch("select * from nodes where path <@ $1 and "
+                                       "nlevel(path)-nlevel($1)<=1 "
                                        f"order by path asc for share {limit_str}",
                                        path_tree)
             if len(results) == 0:
                 raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
             if detail != 'min':
-                properties = await conn.fetch("select * from properties "
-                                              "where node_path=$1",
+                properties = await conn.fetch("select * from properties where node_path=$1",
                                               results[0]['path'])
 
     node_type_int = results[0]['type']
@@ -252,8 +232,7 @@ async def delete_node(app, path):
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            result = await conn.fetch("delete from nodes "
-                                      "where path <@ $1 returning path",
+            result = await conn.fetch("delete from nodes where path <@ $1 returning path",
                                       path_tree)
     if not result:
         raise VOSpaceError(404, f"Node Not Found. {path} not found.")
@@ -335,27 +314,23 @@ async def create_node(app,
 
         # if the parent is not found but its expected to exist
         if not row and len(path_parent) > 0:
-            raise VOSpaceError(404, f"Container Not Found. "
-                                    f"{'/'.join(path_parent)} not found.")
+            raise VOSpaceError(404, f"Container Not Found. {'/'.join(path_parent)} not found.")
 
         if row:
             if row['type'] == NodeType.LinkNode:
-                raise VOSpaceError(400, f"Link Found. "
-                                        f"{row['name']} found in path.")
+                raise VOSpaceError(400, f"Link Found. {row['name']} found in path.")
 
             if row['type'] != NodeType.ContainerNode:
-                raise VOSpaceError(404, f"Container Not Found. "
-                                        f"{row['name']} is not a container.")
+                raise VOSpaceError(404, f"Container Not Found. {row['name']} is not a container.")
 
-        await conn.fetchrow(("INSERT INTO nodes (type, name, path) "
-                             "VALUES ($1, $2, $3)"),
+        await conn.fetchrow("INSERT INTO nodes (type, name, path) VALUES ($1, $2, $3)",
                              node_type, node_name, path_tree)
         if properties:
             for prop in properties_list:
                 prop.append(path_tree)
 
-            await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_path) "
-                                    "VALUES ($1, $2, $3, $4)"),
+            await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
+                                   "VALUES ($1, $2, $3, $4)",
                                    properties_list)
 
         return Create_Response(node_name, node_type_text, properties)
@@ -423,10 +398,8 @@ async def set_node_properties(app, xml_text, url_path):
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
-                results = await conn.fetch(f"select * from nodes where path=$1 "
-                                           f"and type=$2 for update",
-                                           node_path_tree,
-                                           node_type)
+                results = await conn.fetch("select * from nodes where path=$1 and type=$2 for update",
+                                           node_path_tree, node_type)
                 if len(results) == 0:
                     raise VOSpaceError(404, f"Node Not Found. {url_path} not found.")
 
@@ -437,14 +410,11 @@ async def set_node_properties(app, xml_text, url_path):
                                        node_props_insert)
 
                 # only delete properties where read_only=False
-                await conn.execute("DELETE FROM properties WHERE "
-                                   "uri=any($1::text[]) "
+                await conn.execute("DELETE FROM properties WHERE uri=any($1::text[]) "
                                    "AND node_path=$2 and read_only=False",
-                                   node_props_delete,
-                                   node_path_tree)
+                                   node_props_delete, node_path_tree)
 
-                properties_result = await conn.fetch("select * from properties "
-                                                     "where node_path=$1",
+                properties_result = await conn.fetch("select * from properties where node_path=$1",
                                                      node_path_tree)
 
         xml_response = generate_node_response(space_name=app['space_name'],
@@ -464,5 +434,4 @@ async def delete_properties(conn, uri_path):
     path = list(filter(None, uri_path.split('/')))
     path_tree = '.'.join(path)
 
-    await conn.execute("delete from properties where node_path=$1",
-                       path_tree)
+    await conn.execute("delete from properties where node_path=$1", path_tree)

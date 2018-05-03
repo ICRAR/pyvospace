@@ -1,11 +1,13 @@
 import asyncpg
+import asyncio
 import configparser
 
 from aiohttp import web
 
 from pyvospace.server.exception import VOSpaceError
+from pyvospace.server.transfer import data_request
 
-from .views import upload_to_node, make_dir
+from .views import upload, download, make_dir
 
 
 class PosixFileServer(web.Application):
@@ -17,8 +19,8 @@ class PosixFileServer(web.Application):
         config.read(cfg_file)
         self['config'] = config
 
-        self.router.add_put('/vospace/upload/{job_id}',
-                            self.upload_data)
+        self.router.add_put('/vospace/upload/{job_id}', self.upload_data)
+        self.router.add_get('/vospace/download/{job_id}', self.download_data)
 
         self.on_shutdown.append(self.shutdown)
 
@@ -32,7 +34,12 @@ class PosixFileServer(web.Application):
         if not self['root_dir']:
             raise Exception('root_dir not found.')
 
+        self['processing_dir'] = config['PosixPlugin']['processing_dir']
+        if not self['processing_dir']:
+            raise Exception('processing_dir not found.')
+
         await make_dir(self['root_dir'])
+        await make_dir(self['processing_dir'])
 
         dsn = config['Database']['dsn']
         db_pool = await asyncpg.create_pool(dsn=dsn)
@@ -46,15 +53,20 @@ class PosixFileServer(web.Application):
 
     async def upload_data(self, request):
         try:
-            await upload_to_node(self, request)
-
-            return web.Response(status=200)
+            return await asyncio.shield(data_request(self, request, upload))
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
 
         except Exception as g:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
+    async def download_data(self, request):
+        try:
+            return await asyncio.shield(data_request(self, request, download))
+
+        except VOSpaceError as e:
+            return web.Response(status=e.code, text=e.error)
+
+        except Exception as g:
+            return web.Response(status=500, text=str(g))

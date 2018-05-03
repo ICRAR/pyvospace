@@ -6,11 +6,11 @@ from aiohttp import web
 from functools import partial
 from pluginbase import PluginBase
 
-from .exception import VOSpaceError
+from .exception import VOSpaceError, InvalidJobStateError
 from .node import create_node_request, delete_node, get_node_request, set_node_properties, \
     generate_protocol_response, generate_node_response
-from .uws import UWSJobExecutor, get_uws_job, \
-    generate_uws_job_xml, PhaseLookup, UWSPhase, InvalidUWSState
+from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
+    generate_uws_job_xml, PhaseLookup, UWSPhase
 from .transfer import create_transfer_job, run_transfer_job, get_transfer_details
 from .plugin import VOSpacePluginBase
 
@@ -262,7 +262,7 @@ class VOSpaceServer(web.Application):
     async def get_transfer_node_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            job = await get_uws_job(self['db_pool'], job_id)
+            job = await get_uws_job_phase(self['db_pool'], job_id)
             return web.Response(status=200, text=PhaseLookup[job['phase']])
 
         except VOSpaceError as f:
@@ -278,7 +278,7 @@ class VOSpaceServer(web.Application):
             await run_transfer_job(self, job_id, uws_cmd)
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
-        except InvalidUWSState:
+        except InvalidJobStateError:
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
         except VOSpaceError as f:

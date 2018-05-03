@@ -6,10 +6,6 @@ from collections import namedtuple
 from .exception import VOSpaceError
 
 
-class InvalidUWSState(Exception):
-    pass
-
-
 UWS_Phase = namedtuple('NodeType', 'Pending '
                                    'Queued '
                                    'Executing '
@@ -39,8 +35,7 @@ def generate_uws_error(errors):
     if not errors:
         return ''
 
-    return f"<uws:errorSummary><uws:message>{errors}" \
-           f"</uws:message></uws:errorSummary>"
+    return f"<uws:errorSummary><uws:message>{errors}</uws:message></uws:errorSummary>"
 
 
 def generate_uws_job_xml(job_id,
@@ -124,23 +119,37 @@ async def update_uws_job(conn, job_id, target, direction,
     return result['id']
 
 
+async def get_uws_job_phase(db_pool, job_id):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            result = await conn.fetchrow("select phase, target from uws_jobs where id=$1", job_id)
+            if not result:
+                raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
+            return result
+
+
 async def get_uws_job(db_pool, job_id):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             return await get_uws_job_conn(conn, job_id)
 
 
-async def get_uws_job_conn(conn, job_id):
+async def get_uws_job_conn(conn, job_id, for_update=False):
     try:
-        result = await conn.fetchrow("select * from uws_jobs "
-                                     "where id=$1 for share",
-                                     job_id)
+        if for_update:
+            result = await conn.fetchrow("select * from uws_jobs where id=$1 for update", job_id)
+        else:
+            result = await conn.fetchrow("select * from uws_jobs where id=$1", job_id)
         if not result:
             raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
 
         return result
     except ValueError as e:
-        raise VOSpaceError(400, f"Invalid jobId: {str(e)}")
+        raise VOSpaceError(400, f"Invalid Request. Invalid JobId: {str(e)}")
+
+
+async def set_uws_called_pending(conn, job_id):
+    await conn.fetchrow("update uws_jobs set called_pending=true where id=$1", job_id)
 
 
 async def set_uws_phase_to_executing(db_pool, job_id):
@@ -166,7 +175,7 @@ async def set_uws_phase_to_completed(db_pool, job_id):
 async def set_uws_phase_to_error(db_pool, job_id, error):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            return await conn.fetchrow("update uws_jobs set phase=$2, error=$3"
+            return await conn.fetchrow("update uws_jobs set phase=$2, error=$3 "
                                        "where id=$1 returning id",
                                        job_id,
                                        UWSPhase.Error,

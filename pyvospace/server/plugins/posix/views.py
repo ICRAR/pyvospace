@@ -1,13 +1,14 @@
 import os
 import io
 import asyncio
+import aiohttp
 import aiofiles
 import uuid
 
-from pyvospace.server.node import set_node_busy, NodeType
-from pyvospace.server.transfer import get_transfer_job
-from pyvospace.server.exception import VOSpaceError
-from pyvospace.server.uws import set_uws_phase_to_error, set_uws_phase_to_completed, UWSPhase
+from aiofiles.os import stat
+from aiohttp import web
+
+from pyvospace.server.node import NodeType
 
 
 async def make_dir(path):
@@ -18,55 +19,61 @@ async def make_dir(path):
         pass
 
 
-async def upload_to_node(app, request):
-    job_id = request.match_info.get('job_id', None)
+async def _send_file(request, file_name, file_path):
+    response = web.StreamResponse()
+    file_size = (await stat(file_path)).st_size
 
+    response.headers[aiohttp.hdrs.CONTENT_TYPE] = "application/octet-stream"
+    response.headers[aiohttp.hdrs.CONTENT_LENGTH] = str(file_size)
+    response.headers[aiohttp.hdrs.CONTENT_DISPOSITION] = f"attachment; filename=\"{file_name}\""
+
+    await response.prepare(request)
+    async with aiofiles.open(file_path, mode='rb') as input_file:
+        # cannot use sendfile() over an SSL connection
+        # defer back to user space copy and send
+        # will run this in Gunicorn et al to get maximum utilisation
+        while True:
+            buff = await input_file.read(65536)
+            if not buff:
+                break
+            await response.write(buff)
+    await response.write_eof()
+    return response
+
+
+async def download(app, conn, request, job_details):
+    root_dir = app['root_dir']
+    path_tree = job_details['path']
+    file_path = f'{root_dir}/{path_tree}'
+
+    return await _send_file(request, job_details['name'], file_path)
+
+
+async def upload(app, conn, request, job_details):
     reader = request.content
 
-    async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
-            path_tree = None
+    root_dir = app['root_dir']
+    path_tree = job_details['path']
 
-            try:
-                results = await get_transfer_job(conn, job_id)
+    file_name = f'{root_dir}/{path_tree}'
+    directory = os.path.dirname(file_name)
 
-                path = list(filter(None, results['path'].split('.')))
-                path_tree = '/'.join(path)
+    await make_dir(directory)
 
-                await set_node_busy(conn, path_tree, True)
+    if job_details['type'] == NodeType.ContainerNode:
+        file_name = f'{root_dir}/{path_tree}/{uuid.uuid4().hex}.zip'
 
-                root_dir = app['root_dir']
-                file_name = f'{root_dir}/{path_tree}'
-                directory = os.path.dirname(file_name)
-                #print('directory:', directory, 'filename:', file_name)
-                await make_dir(directory)
+    async with aiofiles.open(file_name, 'wb') as f:
+        while True:
+            buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
+            if not buffer:
+                break
+            await f.write(buffer)
 
-                if results['type'] == NodeType.ContainerNode:
-                    file_name = f'{root_dir}/{path_tree}/{uuid.uuid4().hex}.zip'
+    # if its a container (rar, zip etc) then
+    # unpack it and create nodes if neccessary
+    if job_details['type'] == NodeType.ContainerNode:
+        pass
 
-                async with aiofiles.open(file_name, 'wb') as f:
-                    while True:
-                        buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
-                        if not buffer:
-                            break
-                        await f.write(buffer)
-
-                # if its a container (rar, zip etc) then
-                # unpack it and create nodes if neccessary
-                if results['type'] == NodeType.ContainerNode:
-                    pass
-
-                await set_uws_phase_to_completed(app['db_pool'], job_id)
-
-            except VOSpaceError as e:
-                await set_uws_phase_to_error(app['db_pool'], job_id, str(e))
-                raise
-
-            except Exception as f:
-                await set_uws_phase_to_error(app['db_pool'], job_id, str(f))
-                raise VOSpaceError(500, str(f))
-
-            finally:
-                if path_tree:
-                    await set_node_busy(conn, path_tree, False)
+    return web.Response(status=200)
 

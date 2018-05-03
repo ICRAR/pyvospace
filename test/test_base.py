@@ -1,6 +1,9 @@
 import os
+import io
 import sys
 import asyncio
+import aiofiles
+import aiofiles.os
 import aiohttp
 import logging
 import unittest
@@ -30,7 +33,9 @@ class TestBase(unittest.TestCase):
             config['Plugin'] = {'path': '',
                                 'name': 'posix'}
             config['PosixPlugin'] = {'host': 'localhost',
-                                     'port': 8081}
+                                     'port': 8081,
+                                     'root_dir': '/tmp/store',
+                                     'processing_dir': '/tmp/processing'}
             config.write(open(self.config_filename, 'w'))
 
         app = self.loop.run_until_complete(VOSpaceServer.create(self.config_filename))
@@ -43,6 +48,20 @@ class TestBase(unittest.TestCase):
     def tearDown(self):
         self.loop.run_until_complete(self.runner.cleanup())
         self.loop.close()
+
+    async def create_file(self, file_name):
+        try:
+            await aiofiles.os.stat(file_name)
+        except FileNotFoundError:
+            async with aiofiles.open(file_name, mode='wb') as f:
+                await f.truncate(1024*io.DEFAULT_BUFFER_SIZE)
+
+    async def file_sender(self, file_name=None):
+        async with aiofiles.open(file_name, 'rb') as f:
+            chunk = await f.read(64 * 1024)
+            while chunk:
+                yield chunk
+                chunk = await f.read(64 * 1024)
 
     async def post(self, url, **kwargs):
         async with aiohttp.ClientSession() as session:
@@ -134,3 +153,23 @@ class TestBase(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertTrue(error_contains in error[0].text, msg=error[0].text)
 
+    async def push_to_space(self, url, file_path, expected_status=200):
+        status, response = await self.put(url, data=self.file_sender(file_name=file_path))
+        self.assertEqual(status, expected_status, msg=response)
+
+    async def pull_from_space(self, url, output_path, expected_status=200):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                self.assertEqual(resp.status, expected_status)
+                if resp.status == 200:
+                    hdr_length = int(resp.headers[aiohttp.hdrs.CONTENT_LENGTH])
+                    path = f"{output_path}/{resp.content_disposition.filename}"
+                    downloaded = 0
+                    async with aiofiles.open(path, mode='wb') as out_file:
+                        while True:
+                            buff = await resp.content.read(65536)
+                            downloaded += len(buff)
+                            if not buff:
+                                break
+                            await out_file.write(buff)
+                    self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")

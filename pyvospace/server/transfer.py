@@ -5,11 +5,12 @@ import lxml.etree as ET
 from urllib.parse import urlparse
 
 from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
-    get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, InvalidUWSState, \
-    update_uws_job, set_uws_phase_to_error
+    get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, \
+    update_uws_job, set_uws_phase_to_error, set_uws_called_pending
 from .node import NS, NodeType, create_node, NodeTextLookup, \
     delete_properties, get_node
-from .exception import VOSpaceError
+from .exception import VOSpaceError, NodeDoesNotExistError, JobDoesNotExistError, \
+    InvalidJobStateError, NodeBusyError, InvalidJobError
 
 
 def xml_transfer_details(target, direction, protocol_endpoints):
@@ -18,17 +19,13 @@ def xml_transfer_details(target, direction, protocol_endpoints):
     endpoints = protocol_endpoints['endpoint']
 
     for end in endpoints:
-        end_str = f'<vos:protocol uri="{prot}">' \
-                  f'<vos:endpoint>{end}</vos:endpoint>' \
-                  f'</vos:protocol>'
+        end_str = f'<vos:protocol uri="{prot}"><vos:endpoint>{end}</vos:endpoint></vos:protocol>'
         prot_end.append(end_str)
 
-    xml = f'<?xml version="1.0" encoding="UTF-8"?>' \
-          f'<vos:transfer xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
-          f'<vos:target>{target}</vos:target>' \
-          f'<vos:direction>{direction}</vos:direction>' \
-          f'{ "".join(prot_end) }' \
-          f'</vos:transfer>'
+    xml = '<?xml version="1.0" encoding="UTF-8"?>' \
+          '<vos:transfer xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
+          f'<vos:target>{target}</vos:target><vos:direction>{direction}</vos:direction>' \
+          f'{"".join(prot_end)}</vos:transfer>'
 
     return xml
 
@@ -45,29 +42,92 @@ async def get_transfer_details(app, job_id):
     return job['transfer']
 
 
-async def get_transfer_job(conn, job_id):
+async def data_request(app, request, func):
+    job_id = request.match_info.get('job_id', None)
+    db_pool = app['db_pool']
 
-    results = await conn.fetchrow(f'select * from uws_jobs inner join '
-                                  f'nodes on uws_jobs.target = nodes.path '
-                                  f'where uws_jobs.id = $1 '
-                                  f'for share of nodes',
-                                  job_id)
+    results = None
+    response = None
+    try:
+        results = await _get_transfer_job_and_set_to_busy(db_pool, job_id)
 
-    if not results:
-        raise VOSpaceError(404, f"Job or node does not exist. JobID: {job_id}")
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await _lock_transfer_node(conn, job_id, results['target'])
+                response = await func(app, conn, request, results)
+        await set_uws_phase_to_completed(db_pool, job_id)
+        return response
+    # Ignore these errors i.e. don't set the job into error
+    except (JobDoesNotExistError, InvalidJobStateError, NodeBusyError, InvalidJobError):
+        raise
+    # If the node has been deleted at some point then set the job into error
+    except NodeDoesNotExistError as e:
+        await set_uws_phase_to_error(db_pool, job_id, e.error)
+        raise
+    except Exception as f:
+        await set_uws_phase_to_error(db_pool, job_id, str(f))
+        raise VOSpaceError(500, str(f))
+    finally:
+        # Once we are finished then the job is no longer busy
+        if results and results['direction'] == 'pushToVoSpace':
+            await _set_transfer_job_to_not_busy(db_pool, results['target'])
 
-    if results['phase'] != UWSPhase.Executing:
-        raise VOSpaceError(400, f"Job not in EXECUTING phase. JobID: {job_id}")
 
-    # Want to allow nodes to be appended to containers in parallel.
-    # Every other node should be blocked while uploading.
-    if results['busy'] is True and results['type'] != NodeType.ContainerNode:
-        raise VOSpaceError(400, f"Node Busy. Node: {results['path']} is busy.")
-    return results
+async def _get_transfer_job_and_set_to_busy(db_pool, job_id):
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                job_result = await conn.fetchrow("select * from uws_jobs where id=$1", job_id)
+
+                if not job_result:
+                    raise JobDoesNotExistError(f"Job does not exist. JobID: {job_id}")
+
+                if job_result['phase'] != UWSPhase.Executing:
+                    raise InvalidJobStateError(f"Job not in EXECUTING phase. JobID: {job_id}")
+
+                node_result = await conn.fetchrow("select * from nodes where path=$1 for update",
+                                                  job_result['target'])
+
+                if not node_result:
+                    raise NodeDoesNotExistError(f"Target node for job does not exist. JobID: {job_id}")
+
+                # Want to allow nodes to be appended to containers in parallel.
+                # Every other node should be blocked while uploading.
+                if node_result['busy'] is True and node_result['type'] != NodeType.ContainerNode:
+                    raise NodeBusyError(f"Node Busy. Node: {node_result['path']} is busy.")
+
+                # set the node to busy so no other clients can manipulate the data
+                # only set busy when we are pushing data to the node.
+                if job_result['direction'] == 'pushToVoSpace':
+                    await conn.fetchrow("update nodes set busy=true where path=$1", node_result['path'])
+
+                path = list(filter(None, node_result['path'].split('.')))
+                path_slash = '/'.join(path)
+                dict_results = dict(node_result)
+                dict_results['path'] = path_slash
+                dict_results.update(job_result)
+                return dict_results
+
+    except ValueError:
+        raise InvalidJobError(f"Badly formed JobID. JobID: {job_id}")
+
+
+async def _set_transfer_job_to_not_busy(db_pool, path):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            # set the node to not busy so no other clients can manipulate the data
+            return await conn.fetchrow("update nodes set busy=false "
+                                       "where path=$1 returning path", path)
+
+
+async def _lock_transfer_node(conn, job_id, target):
+    # Row lock the node so updates/deletes can not occur for duration of upload/download
+    node_result = await conn.fetchrow("select path from nodes where path=$1 for share", target)
+    if not node_result:
+        raise NodeDoesNotExistError(f"Target node for job does not exist. JobID: {job_id}")
 
 
 async def run_transfer_job(app, job_id, uws_cmd):
-
     if not uws_cmd:
         raise VOSpaceError(400, "Invalid Request. Empty UWS phase input.")
 
@@ -76,11 +136,16 @@ async def run_transfer_job(app, job_id, uws_cmd):
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            job = await get_uws_job_conn(conn, job_id)
+            job = await get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
             # Can only start a PENDING Job
             if job['phase'] != UWSPhase.Pending:
-                raise InvalidUWSState()
-            app['executor'].execute(run_job, app, job)
+                raise InvalidJobStateError('Invalid Job State')
+            # Only run job if pending has not already been called.
+            # If we dont do this then pending can be called many times before
+            # the running job transitions to execute creating many tasks for the same job.
+            if job['called_pending'] is False:
+                await set_uws_called_pending(conn, job_id)
+                app['executor'].execute(run_job, app, job)
 
 
 async def run_job(app, job_id, job):
@@ -205,12 +270,12 @@ async def __perform_transfer_job(app, conn, job_id, job_xml, phase):
                 if prot_uri not in provides_protocols:
                     raise VOSpaceError(400, f"Protocol Not Supported. Protocol {prot_uri} not supported.")
 
-                node_type_text = NodeTextLookup(node_results['type'])
+                node_type_text = NodeTextLookup[node_results['type']]
 
             end_points = app['plugin'].get_protocol_endpoints(uws_job_id=job_id,
                                                               target_path=target_path_norm,
                                                               target_type=node_type_text,
-                                                              direction=direction,
+                                                              direction=direction.text,
                                                               protocol=prot_uri,
                                                               view=node_view_uri,
                                                               params=trans_params)
@@ -221,9 +286,9 @@ async def __perform_transfer_job(app, conn, job_id, job_xml, phase):
 
             space_name = app['space_name']
             attr_vals = []
-            attr_vals.append(f'<uws:result id="transferDetails" '
+            attr_vals.append('<uws:result id="transferDetails" '
                              f'xlink:href="/vospace/transfers/{job_id}/results/transferDetails"/>')
-            attr_vals.append(f'<uws:result id="dataNode" '
+            attr_vals.append('<uws:result id="dataNode" '
                              f'xlink:href="vos://{space_name}!vospace/{target_path_norm}"/>')
             result = f"<uws:results>{''.join(attr_vals)}</uws:results>"
 
@@ -328,13 +393,12 @@ async def move_nodes(app, target_path, direction_path, perform_copy):
                     for prop in prop_results:
                         user_props_insert.append(tuple(prop))
 
-                    await conn.executemany(("INSERT INTO properties (uri, value, read_only, node_path) "
-                                            "VALUES ($1, $2, $3, $4)"),
+                    await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
+                                           "VALUES ($1, $2, $3, $4)",
                                            user_props_insert)
 
                 else:
-                    await conn.execute("update nodes set "
-                                       "path = $2 || subpath(path, nlevel($1)-1) "
+                    await conn.execute("update nodes set path = $2 || subpath(path, nlevel($1)-1) "
                                        "where path <@ $1",
                                        target_path_tree,
                                        destination_path_tree)
