@@ -18,6 +18,13 @@ async def make_dir(path):
     except FileExistsError as e:
         pass
 
+async def remove(path):
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, os.remove, path)
+    except FileExistsError as e:
+        pass
+
 
 async def _send_file(request, file_name, file_path):
     response = web.StreamResponse()
@@ -63,12 +70,16 @@ async def upload(app, conn, request, job_details):
     if job_details['type'] == NodeType.ContainerNode:
         file_name = f'{root_dir}/{path_tree}/{uuid.uuid4().hex}.zip'
 
-    async with aiofiles.open(file_name, 'wb') as f:
-        while True:
-            buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
-            if not buffer:
-                break
-            await f.write(buffer)
+    try:
+        async with aiofiles.open(file_name, 'wb') as f:
+            while True:
+                buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
+                if not buffer:
+                    break
+                await f.write(buffer)
+    except asyncio.CancelledError:
+        await remove(file_name)
+        raise
 
     # if its a container (rar, zip etc) then
     # unpack it and create nodes if neccessary

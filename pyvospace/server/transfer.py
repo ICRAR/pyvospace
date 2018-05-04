@@ -1,12 +1,15 @@
 import os
+import asyncio
 import asyncpg
 import lxml.etree as ET
 
+from contextlib import suppress
 from urllib.parse import urlparse
 
 from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
     get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, \
-    update_uws_job, set_uws_phase_to_error, set_uws_called_pending
+    update_uws_job, set_uws_phase_to_error, set_uws_set_already_in_state, \
+    set_uws_phase_to_abort
 from .node import NS, NodeType, create_node, NodeTextLookup, \
     delete_properties, get_node
 from .exception import VOSpaceError, NodeDoesNotExistError, JobDoesNotExistError, \
@@ -43,34 +46,44 @@ async def get_transfer_details(app, job_id):
 
 
 async def data_request(app, request, func):
+    # TODO: Make sure this can not be called multiple times per job id
     job_id = request.match_info.get('job_id', None)
-    db_pool = app['db_pool']
+    return await app['executor'].execute(_run_transfer_job, job_id, app, request, func)
 
+
+async def _run_transfer_job(job_id, app, request, func):
+    db_pool = app['db_pool']
     results = None
-    response = None
     try:
         results = await _get_transfer_job_and_set_to_busy(db_pool, job_id)
-
-        async with db_pool.acquire() as conn:
+        async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
                 await _lock_transfer_node(conn, job_id, results['target'])
                 response = await func(app, conn, request, results)
-        await set_uws_phase_to_completed(db_pool, job_id)
+        # if we are here we have completed an expensive operation,
+        # threat it as successful regardless of the state of the client
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(set_uws_phase_to_completed(db_pool, job_id))
         return response
-    # Ignore these errors i.e. don't set the job into error
+        # Ignore these errors i.e. don't set the job into error
     except (JobDoesNotExistError, InvalidJobStateError, NodeBusyError, InvalidJobError):
         raise
-    # If the node has been deleted at some point then set the job into error
+        # If the node has been deleted at some point then set the job into error
     except NodeDoesNotExistError as e:
-        await set_uws_phase_to_error(db_pool, job_id, e.error)
+        await asyncio.shield(set_uws_phase_to_error(db_pool, job_id, str(e)))
+        raise e
+
+    except asyncio.CancelledError:
+        await asyncio.shield(set_uws_phase_to_error(db_pool, job_id, "Job Cancelled"))
         raise
+
     except Exception as f:
-        await set_uws_phase_to_error(db_pool, job_id, str(f))
+        await asyncio.shield(set_uws_phase_to_error(db_pool, job_id, str(f)))
         raise VOSpaceError(500, str(f))
+
     finally:
-        # Once we are finished then the job is no longer busy
         if results and results['direction'] == 'pushToVoSpace':
-            await _set_transfer_job_to_not_busy(db_pool, results['target'])
+            await asyncio.shield(_set_transfer_job_to_not_busy(db_pool, results['target']))
 
 
 async def _get_transfer_job_and_set_to_busy(db_pool, job_id):
@@ -116,8 +129,9 @@ async def _set_transfer_job_to_not_busy(db_pool, path):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             # set the node to not busy so no other clients can manipulate the data
-            return await conn.fetchrow("update nodes set busy=false "
-                                       "where path=$1 returning path", path)
+            result = await conn.fetchrow("update nodes set busy=false "
+                                         "where path=$1 returning path", path)
+            return result
 
 
 async def _lock_transfer_node(conn, job_id, target):
@@ -127,28 +141,38 @@ async def _lock_transfer_node(conn, job_id, target):
         raise NodeDoesNotExistError(f"Target node for job does not exist. JobID: {job_id}")
 
 
-async def run_transfer_job(app, job_id, uws_cmd):
+async def modify_transfer_job_phase(app, job_id, uws_cmd):
     if not uws_cmd:
         raise VOSpaceError(400, "Invalid Request. Empty UWS phase input.")
 
-    if uws_cmd.upper() != "PHASE=RUN":
+    exec = app['executor']
+    phase = uws_cmd.upper()
+
+    if phase == "PHASE=RUN":
+        async with app['db_pool'].acquire() as conn:
+            async with conn.transaction():
+                job = await get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
+                # Can only start a PENDING Job
+                if job['phase'] != UWSPhase.Pending:
+                    raise InvalidJobStateError('Invalid Job State')
+                # Only run job if pending has not already been called.
+                # If we dont do this then pending can be called many times before
+                # the running job transitions to execute creating many tasks for the same job.
+                if job['already_in_state'] is False:
+                    exec.execute(run_job, job_id, app, job)
+                    with suppress(asyncio.CancelledError):
+                        await asyncio.shield(set_uws_set_already_in_state(conn, job_id))
+
+    elif phase == "PHASE=ABORT":
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(set_uws_phase_to_abort(app['db_pool'], job_id))
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(exec.abort(job_id))
+    else:
         raise VOSpaceError(400, f"Invalid Request. Unknown UWS phase input {uws_cmd}")
 
-    async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
-            job = await get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
-            # Can only start a PENDING Job
-            if job['phase'] != UWSPhase.Pending:
-                raise InvalidJobStateError('Invalid Job State')
-            # Only run job if pending has not already been called.
-            # If we dont do this then pending can be called many times before
-            # the running job transitions to execute creating many tasks for the same job.
-            if job['called_pending'] is False:
-                await set_uws_called_pending(conn, job_id)
-                app['executor'].execute(run_job, app, job)
 
-
-async def run_job(app, job_id, job):
+async def run_job(job_id, app, job):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
             await perform_transfer_job(app=app, conn=conn, job_id=job_id,
@@ -161,24 +185,26 @@ async def create_transfer_job(app, job_xml, phase=UWSPhase.Pending):
             job_id = await create_uws_job(conn=conn, target=None, direction=None,
                                           job_info=job_xml, result=None, transfer=None,
                                           phase=phase)
-            # If the phase is Executing its assumes its a sync transfer, so run it now
+            # If the phase is Executing its assumes its a sync transfer, so run it now!
             if phase == UWSPhase.Executing:
                 await perform_transfer_job(app=app, conn=conn, job_id=job_id,
-                                           job_xml=job_xml, phase=phase)
+                                           job_xml=job_xml, phase=phase, sync=True)
             return job_id
 
 
-async def perform_transfer_job(app, conn, job_id, job_xml, phase):
+async def perform_transfer_job(app, conn, job_id, job_xml, phase, sync=False):
     try:
-        await __perform_transfer_job(app=app, conn=conn, job_id=job_id,
-                                     job_xml=job_xml, phase=phase)
+        try:
+            await _perform_transfer_job(app=app, conn=conn, job_id=job_id,
+                                         job_xml=job_xml, phase=phase, sync=sync)
+        except BaseException as f:
+            raise VOSpaceError(500, str(f))
     except VOSpaceError as e:
-        await set_uws_phase_to_error(app['db_pool'], job_id, e.error)
-    except BaseException as f:
-        await set_uws_phase_to_error(app['db_pool'], job_id, str(f))
+        await asyncio.shield(set_uws_phase_to_error(app['db_pool'], job_id, e.error))
+        raise e
 
 
-async def __perform_transfer_job(app, conn, job_id, job_xml, phase):
+async def _perform_transfer_job(app, conn, job_id, job_xml, phase, sync):
     try:
         root = ET.fromstring(job_xml)
 
@@ -296,6 +322,9 @@ async def __perform_transfer_job(app, conn, job_id, job_xml, phase):
                                  direction=direction_path_norm, transfer=xml_transfer,
                                  result=result, phase=phase)
         else:
+            if sync is True:
+                raise VOSpaceError(403, "Permission Denied. Move/Copy denied.")
+
             direction_path = urlparse(direction.text)
             if not direction_path.path:
                 raise VOSpaceError(400, "Invalid URI. URI does not exist.")
@@ -319,7 +348,10 @@ async def __perform_transfer_job(app, conn, job_id, job_xml, phase):
                              target_path=target_path_norm,
                              direction_path=direction_path_norm,
                              perform_copy=copy_node)
-            await set_uws_phase_to_completed(app['db_pool'], job_id)
+            # need to shield because we have successfully compeleted
+            # a potentially expensive operation
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(set_uws_phase_to_completed(app['db_pool'], job_id))
 
     except VOSpaceError as f:
         raise f

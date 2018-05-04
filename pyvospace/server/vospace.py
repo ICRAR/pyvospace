@@ -11,7 +11,7 @@ from .node import create_node_request, delete_node, get_node_request, set_node_p
     generate_protocol_response, generate_node_response
 from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
     generate_uws_job_xml, PhaseLookup, UWSPhase
-from .transfer import create_transfer_job, run_transfer_job, get_transfer_details
+from .transfer import create_transfer_job, modify_transfer_job_phase, get_transfer_details
 from .plugin import VOSpacePluginBase
 
 
@@ -52,13 +52,13 @@ class VOSpaceServer(web.Application):
         self.on_shutdown.append(self.shutdown)
 
     async def setup(self):
-        self['executor'] = UWSJobExecutor()
-
         config = self['config']
 
         dsn = config['Database']['dsn']
         db_pool = await asyncpg.create_pool(dsn=dsn)
         self['db_pool'] = db_pool
+
+        self['executor'] = UWSJobExecutor()
 
         plugin_path = config['Plugin']['path']
         plugin_name = config['Plugin']['name']
@@ -166,6 +166,7 @@ class VOSpaceServer(web.Application):
             xml_response = generate_node_response(space_name=self['space_name'],
                                                   node_path=response.node_name,
                                                   node_type=response.node_type_text,
+                                                  node_busy=response.node_busy,
                                                   node_property=response.node_properties,
                                                   node_accepts_views=accepts)
 
@@ -275,7 +276,7 @@ class VOSpaceServer(web.Application):
         try:
             job_id = request.match_info.get('job_id', None)
             uws_cmd = await request.text()
-            await run_transfer_job(self, job_id, uws_cmd)
+            await modify_transfer_job_phase(self, job_id, uws_cmd)
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
         except InvalidJobStateError:

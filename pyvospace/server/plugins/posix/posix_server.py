@@ -6,6 +6,7 @@ from aiohttp import web
 
 from pyvospace.server.exception import VOSpaceError
 from pyvospace.server.transfer import data_request
+from pyvospace.server.uws import UWSJobExecutor
 
 from .views import upload, download, make_dir
 
@@ -25,6 +26,7 @@ class PosixFileServer(web.Application):
         self.on_shutdown.append(self.shutdown)
 
     async def shutdown(self):
+        await self['executor'].close()
         await self['db_pool'].close()
 
     async def setup(self):
@@ -45,6 +47,8 @@ class PosixFileServer(web.Application):
         db_pool = await asyncpg.create_pool(dsn=dsn)
         self['db_pool'] = db_pool
 
+        self['executor'] = UWSJobExecutor()
+
     @classmethod
     async def create(cls, cfg_file, *args, **kwargs):
         app = PosixFileServer(cfg_file, *args, **kwargs)
@@ -53,20 +57,22 @@ class PosixFileServer(web.Application):
 
     async def upload_data(self, request):
         try:
-            return await asyncio.shield(data_request(self, request, upload))
+            return await data_request(self, request, upload)
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
-
+        except asyncio.CancelledError:
+            raise
         except Exception as g:
             return web.Response(status=500, text=str(g))
 
     async def download_data(self, request):
         try:
-            return await asyncio.shield(data_request(self, request, download))
+            return await data_request(self, request, download)
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
-
+        except asyncio.CancelledError:
+            raise
         except Exception as g:
             return web.Response(status=500, text=str(g))

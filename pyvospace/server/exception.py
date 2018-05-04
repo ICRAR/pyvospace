@@ -3,6 +3,9 @@ class VOSpaceError(Exception):
         self.code = code
         self.error = error
 
+    def __str__(self):
+        return self.error
+
 
 class NodeDoesNotExistError(VOSpaceError):
     def __init__(self, error):
@@ -27,3 +30,8 @@ class InvalidJobStateError(VOSpaceError):
 class NodeBusyError(VOSpaceError):
     def __init__(self, error):
         super().__init__(400, error)
+
+
+class ClosingError(VOSpaceError):
+    def __init__(self):
+        super().__init__(400, '')
