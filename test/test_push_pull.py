@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 import xml.etree.ElementTree as ET
 
 import xml.dom.minidom as minidom
@@ -28,8 +29,8 @@ class TestCreate(TestBase):
         posix_server = self.loop.run_until_complete(PosixFileServer.create(self.config_filename))
         self.posix_runner = web.AppRunner(posix_server)
         self.loop.run_until_complete(self.posix_runner.setup())
-        posix_site = web.TCPSite(self.posix_runner, 'localhost', 8081)
-        self.loop.run_until_complete(posix_site.start())
+        self.posix_site = web.TCPSite(self.posix_runner, 'localhost', 8081)
+        self.loop.run_until_complete(self.posix_site.start())
 
     async def _setup(self):
         await self.create_file('/tmp/datafile.dat')
@@ -37,6 +38,7 @@ class TestCreate(TestBase):
     def tearDown(self):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode'))
+        self.loop.run_until_complete(self.posix_runner.shutdown())
         self.loop.run_until_complete(self.posix_runner.cleanup())
 
         super().tearDown()
@@ -56,19 +58,23 @@ class TestCreate(TestBase):
             await self.pull_from_space('http://localhost:8081/vospace/download/1234',
                                        '/tmp/download/', expected_status=400)
 
-            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=200)
+            try:
+                await asyncio.wait_for(self.push_to_space(end.text,
+                                                          '/tmp/datafile.dat',
+                                                          expected_status=200), 0.2)
+            except Exception as e:
+                pass
 
             node = Node('/syncdatanode')
             push = PullFromSpace(node, [HTTPGet()])
             status, response = await self.post('http://localhost:8080/vospace/synctrans',
                                                data=push.tostring())
             self.assertEqual(200, status, msg=response)
-
             root = ET.fromstring(response)
             prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            await self.pull_from_space(end.text, '/tmp/download/')
+            await self.pull_from_space(end.text, '/tmp/download/', expected_status=500)
 
         self.loop.run_until_complete(run())
 

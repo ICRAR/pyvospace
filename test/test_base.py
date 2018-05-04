@@ -38,14 +38,15 @@ class TestBase(unittest.TestCase):
                                      'processing_dir': '/tmp/processing'}
             config.write(open(self.config_filename, 'w'))
 
-        app = self.loop.run_until_complete(VOSpaceServer.create(self.config_filename))
-        self.runner = web.AppRunner(app)
+        self.app = self.loop.run_until_complete(VOSpaceServer.create(self.config_filename))
+        self.runner = web.AppRunner(self.app)
         self.loop.run_until_complete(self.runner.setup())
         site = web.TCPSite(self.runner, 'localhost', 8080,
                            reuse_address=True, reuse_port=True)
         self.loop.run_until_complete(site.start())
 
     def tearDown(self):
+        self.loop.run_until_complete(self.runner.shutdown())
         self.loop.run_until_complete(self.runner.cleanup())
         self.loop.close()
 
