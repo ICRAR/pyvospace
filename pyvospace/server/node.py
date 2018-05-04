@@ -12,6 +12,7 @@ from .exception import VOSpaceError
 
 Create_Response = namedtuple('CreateResponse', 'node_name '
                                                'node_type_text '
+                                               'node_busy '
                                                'node_properties ')
 
 Node_Type = namedtuple('NodeType', 'Node '
@@ -87,6 +88,7 @@ def generate_node_summary_xml(space_name, nodes):
 def generate_node_response(space_name,
                            node_path,
                            node_type,
+                           node_busy,
                            node_property=[],
                            node_accepts_views=[],
                            node_provides_views=[],
@@ -94,7 +96,8 @@ def generate_node_response(space_name,
     xml = '<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
           ' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           ' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
-          f' xsi:type="{node_type}" uri="vos://{space_name}!vospace/{node_path}">' \
+          f' xsi:type="{node_type}" uri="vos://{space_name}!vospace/{node_path}" ' \
+          f'busy="{"true" if node_busy else "false"}" >' \
           f'<vos:properties>{ generate_property_xml(node_property) }</vos:properties>' \
           f'<vos:accepts>{ generate_view_xml(node_accepts_views) }</vos:accepts>' \
           f'<vos:provides>{ generate_view_xml(node_provides_views) }</vos:provides>' \
@@ -200,6 +203,7 @@ async def get_node_request(app, path, params):
                 properties = await conn.fetch("select * from properties where node_path=$1",
                                               results[0]['path'])
 
+    busy = results[0]['busy']
     node_type_int = results[0]['type']
     node_type = NodeTextLookup[node_type_int]
     if NodeType.Node <= node_type_int <= NodeType.ContainerNode:
@@ -218,6 +222,7 @@ async def get_node_request(app, path, params):
     xml_response = generate_node_response(space_name=app['space_name'],
                                           node_path=path,
                                           node_type=node_type,
+                                          node_busy=busy,
                                           node_property=properties,
                                           node_accepts_views=views,
                                           node_provides_views=provides,
@@ -333,7 +338,7 @@ async def create_node(app,
                                    "VALUES ($1, $2, $3, $4)",
                                    properties_list)
 
-        return Create_Response(node_name, node_type_text, properties)
+        return Create_Response(node_name, node_type_text, False, properties)
 
     except ParseError as p:
         raise VOSpaceError(500, f"Internal Error. XML error: {str(p)}.")
@@ -420,6 +425,7 @@ async def set_node_properties(app, xml_text, url_path):
         xml_response = generate_node_response(space_name=app['space_name'],
                                               node_path=url_path,
                                               node_type=NodeTextLookup[node_type],
+                                              node_busy=results['busy'],
                                               node_property=properties_result)
         return xml_response
 

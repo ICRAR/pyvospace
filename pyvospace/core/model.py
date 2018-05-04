@@ -5,7 +5,6 @@ from urllib.parse import urlparse
 
 
 class Property(object):
-
     def __init__(self, uri, value, read_only=None):
         self.uri = uri
         self.value = value
@@ -41,7 +40,6 @@ class Property(object):
 
 
 class DeleteProperty(Property):
-
     def __init__(self, uri):
         super().__init__(uri, None, None)
 
@@ -51,7 +49,6 @@ class DeleteProperty(Property):
 
 
 class Capability(object):
-
     def __init__(self, uri, endpoint, param):
         self.uri = uri
         self.endpoint = endpoint
@@ -59,7 +56,6 @@ class Capability(object):
 
 
 class Protocol(object):
-
     def __init__(self, uri):
         self.uri = uri
 
@@ -83,9 +79,7 @@ class HTTPGet(Protocol):
         super().__init__('ivo://ivoa.net/vospace/core#httpget')
 
 
-
 class View(object):
-
     def __init__(self, uri):
         self.uri = uri
 
@@ -149,7 +143,7 @@ class Node(object):
         self.__properties.sort(key=lambda x: x.uri)
 
     @classmethod
-    def _create_node(cls, node_uri, node_type):
+    def _create_node(cls, node_uri, node_type, node_busy):
         if node_uri is None:
             raise Exception("Node URI does not exist.")
 
@@ -162,16 +156,16 @@ class Node(object):
             return Node(node_path)
 
         elif node_type == 'vos:DataNode':
-            return DataNode(node_path)
+            return DataNode(node_path, busy=node_busy)
 
         elif node_type == 'vos:UnstructuredDataNode':
-            return UnstructuredDataNode(node_path)
+            return UnstructuredDataNode(node_path, busy=node_busy)
 
         elif node_type == 'vos:StructuredDataNode':
-            return StructuredDataNode(node_path)
+            return StructuredDataNode(node_path, busy=node_busy)
 
         elif node_type == 'vos:ContainerNode':
-            return ContainerNode(node_path)
+            return ContainerNode(node_path, busy=node_busy)
 
         elif node_type == 'vos:LinkNode':
             return LinkNode(node_path, None)
@@ -185,8 +179,12 @@ class Node(object):
 
         node_uri = root.attrib.get('uri', None)
         node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
-
-        node = Node._create_node(node_uri, node_type)
+        node_busy = root.attrib.get('busy', 'false')
+        if node_busy == 'true':
+            node_busy = True
+        else:
+            node_busy = False
+        node = Node._create_node(node_uri, node_type, node_busy)
         node._build_node(root)
 
         return node
@@ -213,18 +211,17 @@ class Node(object):
         return f"vos://{Node.SPACE}!vospace/{self.path}"
 
     def tostring(self):
+        busy = ''
+        if isinstance(self, DataNode):
+            busy = f'busy="{str(self.busy).lower()}"'
+
         create_node_xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
                           f' xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
                           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
-                          f' xsi:type="{self.node_type}"' \
-                          f' uri="{self.to_uri()}">' \
-                          f'<vos:properties>' \
-                          f'{self.__properties_tostring()}' \
-                          f'</vos:properties>' \
-                          f'<vos:accepts/>' \
-                          f'<vos:provides/>' \
-                          f'<vos:capabilities/>' \
-                          f'</vos:node>'
+                          f' xsi:type="{self.node_type}" uri="{self.to_uri()}" {busy}>' \
+                          f'<vos:properties>{self.__properties_tostring()}</vos:properties>' \
+                          f'<vos:accepts/><vos:provides/>' \
+                          f'<vos:capabilities/></vos:node>'
         return create_node_xml
 
 
@@ -274,7 +271,7 @@ class DataNode(Node):
                          node_type=node_type)
         self._accepts = accepts
         self._provides = provides
-        self.busy = busy
+        self._busy = busy
 
     def __eq__(self, other):
         if not isinstance(other, DataNode):
@@ -298,6 +295,10 @@ class DataNode(Node):
                 if view_uri is None:
                     raise Exception("Provides URI does not exist.")
                 self._provides.append(View(view_uri))
+
+    @property
+    def busy(self):
+        return self._busy
 
     @property
     def accepts(self):
@@ -362,7 +363,12 @@ class ContainerNode(DataNode):
             for node_obj in nodes.findall('vos:node', Node.NS):
                 node_uri = node_obj.attrib.get('uri', None)
                 node_type = node_obj.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
-                node = Node._create_node(node_uri, node_type)
+                node_busy = root.attrib.get('busy', 'false')
+                if node_busy == 'true':
+                    node_busy = True
+                else:
+                    node_busy = False
+                node = Node._create_node(node_uri, node_type, node_busy)
                 self.__nodes.append(node)
 
         self.__sort_nodes()
