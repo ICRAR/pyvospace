@@ -46,19 +46,36 @@ async def get_transfer_details(app, job_id):
 
 
 async def data_request(app, request, func):
-    # TODO: Make sure this can not be called multiple times per job id
     job_id = request.match_info.get('job_id', None)
-    return await app['executor'].execute(_run_transfer_job, job_id, app, request, func)
+
+    async with app['db_pool'].acquire() as conn:
+        async with conn.transaction():
+            job = await get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
+            # Can only start a EXECUTING Job
+            if job['phase'] != UWSPhase.Executing:
+                raise InvalidJobStateError('Invalid Job State')
+            # Only run job if pending has not already been called.
+            # If we dont do this then pending can be called many times before
+            # the running job transitions to execute creating many tasks for the same job.
+            if job['already_in_state'] is True:
+                raise InvalidJobStateError("Job already executing.")
+
+            fut = app['executor'].execute(_run_transfer_job, job_id,
+                                          app, request, job, func)
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(set_uws_set_already_in_state(conn, job_id))
+
+    return await fut
 
 
-async def _run_transfer_job(job_id, app, request, func):
+async def _run_transfer_job(job_id, app, request, job, func):
     db_pool = app['db_pool']
     results = None
     try:
-        results = await _get_transfer_job_and_set_to_busy(db_pool, job_id)
-        async with app['db_pool'].acquire() as conn:
+        results = await _get_node_and_set_to_busy(db_pool, job_id, job)
+        async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await _lock_transfer_node(conn, job_id, results['target'])
+                await _lock_transfer_node(conn, job_id, job['target'])
                 response = await func(app, conn, request, results)
         # if we are here we have completed an expensive operation,
         # threat it as successful regardless of the state of the client
@@ -86,43 +103,31 @@ async def _run_transfer_job(job_id, app, request, func):
             await asyncio.shield(_set_transfer_job_to_not_busy(db_pool, results['target']))
 
 
-async def _get_transfer_job_and_set_to_busy(db_pool, job_id):
-    try:
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                job_result = await conn.fetchrow("select * from uws_jobs where id=$1", job_id)
+async def _get_node_and_set_to_busy(db_pool, job_id, job):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            node_result = await conn.fetchrow("select * from nodes where path=$1 for update",
+                                              job['target'])
 
-                if not job_result:
-                    raise JobDoesNotExistError(f"Job does not exist. JobID: {job_id}")
+            if not node_result:
+                raise NodeDoesNotExistError(f"Target node for job does not exist. JobID: {job_id}")
 
-                if job_result['phase'] != UWSPhase.Executing:
-                    raise InvalidJobStateError(f"Job not in EXECUTING phase. JobID: {job_id}")
+            # Want to allow nodes to be appended to containers in parallel.
+            # Every other node should be blocked while uploading.
+            if node_result['busy'] is True and node_result['type'] != NodeType.ContainerNode:
+                raise NodeBusyError(f"Node Busy. Node: {node_result['path']} is busy.")
 
-                node_result = await conn.fetchrow("select * from nodes where path=$1 for update",
-                                                  job_result['target'])
+            # set the node to busy so no other clients can manipulate the data
+            # only set busy when we are pushing data to the node.
+            if job['direction'] == 'pushToVoSpace':
+                await conn.fetchrow("update nodes set busy=true where path=$1", node_result['path'])
 
-                if not node_result:
-                    raise NodeDoesNotExistError(f"Target node for job does not exist. JobID: {job_id}")
-
-                # Want to allow nodes to be appended to containers in parallel.
-                # Every other node should be blocked while uploading.
-                if node_result['busy'] is True and node_result['type'] != NodeType.ContainerNode:
-                    raise NodeBusyError(f"Node Busy. Node: {node_result['path']} is busy.")
-
-                # set the node to busy so no other clients can manipulate the data
-                # only set busy when we are pushing data to the node.
-                if job_result['direction'] == 'pushToVoSpace':
-                    await conn.fetchrow("update nodes set busy=true where path=$1", node_result['path'])
-
-                path = list(filter(None, node_result['path'].split('.')))
-                path_slash = '/'.join(path)
-                dict_results = dict(node_result)
-                dict_results['path'] = path_slash
-                dict_results.update(job_result)
-                return dict_results
-
-    except ValueError:
-        raise InvalidJobError(f"Badly formed JobID. JobID: {job_id}")
+            path = list(filter(None, node_result['path'].split('.')))
+            path_slash = '/'.join(path)
+            dict_results = dict(node_result)
+            dict_results['path'] = path_slash
+            dict_results.update(job)
+            return dict_results
 
 
 async def _set_transfer_job_to_not_busy(db_pool, path):

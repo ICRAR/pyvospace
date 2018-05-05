@@ -127,8 +127,8 @@ async def update_uws_job(conn, job_id, target, direction,
     path_array = list(filter(None, target.split('/')))
     path_tree = '.'.join(path_array)
     # only update job if its pending
-    result = await conn.fetchrow("update uws_jobs set target=$1, direction=$2, "
-                                 "phase=$3, transfer=$4, result=$5 where id=$6 "
+    result = await conn.fetchrow("update uws_jobs set already_in_state=false, target=$1, "
+                                 "direction=$2, phase=$3, transfer=$4, result=$5 where id=$6 "
                                  "and phase <= $7 returning id",
                                  path_tree, direction, phase,
                                  transfer, result, job_id, UWSPhase.Executing)
