@@ -62,7 +62,7 @@ class PosixFileServer(web.Application):
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except asyncio.CancelledError:
-            raise
+            return web.Response(status=500, text="Cancelled")
         except Exception as g:
             return web.Response(status=500, text=str(g))
 
@@ -73,6 +73,6 @@ class PosixFileServer(web.Application):
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except asyncio.CancelledError:
-            raise
+            return web.Response(status=500, text="Cancelled")
         except Exception as g:
             return web.Response(status=500, text=str(g))

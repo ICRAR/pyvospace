@@ -240,8 +240,6 @@ class VOSpaceServer(web.Application):
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
     async def transfer_details(self, request):
@@ -283,7 +281,11 @@ class VOSpaceServer(web.Application):
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
         except VOSpaceError as f:
+            import traceback
+            traceback.print_exc()
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return web.Response(status=500)
