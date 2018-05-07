@@ -7,7 +7,10 @@ class VOSpacePluginBase(object):
     async def shutdown(self):
         raise NotImplementedError()
 
-    def get_space_name(self):
+    def get_space_name(self) -> str:
+        raise NotImplementedError()
+
+    def get_plugin_name(self) -> str:
         raise NotImplementedError()
 
     def get_accepts_protocols(self) -> list:

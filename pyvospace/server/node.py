@@ -127,7 +127,7 @@ def generate_protocol_response(accepts, provides):
     return xml
 
 
-async def get_node(conn, path):
+async def get_node(conn, path, space_id):
     # remove empty entries as a result of strip
     path_list = list(filter(None, path.split('/')))
 
@@ -140,9 +140,9 @@ async def get_node(conn, path):
 
     # share lock both node and parent, important so we
     # dont have a dead lock with move/copy/create
-    result = await conn.fetch("select * from nodes where path = $1 or path = $2 "
-                              "order by path asc for share",
-                              path_tree, path_parent_tree)
+    result = await conn.fetch("select * from nodes where path=$1 or path=$2 "
+                              "and space_id=$3 order by path asc for share",
+                              path_tree, path_parent_tree, space_id)
     result_len = len(result)
     if result_len == 1:
         # If its just one result and we have a parent tree
@@ -193,15 +193,16 @@ async def get_node_request(app, path, params):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
             results = await conn.fetch("select * from nodes where path <@ $1 and "
-                                       "nlevel(path)-nlevel($1)<=1 "
+                                       "nlevel(path)-nlevel($1)<=1 and space_id=$2"
                                        f"order by path asc for share {limit_str}",
-                                       path_tree)
+                                       path_tree, app['space_id'])
             if len(results) == 0:
                 raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
             if detail != 'min':
-                properties = await conn.fetch("select * from properties where node_path=$1",
-                                              results[0]['path'])
+                properties = await conn.fetch("select * from properties "
+                                              "where node_path=$1 and space_id=$2",
+                                              results[0]['path'], app['space_id'])
 
     busy = results[0]['busy']
     node_type_int = results[0]['type']
@@ -237,8 +238,9 @@ async def delete_node(app, path):
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            result = await conn.fetch("delete from nodes where path <@ $1 returning path",
-                                      path_tree)
+            result = await conn.fetch("delete from nodes where "
+                                      "path <@ $1 and space_id=$2 returning path",
+                                      path_tree, app['space_id'])
     if not result:
         raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
@@ -287,6 +289,8 @@ async def create_node(app,
                       uri_path,
                       node_type,
                       properties):
+
+    space_id = app['space_id']
     try:
         if node_type is None:
             node_type = NodeType.Node # if not specified then default is Node
@@ -314,8 +318,8 @@ async def create_node(app,
 
         # get parent node and check if its valid to add node to it
         row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
-                                  "FROM nodes WHERE path=$1 for share",
-                                  path_parent_tree)
+                                  "FROM nodes WHERE path=$1 and space_id=$2 for share",
+                                  path_parent_tree, space_id)
 
         # if the parent is not found but its expected to exist
         if not row and len(path_parent) > 0:
@@ -328,14 +332,15 @@ async def create_node(app,
             if row['type'] != NodeType.ContainerNode:
                 raise VOSpaceError(404, f"Container Not Found. {row['name']} is not a container.")
 
-        await conn.fetchrow("INSERT INTO nodes (type, name, path) VALUES ($1, $2, $3)",
-                             node_type, node_name, path_tree)
+        await conn.fetchrow("INSERT INTO nodes (type, name, path, space_id) VALUES ($1, $2, $3, $4)",
+                             node_type, node_name, path_tree, space_id)
         if properties:
             for prop in properties_list:
                 prop.append(path_tree)
+                prop.append(space_id)
 
-            await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
-                                   "VALUES ($1, $2, $3, $4)",
+            await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
+                                   "VALUES ($1, $2, $3, $4, $5)",
                                    properties_list)
 
         return Create_Response(node_name, node_type_text, False, properties)
@@ -348,6 +353,7 @@ async def create_node(app,
 
 
 async def set_node_properties(app, xml_text, url_path):
+    space_id = app['space_id']
     try:
         root = ET.fromstring(xml_text)
 
@@ -399,28 +405,31 @@ async def set_node_properties(app, xml_text, url_path):
                             node_props_insert.append([prop_uri,
                                                       node_property.text,
                                                       True,
-                                                      node_path_tree])
+                                                      node_path_tree,
+                                                      space_id])
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
-                results = await conn.fetch("select * from nodes where path=$1 and type=$2 for update",
-                                           node_path_tree, node_type)
-                if len(results) == 0:
+                results = await conn.fetchrow("select * from nodes where path=$1 "
+                                              "and type=$2 and space_id=$3 for update",
+                                              node_path_tree, node_type, space_id)
+                if not results:
                     raise VOSpaceError(404, f"Node Not Found. {url_path} not found.")
 
                 # if a property already exists then update it, only if read_only = False
-                await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
-                                       "VALUES ($1, $2, $3, $4) on conflict (uri, node_path) "
+                await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
+                                       "VALUES ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
                                        "do update set value=$2 where properties.read_only=False",
                                        node_props_insert)
 
                 # only delete properties where read_only=False
                 await conn.execute("DELETE FROM properties WHERE uri=any($1::text[]) "
-                                   "AND node_path=$2 and read_only=False",
-                                   node_props_delete, node_path_tree)
+                                   "AND node_path=$2 and space_id=$3 and read_only=False",
+                                   node_props_delete, node_path_tree, space_id)
 
-                properties_result = await conn.fetch("select * from properties where node_path=$1",
-                                                     node_path_tree)
+                properties_result = await conn.fetch("select * from properties "
+                                                     "where node_path=$1 and space_id=$2",
+                                                     node_path_tree, space_id)
 
         xml_response = generate_node_response(space_name=app['space_name'],
                                               node_path=url_path,
@@ -436,8 +445,10 @@ async def set_node_properties(app, xml_text, url_path):
         raise VOSpaceError(409, f"Duplicate Node. {url_path} already exists.")
 
 
-async def delete_properties(conn, uri_path):
+async def delete_properties(conn, uri_path, space_id):
     path = list(filter(None, uri_path.split('/')))
     path_tree = '.'.join(path)
 
-    await conn.execute("delete from properties where node_path=$1", path_tree)
+    await conn.execute("delete from properties "
+                       "where node_path=$1 and space_id=$2",
+                       path_tree, space_id)
