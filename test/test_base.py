@@ -29,6 +29,8 @@ class TestBase(unittest.TestCase):
         self.config_filename = 'test_vo.ini'
         config = configparser.ConfigParser()
         if not os.path.exists(self.config_filename):
+            config['Space'] = {'host': 'localhost',
+                               'port': 8080}
             config['Database'] = {'dsn': 'postgres://test:test@localhost:5432/vos'}
             config['Plugin'] = {'path': '',
                                 'name': 'posix'}

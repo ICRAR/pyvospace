@@ -6,7 +6,7 @@ from pyvospace.core.model import Node, ContainerNode, Property, DeleteProperty, 
 from test.test_base import TestBase
 
 
-class TestCreate(TestBase):
+class TestCopyMove(TestBase):
 
     def tearDown(self):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/root1'))

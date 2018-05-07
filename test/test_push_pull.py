@@ -18,7 +18,7 @@ def prettify(elem):
     return reparsed.toprettyxml(indent="\t")
 
 
-class TestCreate(TestBase):
+class TestPushPull(TestBase):
 
     def setUp(self):
 
