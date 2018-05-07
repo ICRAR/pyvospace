@@ -33,8 +33,8 @@ def xml_transfer_details(target, direction, protocol_endpoints):
     return xml
 
 
-async def get_transfer_details(app, job_id):
-    job = await get_uws_job(app['db_pool'], job_id)
+async def get_transfer_details(db_pool, job_id):
+    job = await get_uws_job(db_pool, job_id)
 
     if job['phase'] < UWSPhase.Executing:
         raise VOSpaceError(400, f'Job not EXECUTING. Job: {job_id}')
@@ -187,9 +187,7 @@ async def run_job(job_id, app, job):
 async def create_transfer_job(app, job_xml, phase=UWSPhase.Pending):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            job_id = await create_uws_job(conn=conn, target=None, direction=None,
-                                          job_info=job_xml, result=None, transfer=None,
-                                          phase=phase)
+            job_id = await create_uws_job(app=app, conn=conn, job_info=job_xml, phase=phase)
             # If the phase is Executing its assumes its a sync transfer, so run it now!
             if phase == UWSPhase.Executing:
                 await perform_transfer_job(app=app, conn=conn, job_id=job_id,
@@ -259,7 +257,7 @@ async def _perform_transfer_job(app, conn, job_id, job_xml, phase, sync):
                     raise VOSpaceError(400, "Invalid Argument. View uri not found.")
 
             # get the node and its parent and lock it from being updated or deleted
-            node_results = await get_node(conn, target_path_norm)
+            node_results = await get_node(conn, target_path_norm, app['space_id'])
 
             if direction.text == 'pushToVoSpace':
                 provides_protocols = app['plugin'].get_supported_import_provides_protocols()
@@ -291,7 +289,7 @@ async def _perform_transfer_job(app, conn, job_id, job_xml, phase, sync):
                     # then the data SHALL be imported into the existing Node
                     # and the Node properties SHALL be cleared unless the node is a ContainerNode.
                     if node_results['type'] != NodeType.ContainerNode:
-                        await delete_properties(conn, target_path_norm)
+                        await delete_properties(conn, target_path_norm, app['space_id'])
 
             else:
                 if not node_results:
@@ -323,7 +321,7 @@ async def _perform_transfer_job(app, conn, job_id, job_xml, phase, sync):
                              f'xlink:href="vos://{space_name}!vospace/{target_path_norm}"/>')
             result = f"<uws:results>{''.join(attr_vals)}</uws:results>"
 
-            await update_uws_job(conn=conn, job_id=job_id, target=target_path_norm,
+            await update_uws_job(app=app, conn=conn, job_id=job_id, target=target_path_norm,
                                  direction=direction_path_norm, transfer=xml_transfer,
                                  result=result, phase=phase)
         else:
@@ -374,6 +372,7 @@ async def _perform_transfer_job(app, conn, job_id, job_xml, phase, sync):
 
 
 async def move_nodes(app, target_path, direction_path, perform_copy):
+    space_id = app['space_id']
     try:
         target_path_array = list(filter(None, target_path.split('/')))
         direction_path_array = list(filter(None, direction_path.split('/')))
@@ -386,9 +385,10 @@ async def move_nodes(app, target_path, direction_path, perform_copy):
                 result = await conn.fetch("select name, type, path, "
                                           "path = subltree($2, 0, nlevel(path)) as common "
                                           "from nodes where path <@ $1 "
-                                          "or path <@ $2 order by path asc for update",
+                                          "or path <@ $2 and space_id=$3 order by path asc for update",
                                           target_path_tree,
-                                          destination_path_tree)
+                                          destination_path_tree,
+                                          space_id)
 
                 result_dict = {r['path']: r for r in result}
 
@@ -412,33 +412,37 @@ async def move_nodes(app, target_path, direction_path, perform_copy):
                 if perform_copy:
                     # copy properties
                     prop_results = await conn.fetch("select properties.uri, properties.value, "
-                                                    "properties.read_only, "
+                                                    "properties.read_only, properties.space_id, "
                                                     "$2||subpath(node_path, nlevel($1)-1) as concat "
-                                                    "from nodes inner join properties "
-                                                    "on nodes.path = properties.node_path "
-                                                    "where path <@ $1",
-                                                     target_path_tree,
-                                                     destination_path_tree)
+                                                    "from nodes inner join properties on "                    
+                                                    "nodes.path = properties.node_path and "
+                                                    "nodes.space_id = properties.space_id "
+                                                    "where nodes.path <@ $1 and nodes.space_id=$3",
+                                                    target_path_tree,
+                                                    destination_path_tree,
+                                                    space_id)
 
-                    await conn.execute("insert into nodes(name, type, path) ( "
-                                       "select name, type, $2||subpath(path, nlevel($1)-1) as concat "
-                                       "from nodes where path <@ $1)",
+                    await conn.execute("insert into nodes(name, type, space_id, path) ( "
+                                       "select name, type, space_id, $2||subpath(path, nlevel($1)-1) as concat "
+                                       "from nodes where path <@ $1 and space_id=$3)",
                                        target_path_tree,
-                                       destination_path_tree)
+                                       destination_path_tree,
+                                       space_id)
 
                     user_props_insert = []
                     for prop in prop_results:
                         user_props_insert.append(tuple(prop))
 
-                    await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path) "
-                                           "VALUES ($1, $2, $3, $4)",
+                    await conn.executemany("INSERT INTO properties (uri, value, read_only, space_id, node_path) "
+                                           "VALUES ($1, $2, $3, $4, $5)",
                                            user_props_insert)
 
                 else:
                     await conn.execute("update nodes set path = $2 || subpath(path, nlevel($1)-1) "
-                                       "where path <@ $1",
+                                       "where path <@ $1 and space_id=$3",
                                        target_path_tree,
-                                       destination_path_tree)
+                                       destination_path_tree,
+                                       space_id)
 
     except asyncpg.exceptions.UniqueViolationError as f:
         raise VOSpaceError(409, f"Duplicate Node. {f.detail}")

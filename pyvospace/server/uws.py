@@ -105,33 +105,27 @@ class UWSJobExecutor(object):
         assert len(self.job_tasks) == 0
 
 
-async def create_uws_job(conn, target, direction, job_info, result,
-                         transfer, phase=UWSPhase.Pending):
-    path_tree = None
-
-    if target:
-        path_array = list(filter(None, target.split('/')))
-        path_tree = '.'.join(path_array)
-
+async def create_uws_job(app, conn, job_info, phase=UWSPhase.Pending):
+    space_id = app['space_id']
     destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=3000)
-    result = await conn.fetchrow("insert into uws_jobs (target, direction, "
-                                 "phase, destruction, job_info, transfer, result) "
-                                 "values ($1, $2, $3, $4, $5, $6, $7) returning id",
-                                 path_tree, direction, phase,
-                                 destruction, job_info, transfer, result)
+    result = await conn.fetchrow("insert into uws_jobs (phase, destruction, job_info, space_id) "
+                                 "values ($1, $2, $3, $4) returning id",
+                                 phase, destruction, job_info, space_id)
     return result['id']
 
 
-async def update_uws_job(conn, job_id, target, direction,
+async def update_uws_job(app, conn, job_id, target, direction,
                          transfer, result, phase=UWSPhase.Pending):
+    space_id = app['space_id']
     path_array = list(filter(None, target.split('/')))
     path_tree = '.'.join(path_array)
     # only update job if its pending
-    result = await conn.fetchrow("update uws_jobs set already_in_state=false, target=$1, "
+    result = await conn.fetchrow("update uws_jobs set already_in_state=false, target=$1, target_id=$8, "
                                  "direction=$2, phase=$3, transfer=$4, result=$5 where id=$6 "
                                  "and phase <= $7 returning id",
                                  path_tree, direction, phase,
-                                 transfer, result, job_id, UWSPhase.Executing)
+                                 transfer, result, job_id,
+                                 UWSPhase.Executing, space_id)
     if not result:
         return None
     return result['id']
@@ -140,7 +134,8 @@ async def update_uws_job(conn, job_id, target, direction,
 async def get_uws_job_phase(db_pool, job_id):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            result = await conn.fetchrow("select phase, target from uws_jobs where id=$1", job_id)
+            result = await conn.fetchrow("select phase, target from uws_jobs "
+                                         "where id=$1", job_id)
             if not result:
                 raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
             return result
@@ -155,9 +150,11 @@ async def get_uws_job(db_pool, job_id):
 async def get_uws_job_conn(conn, job_id, for_update=False):
     try:
         if for_update:
-            result = await conn.fetchrow("select * from uws_jobs where id=$1 for update", job_id)
+            result = await conn.fetchrow("select * from uws_jobs "
+                                         "where id=$1 for update", job_id)
         else:
-            result = await conn.fetchrow("select * from uws_jobs where id=$1", job_id)
+            result = await conn.fetchrow("select * from uws_jobs "
+                                         "where id=$1", job_id)
         if not result:
             raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
 

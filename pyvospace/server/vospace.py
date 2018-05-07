@@ -13,6 +13,7 @@ from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
     generate_uws_job_xml, PhaseLookup, UWSPhase
 from .transfer import create_transfer_job, modify_transfer_job_phase, get_transfer_details
 from .plugin import VOSpacePluginBase
+from .space import update_space
 
 
 class VOSpaceServer(web.Application):
@@ -53,6 +54,8 @@ class VOSpaceServer(web.Application):
 
     async def setup(self):
         config = self['config']
+        host = config['Space']['host']
+        port = int(config['Space']['port'])
 
         dsn = config['Database']['dsn']
         db_pool = await asyncpg.create_pool(dsn=dsn)
@@ -89,6 +92,8 @@ class VOSpaceServer(web.Application):
         # allow the plugin to set itself up before starting server
         await plugin_obj.setup()
 
+        self['plugin_name'] = plugin_obj.get_plugin_name()
+        self['space_id'] = await update_space(db_pool, host, port, self['plugin_name'])
         self['space_name'] = plugin_obj.get_space_name()
         self['plugin'] = plugin_obj
         self['plugin_source'] = plugin_source
@@ -213,6 +218,8 @@ class VOSpaceServer(web.Application):
             return web.HTTPSeeOther(location=f'/vospace/transfers/{id}')
 
         except VOSpaceError as f:
+            import traceback
+            traceback.print_exc()
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
@@ -245,7 +252,7 @@ class VOSpaceServer(web.Application):
     async def transfer_details(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            xml = await get_transfer_details(self, job_id)
+            xml = await get_transfer_details(self['db_pool'], job_id)
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml)
@@ -254,8 +261,8 @@ class VOSpaceServer(web.Application):
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            #import traceback
+            #traceback.print_exc()
             return web.Response(status=500)
 
     async def get_transfer_node_job_phase(self, request):
@@ -281,11 +288,11 @@ class VOSpaceServer(web.Application):
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
         except VOSpaceError as f:
-            import traceback
-            traceback.print_exc()
+            #import traceback
+            #traceback.print_exc()
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            #import traceback
+            #traceback.print_exc()
             return web.Response(status=500)

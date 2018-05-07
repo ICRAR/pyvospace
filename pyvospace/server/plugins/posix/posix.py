@@ -32,8 +32,11 @@ class PosixPlugin(VOSpacePluginBase):
     async def shutdown(self):
         pass
 
-    def get_space_name(self):
+    def get_space_name(self) -> str:
         return 'icrar.org'
+
+    def get_plugin_name(self) -> str:
+        return 'basic_posix'
 
     def get_accepts_protocols(self) -> list:
         return []
