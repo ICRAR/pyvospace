@@ -1,10 +1,8 @@
-import os
 import asyncpg
 import configparser
+import json
 
 from aiohttp import web
-from functools import partial
-from pluginbase import PluginBase
 
 from .exception import VOSpaceError, InvalidJobStateError
 from .node import create_node_request, delete_node, get_node_request, set_node_properties, \
@@ -12,11 +10,11 @@ from .node import create_node_request, delete_node, get_node_request, set_node_p
 from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
     generate_uws_job_xml, PhaseLookup, UWSPhase
 from .transfer import create_transfer_job, modify_transfer_job_phase, get_transfer_details
-from .plugin import VOSpacePluginBase
-from .space import update_space
+from .base import VOSpaceBase
+from .space import register_space
 
 
-class VOSpaceServer(web.Application):
+class VOSpaceServer(web.Application, VOSpaceBase):
 
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -52,71 +50,40 @@ class VOSpaceServer(web.Application):
 
         self.on_shutdown.append(self.shutdown)
 
-    async def setup(self):
+    async def _setup(self):
         config = self['config']
-        host = config['Space']['host']
-        port = int(config['Space']['port'])
+        self['host'] = config['Space']['host']
+        self['port'] = int(config['Space']['port'])
+        self['name'] = config['Space']['name']
+        self['uri'] = config['Space']['uri']
+        self['parameters'] = json.loads(config['Space']['parameters'])
+        self['accepts_views'] = json.loads(config['Space']['accepts_views'])
+        self['provides_views'] = json.loads(config['Space']['provides_views'])
+        self['accepts_protocols'] = json.loads(config['Space']['accepts_protocols'])
+        self['provides_protocols'] = json.loads(config['Space']['provides_protocols'])
+        self['db_pool'] = await asyncpg.create_pool(dsn=config['Space']['dsn'])
 
-        dsn = config['Database']['dsn']
-        db_pool = await asyncpg.create_pool(dsn=dsn)
-        self['db_pool'] = db_pool
+        space_id = await register_space(self['db_pool'],
+                                        self['name'],
+                                        self['host'],
+                                        self['port'],
+                                        json.dumps(self['accepts_views']),
+                                        json.dumps(self['provides_views']),
+                                        json.dumps(self['accepts_protocols']),
+                                        json.dumps(self['provides_protocols']),
+                                        json.dumps(self['parameters']))
 
+        self['space_id'] = space_id
         self['executor'] = UWSJobExecutor()
 
-        plugin_path = config['Plugin']['path']
-        plugin_name = config['Plugin']['name']
-
-        # For easier usage calculate the path relative to here.
-        here = os.path.abspath(os.path.dirname(__file__))
-        get_path = partial(os.path.join, here)
-
-        plugin_base = PluginBase(package='pyvospace.plugins')
-        plugin_source = plugin_base.make_plugin_source(
-            searchpath=[get_path('./plugins/'), plugin_path])
-
-        found = False
-        for plugin_source_name in plugin_source.list_plugins():
-            if plugin_source_name == plugin_name:
-                found = True
-                break
-
-        if found is False:
-            raise VOSpaceError(500, f"Plugin: {plugin_name} not found.")
-
-        plugin = plugin_source.load_plugin(plugin_name)
-        plugin_obj = plugin.create(self)
-
-        if not isinstance(plugin_obj, VOSpacePluginBase):
-            raise ImportError(f"{repr(plugin_obj)} is not an "
-                              f"instance of VOSpacePluginBase")
-        # allow the plugin to set itself up before starting server
-        await plugin_obj.setup()
-
-        self['plugin_name'] = plugin_obj.get_plugin_name()
-        self['space_id'] = await update_space(db_pool, host, port, self['plugin_name'])
-        self['space_name'] = plugin_obj.get_space_name()
-        self['plugin'] = plugin_obj
-        self['plugin_source'] = plugin_source
-
     async def shutdown(self):
-        await self['plugin'].shutdown()
         await self['executor'].close()
         await self['db_pool'].close()
 
-    @classmethod
-    async def create(cls, cfg_file, *args, **kwargs):
-        app = VOSpaceServer(cfg_file, *args, **kwargs)
-        await app.setup()
-        return app
-
     async def get_protocols(self, request):
         try:
-            accepts = self['plugin'].get_accepts_protocols()
-
-            push_provides = self['plugin'].get_supported_import_provides_protocols()
-            pull_provides = self['plugin'].get_supported_export_provides_protocols()
-            provides = push_provides + pull_provides
-
+            accepts = self['accepts_protocols']
+            provides = self['provides_protocols']
             xml_response = generate_protocol_response(accepts, provides)
             return web.Response(status=200,
                                 content_type='text/xml',
@@ -165,15 +132,18 @@ class VOSpaceServer(web.Application):
             url_path = request.path.replace('/vospace/nodes', '')
             response = await create_node_request(self, xml_text, url_path)
 
-            accepts = self['plugin'].get_supported_import_accepts_views(response.node_name,
-                                                                        response.node_type_text)
+            #accepts = self.get_supported_import_accepts_views(response.node_name,
+            #                                                            response.node_type_text)
 
-            xml_response = generate_node_response(space_name=self['space_name'],
+            accepts_views = self['accepts_views'].get(response.node_type_text,
+                                                      [self['accepts_views']['default']])
+
+            xml_response = generate_node_response(space_name=self['uri'],
                                                   node_path=response.node_name,
                                                   node_type=response.node_type_text,
                                                   node_busy=response.node_busy,
                                                   node_property=response.node_properties,
-                                                  node_accepts_views=accepts)
+                                                  node_accepts_views=accepts_views)
 
             return web.Response(status=201,
                                 content_type='text/xml',
@@ -183,8 +153,6 @@ class VOSpaceServer(web.Application):
             return web.Response(status=e.code, text=e.error)
 
         except Exception as g:
-            #import traceback
-            #traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def delete_node(self, request):
@@ -218,19 +186,15 @@ class VOSpaceServer(web.Application):
             return web.HTTPSeeOther(location=f'/vospace/transfers/{id}')
 
         except VOSpaceError as f:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
     async def get_complete_transfer_job(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            job = await get_uws_job(self['db_pool'], job_id)
+            job = await get_uws_job(self['db_pool'], self['space_id'], job_id)
 
             xml = generate_uws_job_xml(job['id'],
                                        job['phase'],
@@ -252,7 +216,7 @@ class VOSpaceServer(web.Application):
     async def transfer_details(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            xml = await get_transfer_details(self['db_pool'], job_id)
+            xml = await get_transfer_details(self['db_pool'], self['space_id'], job_id)
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml)
@@ -261,14 +225,12 @@ class VOSpaceServer(web.Application):
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            #import traceback
-            #traceback.print_exc()
             return web.Response(status=500)
 
     async def get_transfer_node_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
-            job = await get_uws_job_phase(self['db_pool'], job_id)
+            job = await get_uws_job_phase(self['db_pool'], self['space_id'], job_id)
             return web.Response(status=200, text=PhaseLookup[job['phase']])
 
         except VOSpaceError as f:
@@ -288,11 +250,7 @@ class VOSpaceServer(web.Application):
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
         except VOSpaceError as f:
-            #import traceback
-            #traceback.print_exc()
             return web.Response(status=f.code, text=f.error)
 
         except Exception as e:
-            #import traceback
-            #traceback.print_exc()
             return web.Response(status=500)

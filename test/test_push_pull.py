@@ -7,7 +7,7 @@ import xml.dom.minidom as minidom
 from aiohttp import web
 
 from pyvospace.core.model import PushToSpace, PullFromSpace, Node, ContainerNode, HTTPPut, HTTPGet
-from pyvospace.server.plugins.posix.posix_server import PosixFileServer
+from pyvospace.server.spaces.posix.posix_storage import PosixStorageServer
 from test.test_base import TestBase
 
 
@@ -26,7 +26,7 @@ class TestPushPull(TestBase):
 
         self.loop.run_until_complete(self._setup())
 
-        posix_server = self.loop.run_until_complete(PosixFileServer.create(self.config_filename))
+        posix_server = self.loop.run_until_complete(PosixStorageServer.create(self.config_filename))
         self.posix_runner = web.AppRunner(posix_server)
         self.loop.run_until_complete(self.posix_runner.setup())
         self.posix_site = web.TCPSite(self.posix_runner, 'localhost', 8081)
@@ -43,7 +43,7 @@ class TestPushPull(TestBase):
 
         super().tearDown()
 
-    def ttest_push_to_space_sync(self):
+    def test_push_to_space_sync(self):
         async def run():
             node = Node('/syncdatanode')
             push = PushToSpace(node, [HTTPPut()])
@@ -106,16 +106,15 @@ class TestPushPull(TestBase):
             # Get transfer details, should be in invalid state because its not Executing
             await self.get_transfer_details(job_id, expected_status=400)
 
-            await self.delete('http://localhost:8080/vospace/nodes/datanode')
+            #await self.delete('http://localhost:8080/vospace/nodes/datanode')
 
             await self.change_job_state(job_id)
 
-            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='ERROR')
+            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
 
             # Check results
             response = await self.get_job_details(job_id)
-            self.log.debug(prettify(response))
-            return
+
             # Get transferDetails
             response = await self.get_transfer_details(job_id, expected_status=200)
 

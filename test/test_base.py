@@ -2,6 +2,7 @@ import os
 import io
 import sys
 import asyncio
+import json
 import aiofiles
 import aiofiles.os
 import aiohttp
@@ -12,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 from aiohttp import web
 
-from pyvospace.server.vospace import VOSpaceServer
+from pyvospace.server.spaces.posix import PosixServer
 from pyvospace.core.model import Node
 
 
@@ -30,17 +31,39 @@ class TestBase(unittest.TestCase):
         config = configparser.ConfigParser()
         if not os.path.exists(self.config_filename):
             config['Space'] = {'host': 'localhost',
-                               'port': 8080}
-            config['Database'] = {'dsn': 'postgres://test:test@localhost:5432/vos'}
-            config['Plugin'] = {'path': '',
-                                'name': 'posix'}
-            config['PosixPlugin'] = {'host': 'localhost',
-                                     'port': 8081,
-                                     'root_dir': '/tmp/store',
-                                     'processing_dir': '/tmp/processing'}
+                               'port': 8080,
+                               'name': 'posix',
+                               'uri': 'icrar.org',
+                               'dsn': 'postgres://test:test@localhost:5432/vos',
+                               'accepts_views': json.dumps(
+                                   {
+                                       'vos:ContainerNode': ['ivo://ivoa.net/vospace/core#tar'],
+                                       'default': ['ivo://ivoa.net/vospace/core#anyview']
+                                   }),
+                               'provides_views': json.dumps(
+                                   {
+                                       'vos:ContainerNode': ['ivo://ivoa.net/vospace/core#tar'],
+                                       'default': ['ivo://ivoa.net/vospace/core#defaultview']
+                                   }),
+                               'accepts_protocols':json.dumps([]),
+                               'provides_protocols':
+                                   json.dumps(
+                                       ['ivo://ivoa.net/vospace/core#httpput',
+                                        'ivo://ivoa.net/vospace/core#httpget']
+                                   ),
+                               'parameters':
+                                   json.dumps(
+                                       {'root_dir': '/tmp/posix/storage/',
+                                        'staging_dir': '/tmp/posix/staging/'})
+                               }
+
+            config['posix'] = {'host': 'localhost',
+                               'port': 8081,
+                               'direction': json.dumps(['pushToVoSpace', 'pullFromVoSpace'])}
+
             config.write(open(self.config_filename, 'w'))
 
-        self.app = self.loop.run_until_complete(VOSpaceServer.create(self.config_filename))
+        self.app = self.loop.run_until_complete(PosixServer.create(self.config_filename))
         self.runner = web.AppRunner(self.app)
         self.loop.run_until_complete(self.runner.setup())
         site = web.TCPSite(self.runner, 'localhost', 8080,

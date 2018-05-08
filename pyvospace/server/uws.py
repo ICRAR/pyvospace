@@ -5,7 +5,7 @@ import functools
 from contextlib import suppress
 from collections import namedtuple
 
-from .exception import VOSpaceError, ClosingError
+from .exception import VOSpaceError, ClosingError, InvalidJobStateError
 
 
 UWS_Phase = namedtuple('NodeType', 'Pending '
@@ -31,6 +31,8 @@ PhaseLookup = {0: 'PENDING',
                7: 'HELD',
                8: 'SUSPENDED',
                9: 'ARCHIVED'}
+
+UWSKey = namedtuple('UWSKey', 'space_id job_id')
 
 
 def generate_uws_error(errors):
@@ -71,22 +73,26 @@ class UWSJobExecutor(object):
     def closing(self):
         return self._closing
 
-    def execute(self, func, job_id, *args):
+    def execute(self, func, key, *args):
         if self._closing:
             return ClosingError()
 
-        task = asyncio.ensure_future(func(job_id, *args))
-        self.job_tasks[job_id] = (task, *args)
-        task.add_done_callback(functools.partial(self._done, job_id))
+        # if task is already running then ignore
+        if self.job_tasks.get(key, None):
+            return
+
+        task = asyncio.ensure_future(func(key, *args))
+        self.job_tasks[key] = (task, *args)
+        task.add_done_callback(functools.partial(self._done, key))
         return task
 
-    def _done(self, job_id, task):
+    def _done(self, key, task):
         with suppress(Exception):
             task.exception()
-        del self.job_tasks[job_id]
+        del self.job_tasks[key]
 
-    async def abort(self, job_id):
-        job_tuple = self.job_tasks.get(job_id, None)
+    async def abort(self, key):
+        job_tuple = self.job_tasks.get(key, None)
         if job_tuple:
             job_tuple[0].cancel()
             with suppress(Exception):
@@ -98,7 +104,7 @@ class UWSJobExecutor(object):
         self._closing = True
 
         # wait for all tasks to gracefully end
-        for job_id, job_tuple in dict(self.job_tasks).items():
+        for _, job_tuple in dict(self.job_tasks).items():
             with suppress(Exception):
                 await job_tuple[0]
 
@@ -109,20 +115,19 @@ async def create_uws_job(app, conn, job_info, phase=UWSPhase.Pending):
     space_id = app['space_id']
     destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=3000)
     result = await conn.fetchrow("insert into uws_jobs (phase, destruction, job_info, space_id) "
-                                 "values ($1, $2, $3, $4) returning id",
+                                 "values ($1, $2, $3, $4) returning id, space_id",
                                  phase, destruction, job_info, space_id)
-    return result['id']
+    return UWSKey(result['space_id'], result['id'])
 
 
-async def update_uws_job(app, conn, job_id, target, direction,
+async def update_uws_job(conn, space_id, job_id, target, direction,
                          transfer, result, phase=UWSPhase.Pending):
-    space_id = app['space_id']
     path_array = list(filter(None, target.split('/')))
     path_tree = '.'.join(path_array)
     # only update job if its pending
-    result = await conn.fetchrow("update uws_jobs set already_in_state=false, target=$1, target_id=$8, "
+    result = await conn.fetchrow("update uws_jobs set target=$1, target_id=$8, "
                                  "direction=$2, phase=$3, transfer=$4, result=$5 where id=$6 "
-                                 "and phase <= $7 returning id",
+                                 "and phase <= $7 and space_id=$8 returning id",
                                  path_tree, direction, phase,
                                  transfer, result, job_id,
                                  UWSPhase.Executing, space_id)
@@ -131,30 +136,31 @@ async def update_uws_job(app, conn, job_id, target, direction,
     return result['id']
 
 
-async def get_uws_job_phase(db_pool, job_id):
+async def get_uws_job_phase(db_pool, space_id, job_id):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             result = await conn.fetchrow("select phase, target from uws_jobs "
-                                         "where id=$1", job_id)
+                                         "where id=$1 and space_id=$2", job_id, space_id)
             if not result:
                 raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
             return result
 
 
-async def get_uws_job(db_pool, job_id):
+async def get_uws_job(db_pool, space_id, job_id):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            return await get_uws_job_conn(conn, job_id)
+            return await get_uws_job_conn(conn, space_id, job_id)
 
 
-async def get_uws_job_conn(conn, job_id, for_update=False):
+async def get_uws_job_conn(conn, space_id, job_id, for_update=False):
     try:
         if for_update:
             result = await conn.fetchrow("select * from uws_jobs "
-                                         "where id=$1 for update", job_id)
+                                         "where id=$1 and space_id=$2 for update",
+                                         job_id, space_id)
         else:
             result = await conn.fetchrow("select * from uws_jobs "
-                                         "where id=$1", job_id)
+                                         "where id=$1 and space_id=$2", job_id, space_id)
         if not result:
             raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
 
@@ -163,39 +169,35 @@ async def get_uws_job_conn(conn, job_id, for_update=False):
         raise VOSpaceError(400, f"Invalid Request. Invalid JobId: {str(e)}")
 
 
-async def set_uws_set_already_in_state(conn, job_id):
-    await conn.fetchrow("update uws_jobs set already_in_state=true where id=$1", job_id)
-
-
-async def set_uws_phase_to_executing(db_pool, job_id):
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            return await conn.fetchrow("update uws_jobs set already_in_state=false, phase=$2 "
-                                       "where id=$1 and phase=$3 returning id",
-                                       job_id, UWSPhase.Executing, UWSPhase.Pending)
-
-
-async def set_uws_phase_to_completed(db_pool, job_id):
+async def set_uws_phase_to_executing(db_pool, space_id, job_id):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             return await conn.fetchrow("update uws_jobs set phase=$2 "
-                                       "where id=$1 and phase=$3 returning id",
-                                       job_id, UWSPhase.Completed, UWSPhase.Executing)
+                                       "where id=$1 and phase=$3 and space_id=$4 returning id",
+                                       job_id, UWSPhase.Executing, UWSPhase.Pending, space_id)
 
 
-async def set_uws_phase_to_error(db_pool, job_id, error):
+async def set_uws_phase_to_completed(db_pool, space_id, job_id):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            return await conn.fetchrow("update uws_jobs set phase=$2 "
+                                       "where id=$1 and phase=$3 and space_id=$4 returning id",
+                                       job_id, UWSPhase.Completed, UWSPhase.Executing, space_id)
+
+
+async def set_uws_phase_to_error(db_pool, space_id, job_id, error):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             result = await conn.fetchrow("update uws_jobs set phase=$3, error=$2 "
-                                         "where id=$1 and phase!=$4 returning id",
-                                         job_id, error, UWSPhase.Error, UWSPhase.Aborted)
+                                         "where id=$1 and phase!=$4 and space_id=$5 returning id",
+                                         job_id, error, UWSPhase.Error, UWSPhase.Aborted, space_id)
             return result
 
 
-async def set_uws_phase_to_abort(db_pool, job_id):
+async def set_uws_phase_to_abort(db_pool, space_id, job_id):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             result = await conn.fetchrow("update uws_jobs set phase=$2 "
-                                         "where id=$1 and phase!=$3 returning id",
-                                         job_id, UWSPhase.Aborted, UWSPhase.Error)
+                                         "where id=$1 and phase!=$3 and space_id=$4 returning id",
+                                         job_id, UWSPhase.Aborted, UWSPhase.Error, space_id)
             return result

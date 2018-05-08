@@ -1,0 +1,3 @@
+
+class VOSpaceBase(object):
+    pass
