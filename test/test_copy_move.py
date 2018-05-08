@@ -160,6 +160,7 @@ class TestCopyMove(TestBase):
             mv = Move(node1, node2)
             response = await self.transfer_node(mv)
             job_id = self.get_job_id(response)
+
             # Invalid Phase
             await self.change_job_state(job_id, 'PHASE=STOP', expected_status=400)
 

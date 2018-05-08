@@ -41,9 +41,6 @@ NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 Property = ['ivo://ivoa.net/vospace/core#description',
             'ivo://ivoa.net/vospace/core#title']
 
-Views = ['ivo://ivoa.net/vospace/core#anyview']
-Provides = ['ivo://ivoa.net/vospace/core#binaryview']
-
 NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
 
 
@@ -210,17 +207,17 @@ async def get_node_request(app, path, params):
     if NodeType.Node <= node_type_int <= NodeType.ContainerNode:
         if detail == 'max':
             node_type_text = NodeTextLookup[node_type_int]
-            views = app['plugin'].get_supported_import_accepts_views(
-                path, node_type_text)
-            provides = app['plugin'].get_supported_export_provides_views(
-                path, node_type_text)
+            views = app['accepts_views'].get(node_type_text,
+                                             [app['accepts_views']['default']])
+            provides = app['provides_views'].get(node_type_text,
+                                                 [app['provides_views']['default']])
 
     # remove root element in tree so we can output children
     results.pop(0)
     if limit:
         results = results[:int(limit)]
 
-    xml_response = generate_node_response(space_name=app['space_name'],
+    xml_response = generate_node_response(space_name=app['uri'],
                                           node_path=path,
                                           node_type=node_type,
                                           node_busy=busy,
@@ -284,12 +281,7 @@ async def create_node_request(app, xml_text, url_path):
             return await create_node(app, conn, uri_path_norm, node_type, props)
 
 
-async def create_node(app,
-                      conn,
-                      uri_path,
-                      node_type,
-                      properties):
-
+async def create_node(app, conn, uri_path, node_type, properties):
     space_id = app['space_id']
     try:
         if node_type is None:
@@ -320,7 +312,6 @@ async def create_node(app,
         row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
                                   "FROM nodes WHERE path=$1 and space_id=$2 for share",
                                   path_parent_tree, space_id)
-
         # if the parent is not found but its expected to exist
         if not row and len(path_parent) > 0:
             raise VOSpaceError(404, f"Container Not Found. {'/'.join(path_parent)} not found.")
@@ -431,7 +422,7 @@ async def set_node_properties(app, xml_text, url_path):
                                                      "where node_path=$1 and space_id=$2",
                                                      node_path_tree, space_id)
 
-        xml_response = generate_node_response(space_name=app['space_name'],
+        xml_response = generate_node_response(space_name=app['uri'],
                                               node_path=url_path,
                                               node_type=NodeTextLookup[node_type],
                                               node_busy=results['busy'],
