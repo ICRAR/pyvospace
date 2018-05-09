@@ -8,10 +8,23 @@ from aiohttp import web
 from .exception import VOSpaceError
 from .transfer import data_request
 from .uws import UWSJobExecutor
-from .space import register_storage
 
 
-class StorageServer(web.Application):
+async def register_storage(db_pool, name, host, port, parameters):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            result = await conn.fetchrow("select * from space where name=$1 for update", name)
+            if not result:
+                raise VOSpaceError(404, f'Space not found. Name: {name}')
+
+            await conn.fetchrow("insert into storage (name, host, port, parameters) "
+                                "values ($1, $2, $3, $4) on conflict (name, host, port) "
+                                "do update set parameters=$4",
+                                name, host, port, parameters)
+            return int(result['id'])
+
+
+class SpaceStorageServer(web.Application):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -37,17 +50,16 @@ class StorageServer(web.Application):
         self['space_uri'] = config['Space']['uri']
         self['space_parameters'] = json.loads(config['Space']['parameters'])
 
-        space_name = self['space_name']
-        self['host'] = config[space_name]['host']
-        self['port'] = int(config[space_name]['port'])
-        self['direction'] = json.loads(config[space_name]['direction'])
+        self['host'] = config['Storage']['host']
+        self['port'] = int(config['Storage']['port'])
+        self['parameters'] = json.loads(config['Storage']['parameters'])
         self['db_pool'] = await asyncpg.create_pool(dsn=config['Space']['dsn'])
 
         space_id = await register_storage(self['db_pool'],
-                                          space_name,
+                                          self['space_name'],
                                           self['host'],
                                           self['port'],
-                                          json.dumps(self['direction']))
+                                          json.dumps(self['parameters']))
 
         self['space_id'] = space_id
         self['executor'] = UWSJobExecutor()

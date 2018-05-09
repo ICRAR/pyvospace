@@ -1,12 +1,12 @@
 import json
 
-from pyvospace.server.vospace import VOSpaceServer
+from pyvospace.server.space import SpaceServer
 from pyvospace.server.node import NodeType
 
-from .utils import move, copy, mkdir, isfile, remove, rmtree, exists
+from .utils import move, copy, mkdir, remove, rmtree, exists
 
 
-class PosixServer(VOSpaceServer):
+class PosixServer(SpaceServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
 

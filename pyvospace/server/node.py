@@ -207,10 +207,8 @@ async def get_node_request(app, path, params):
     if NodeType.Node <= node_type_int <= NodeType.ContainerNode:
         if detail == 'max':
             node_type_text = NodeTextLookup[node_type_int]
-            views = app['accepts_views'].get(node_type_text,
-                                             [app['accepts_views']['default']])
-            provides = app['provides_views'].get(node_type_text,
-                                                 [app['provides_views']['default']])
+            views = app['accepts_views'].get(node_type_text, [])
+            provides = app['provides_views'].get(node_type_text, [])
 
     # remove root element in tree so we can output children
     results.pop(0)
