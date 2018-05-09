@@ -24,29 +24,29 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         self['config'] = config
 
         self.router.add_get('/vospace/protocols',
-                            self.get_protocols)
+                            self._get_protocols)
         self.router.add_get('/vospace/nodes/{name:.*}',
-                            self.get_node)
+                            self._get_node)
         self.router.add_put('/vospace/nodes/{name:.*}',
-                            self.create_node)
+                            self._create_node)
         self.router.add_post('/vospace/nodes/{name:.*}',
-                             self.set_node_properties)
+                             self._set_node_properties)
         self.router.add_delete('/vospace/nodes/{name:.*}',
-                               self.delete_node)
+                               self._delete_node)
         self.router.add_post('/vospace/transfers',
-                             self.transfer_node)
+                             self._transfer_node)
         self.router.add_post('/vospace/synctrans',
-                             self.sync_transfer_node)
+                             self._sync_transfer_node)
         self.router.add_get('/vospace/transfers/{job_id}',
-                            self.get_complete_transfer_job)
+                            self._get_complete_transfer_job)
         self.router.add_post('/vospace/transfers/{job_id}/phase',
-                             self.change_transfer_job_phase)
+                             self._change_transfer_job_phase)
         self.router.add_get('/vospace/transfers/{job_id}/phase',
-                             self.get_transfer_node_job_phase)
+                             self._get_transfer_node_job_phase)
         self.router.add_get('/vospace/transfers/{job_id}/error',
-                            self.get_complete_transfer_job)
+                            self._get_complete_transfer_job)
         self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails',
-                            self.transfer_details)
+                            self._transfer_details)
 
         self.on_shutdown.append(self.shutdown)
 
@@ -80,7 +80,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         await self['executor'].close()
         await self['db_pool'].close()
 
-    async def get_protocols(self, request):
+    async def _get_protocols(self, request):
         try:
             accepts = self['accepts_protocols']
             provides = self['provides_protocols']
@@ -95,7 +95,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as g:
             return web.Response(status=500, text=str(g))
 
-    async def set_node_properties(self, request):
+    async def _set_node_properties(self, request):
         try:
             xml_text = await request.text()
             url_path = request.path.replace('/vospace/nodes', '')
@@ -112,7 +112,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as g:
             return web.Response(status=500, text=str(g))
 
-    async def get_node(self, request):
+    async def _get_node(self, request):
         try:
             url_path = request.path.replace('/vospace/nodes', '')
             xml_response = await get_node_request(self, url_path, request.query)
@@ -126,14 +126,11 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as g:
             return web.Response(status=500, text=str(g))
 
-    async def create_node(self, request):
+    async def _create_node(self, request):
         try:
             xml_text = await request.text()
             url_path = request.path.replace('/vospace/nodes', '')
             response = await create_node_request(self, xml_text, url_path)
-
-            #accepts = self.get_supported_import_accepts_views(response.node_name,
-            #                                                            response.node_type_text)
 
             accepts_views = self['accepts_views'].get(response.node_type_text,
                                                       [self['accepts_views']['default']])
@@ -155,7 +152,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as g:
             return web.Response(status=500, text=str(g))
 
-    async def delete_node(self, request):
+    async def _delete_node(self, request):
         try:
             url_path = request.path.replace('/vospace/nodes', '')
             await delete_node(self, url_path)
@@ -167,7 +164,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def sync_transfer_node(self, request):
+    async def _sync_transfer_node(self, request):
         try:
             xml_text = await request.text()
             id = await create_transfer_job(self, xml_text, UWSPhase.Executing)
@@ -179,7 +176,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def transfer_node(self, request):
+    async def _transfer_node(self, request):
         try:
             xml_text = await request.text()
             id = await create_transfer_job(self, xml_text)
@@ -191,7 +188,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def get_complete_transfer_job(self, request):
+    async def _get_complete_transfer_job(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
             job = await get_uws_job(self['db_pool'], self['space_id'], job_id)
@@ -213,7 +210,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def transfer_details(self, request):
+    async def _transfer_details(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
             xml = await get_transfer_details(self['db_pool'], self['space_id'], job_id)
@@ -227,7 +224,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def get_transfer_node_job_phase(self, request):
+    async def _get_transfer_node_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
             job = await get_uws_job_phase(self['db_pool'], self['space_id'], job_id)
@@ -239,7 +236,7 @@ class VOSpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def change_transfer_job_phase(self, request):
+    async def _change_transfer_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
             uws_cmd = await request.text()
