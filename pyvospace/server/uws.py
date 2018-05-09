@@ -77,9 +77,10 @@ class UWSJobExecutor(object):
         if self._closing:
             return ClosingError()
 
-        # if task is already running then ignore
-        if self.job_tasks.get(key, None):
-            return
+        # if task is already running then return it
+        task = self.job_tasks.get(key, None)
+        if task:
+            return task[0]
 
         task = asyncio.ensure_future(func(key, *args))
         self.job_tasks[key] = (task, *args)

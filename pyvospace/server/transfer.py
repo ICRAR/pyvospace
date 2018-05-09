@@ -345,11 +345,11 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
             await set_uws_phase_to_executing(app['db_pool'],
                                              space_job_id.space_id,
                                              space_job_id.job_id)
-            await move_nodes(app=app,
-                             space_id=space_job_id.space_id,
-                             target_path=target_path_norm,
-                             direction_path=direction_path_norm,
-                             perform_copy=copy_node)
+            await _move_nodes(app=app,
+                              space_id=space_job_id.space_id,
+                              target_path=target_path_norm,
+                              direction_path=direction_path_norm,
+                              perform_copy=copy_node)
             # need to shield because we have successfully compeleted
             # a potentially expensive operation
             with suppress(asyncio.CancelledError):
@@ -367,12 +367,10 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
         raise VOSpaceError(404, f"Node Not Found. {target_path_norm} not found.")
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         raise VOSpaceError(500, str(e))
 
 
-async def move_nodes(app, space_id, target_path, direction_path, perform_copy):
+async def _move_nodes(app, space_id, target_path, direction_path, perform_copy):
     try:
         target_path_array = list(filter(None, target_path.split('/')))
         direction_path_array = list(filter(None, direction_path.split('/')))
@@ -407,6 +405,10 @@ async def move_nodes(app, space_id, target_path, direction_path, perform_copy):
                 if target_record['common'] is True and target_record['type'] == NodeType.ContainerNode:
                     raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
                                             f"is invalid.")
+
+                src = '/'.join(target_path_array)
+                dest = f"{'/'.join(direction_path_array)}/"
+
                 if perform_copy:
                     # copy properties
                     prop_results = await conn.fetch("select properties.uri, properties.value, "
@@ -435,12 +437,17 @@ async def move_nodes(app, space_id, target_path, direction_path, perform_copy):
                                            "VALUES ($1, $2, $3, $4, $5)",
                                            user_props_insert)
 
+                    await app.copy_storage_node(target_record['type'], src, dest_record['type'], dest)
+
                 else:
                     await conn.execute("update nodes set path = $2 || subpath(path, nlevel($1)-1) "
                                        "where path <@ $1 and space_id=$3",
                                        target_path_tree,
                                        destination_path_tree,
                                        space_id)
+
+                    await app.move_storage_node(target_record['type'], src, dest_record['type'], dest)
+
 
     except asyncpg.exceptions.UniqueViolationError as f:
         raise VOSpaceError(409, f"Duplicate Node. {f.detail}")

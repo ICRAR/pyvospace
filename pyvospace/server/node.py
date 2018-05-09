@@ -236,10 +236,12 @@ async def delete_node(app, path):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
             result = await conn.fetch("delete from nodes where "
-                                      "path <@ $1 and space_id=$2 returning path",
+                                      "path <@ $1 and space_id=$2 returning path, type",
                                       path_tree, app['space_id'])
-    if not result:
-        raise VOSpaceError(404, f"Node Not Found. {path} not found.")
+            if not result:
+                raise VOSpaceError(404, f"Node Not Found. {path} not found.")
+
+            await app.delete_storage_node(result[0]['type'], '/'.join(path_array))
 
 
 async def create_node_request(app, xml_text, url_path):
@@ -325,6 +327,10 @@ async def create_node(app, conn, uri_path, node_type, properties):
 
         await conn.fetchrow("INSERT INTO nodes (type, name, path, space_id) VALUES ($1, $2, $3, $4)",
                              node_type, node_name, path_tree, space_id)
+
+        # call the specific provider, opportunity to get properties
+        await app.create_storage_node(node_type, '/'.join(path))
+
         if properties:
             for prop in properties_list:
                 prop.append(path_tree)

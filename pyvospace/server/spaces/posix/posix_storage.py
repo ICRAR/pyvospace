@@ -2,27 +2,17 @@ import os
 import io
 import asyncio
 import aiofiles
-import configparser
 
 from aiohttp import web
 
 from pyvospace.server.node import NodeType
 from pyvospace.server.storage import StorageServer
-from pyvospace.server.spaces.posix.utils import make_dir, remove, send_file
+from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file
 
 
 class PosixStorageServer(StorageServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
-
-        config = configparser.ConfigParser()
-        config.read(cfg_file)
-        self['config'] = config
-
-        self.router.add_put('/vospace/upload/{job_id}', self.upload_data)
-        self.router.add_get('/vospace/download/{job_id}', self.download_data)
-
-        self.on_shutdown.append(self.shutdown)
 
     async def shutdown(self):
         await super().shutdown()
@@ -38,8 +28,8 @@ class PosixStorageServer(StorageServer):
         if not self['staging_dir']:
             raise Exception('staging_dir not found.')
 
-        await make_dir(self['root_dir'])
-        await make_dir(self['staging_dir'])
+        await mkdir(self['root_dir'])
+        await mkdir(self['staging_dir'])
 
     @classmethod
     async def create(cls, cfg_file, *args, **kwargs):
@@ -62,7 +52,7 @@ class PosixStorageServer(StorageServer):
         file_name = f'{root_dir}/{path_tree}'
         directory = os.path.dirname(file_name)
 
-        await make_dir(directory)
+        await mkdir(directory)
 
         if job_details['type'] == NodeType.ContainerNode:
             file_name = f'{root_dir}/{path_tree}/{uuid.uuid4().hex}.zip'

@@ -55,7 +55,7 @@ class TestPushPull(TestBase):
             prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            await self.pull_from_space('http://localhost:8081/vospace/download/1234',
+            await self.pull_from_space('http://localhost:8081/vospace/pullFromVoSpace/1234',
                                        '/tmp/download/', expected_status=400)
 
             try:
@@ -98,7 +98,7 @@ class TestPushPull(TestBase):
             # Job that is not in the correct phase
             # This means that the node is not yet associated with the job.
             # It gets associated when the job is run.
-            await self.push_to_space(f'http://localhost:8081/vospace/upload/{job_id}',
+            await self.push_to_space(f'http://localhost:8081/vospace/pushToVoSpace/{job_id}',
                                      '/tmp/datafile.dat', expected_status=400)
 
             await self.get_job_details(job_id)
@@ -123,11 +123,11 @@ class TestPushPull(TestBase):
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
             # badly formed job id
-            await self.push_to_space('http://localhost:8081/vospace/upload/1234',
+            await self.push_to_space('http://localhost:8081/vospace/pushToVoSpace/1234',
                                      '/tmp/datafile.dat', expected_status=400)
 
             # job that doesn't exist
-            await self.push_to_space('http://localhost:8081/vospace/upload/1324a40b-4c6a-453b-a756-cd41ca4b7408',
+            await self.push_to_space('http://localhost:8081/vospace/pushToVoSpace/1324a40b-4c6a-453b-a756-cd41ca4b7408',
                                      '/tmp/datafile.dat', expected_status=404)
 
             #await self.delete('http://localhost:8080/vospace/nodes/datanode')

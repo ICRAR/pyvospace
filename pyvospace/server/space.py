@@ -48,5 +48,4 @@ async def get_storage_endpoints(conn, space_id, job_id, protocol, direction):
     for row in results:
         prot = 'http' if protocol.split('#')[1].startswith('http') else 'https'
         endpoints.append(f'{prot}://{row["host"]}:{row["port"]}/vospace/{direction}/{job_id}')
-
     return {'protocol': protocol, 'endpoints': endpoints}
