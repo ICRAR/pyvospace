@@ -1,16 +1,14 @@
-import os
 import io
 import asyncio
 import aiofiles
 
 from aiohttp import web
 
-from pyvospace.server.node import NodeType
-from pyvospace.server.storage import StorageServer
+from pyvospace.server.storage import SpaceStorageServer
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file
 
 
-class PosixStorageServer(StorageServer):
+class PosixStorageServer(SpaceStorageServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
 
@@ -48,14 +46,7 @@ class PosixStorageServer(StorageServer):
 
         root_dir = app['root_dir']
         path_tree = job_details['path']
-
         file_name = f'{root_dir}/{path_tree}'
-        directory = os.path.dirname(file_name)
-
-        await mkdir(directory)
-
-        if job_details['type'] == NodeType.ContainerNode:
-            file_name = f'{root_dir}/{path_tree}/{uuid.uuid4().hex}.zip'
 
         try:
             async with aiofiles.open(file_name, 'wb') as f:
@@ -67,10 +58,5 @@ class PosixStorageServer(StorageServer):
         except asyncio.CancelledError:
             await remove(file_name)
             raise
-
-        # if its a container (rar, zip etc) then
-        # unpack it and create nodes if neccessary
-        if job_details['type'] == NodeType.ContainerNode:
-            pass
 
         return web.Response(status=200)

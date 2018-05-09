@@ -14,7 +14,6 @@ from .node import NS, NodeType, create_node, NodeTextLookup, \
     delete_properties, get_node
 from .exception import VOSpaceError, NodeDoesNotExistError, JobDoesNotExistError, \
     InvalidJobStateError, NodeBusyError, InvalidJobError
-from .space import get_storage_endpoints
 
 
 def xml_transfer_details(target, direction, protocol_endpoints):
@@ -277,7 +276,7 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
                 else:
                     node_type_text = NodeTextLookup[NodeType.DataNode]
 
-                import_views = app['accepts_views'].get(node_type_text, [app['accepts_views']['default']])
+                import_views = app['accepts_views'].get(node_type_text, [])
                 if node_view_uri:
                     if node_view_uri not in import_views:
                         raise VOSpaceError(400, f"View Not Supported. View {node_view_uri} not supported.")
@@ -301,9 +300,9 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
                 if not node_results:
                     raise VOSpaceError(404, f'Node Not Found. {target_path_norm} not found.')
 
-            end_points = await get_storage_endpoints(conn, space_job_id.space_id,
-                                                     space_job_id.job_id, prot_uri,
-                                                     direction.text)
+            end_points = await app.get_storage_endpoints(conn, space_job_id.space_id,
+                                                         space_job_id.job_id, prot_uri,
+                                                         direction.text)
 
             xml_transfer = xml_transfer_details(target=target.text,
                                                 direction=direction.text,

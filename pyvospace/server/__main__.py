@@ -5,7 +5,7 @@ import configparser
 
 from aiohttp import web
 
-from .vospace import VOSpaceServer
+from .space import VOSpaceServer
 
 
 def main(args=None):

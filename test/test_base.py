@@ -37,13 +37,21 @@ class TestBase(unittest.TestCase):
                                'dsn': 'postgres://test:test@localhost:5432/vos',
                                'accepts_views': json.dumps(
                                    {
-                                       'vos:ContainerNode': ['ivo://ivoa.net/vospace/core#tar'],
-                                       'default': ['ivo://ivoa.net/vospace/core#anyview']
+                                       'vos:Node': ['ivo://ivoa.net/vospace/core#anyview'],
+                                       'vos:DataNode': ['ivo://ivoa.net/vospace/core#anyview'],
+                                       'vos:UnstructuredDataNode': ['ivo://ivoa.net/vospace/core#anyview'],
+                                       'vos:StructuredDataNode': ['ivo://ivoa.net/vospace/core#anyview'],
+                                       'vos:ContainerNode': [],
+                                       'vos:LinkNode': ['ivo://ivoa.net/vospace/core#anyview']
                                    }),
                                'provides_views': json.dumps(
                                    {
-                                       'vos:ContainerNode': ['ivo://ivoa.net/vospace/core#tar'],
-                                       'default': ['ivo://ivoa.net/vospace/core#defaultview']
+                                       'vos:Node': ['ivo://ivoa.net/vospace/core#defaultview'],
+                                       'vos:DataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
+                                       'vos:UnstructuredDataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
+                                       'vos:StructuredDataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
+                                       'vos:ContainerNode': [],
+                                       'vos:LinkNode': ['ivo://ivoa.net/vospace/core#defaultview']
                                    }),
                                'accepts_protocols':json.dumps([]),
                                'provides_protocols':
@@ -57,9 +65,9 @@ class TestBase(unittest.TestCase):
                                         'staging_dir': '/tmp/posix/staging/'})
                                }
 
-            config['posix'] = {'host': 'localhost',
-                               'port': 8081,
-                               'direction': json.dumps(['pushToVoSpace', 'pullFromVoSpace'])}
+            config['Storage'] = {'host': 'localhost',
+                                 'port': 8081,
+                                 'parameters': json.dumps({})}
 
             config.write(open(self.config_filename, 'w'))
 

@@ -1,6 +1,4 @@
-import asyncio
 import unittest
-import xml.etree.ElementTree as ET
 
 from pyvospace.core.model import Node, ContainerNode, Property, DeleteProperty, Move, Copy
 from test.test_base import TestBase
