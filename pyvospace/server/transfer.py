@@ -271,10 +271,12 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
             node_results = await get_node(conn, target_path_norm, space_job_id.space_id)
 
             if direction.text == 'pushToVoSpace':
+                node_type = NodeType.DataNode
+                node_type_text = NodeTextLookup[node_type]
+
                 if node_results:
-                    node_type_text = NodeTextLookup[node_results['type']]
-                else:
-                    node_type_text = NodeTextLookup[NodeType.DataNode]
+                    node_type = node_results['type']
+                    node_type_text = NodeTextLookup[node_type]
 
                 import_views = app['accepts_views'].get(node_type_text, [])
                 if node_view_uri:
@@ -287,7 +289,7 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
                     await create_node(app=app,
                                       conn=conn,
                                       uri_path=target_path_norm,
-                                      node_type=node_type_text,
+                                      node_type=node_type,
                                       properties=None)
                 else:
                     # If a Node already exists at the target URI,
@@ -421,8 +423,8 @@ async def _move_nodes(app, space_id, target_path, direction_path, perform_copy):
                                                     destination_path_tree,
                                                     space_id)
 
-                    await conn.execute("insert into nodes(name, type, space_id, path) ( "
-                                       "select name, type, space_id, $2||subpath(path, nlevel($1)-1) as concat "
+                    await conn.execute("insert into nodes(name, type, space_id, target, path) ( "
+                                       "select name, type, space_id, target, $2||subpath(path, nlevel($1)-1) as concat "
                                        "from nodes where path <@ $1 and space_id=$3)",
                                        target_path_tree,
                                        destination_path_tree,

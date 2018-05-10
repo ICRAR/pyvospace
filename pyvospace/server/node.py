@@ -6,6 +6,7 @@ import lxml.etree as ET
 from urllib.parse import urlparse
 from collections import namedtuple
 from xml.etree.ElementTree import ParseError
+from contextlib import suppress
 
 from .exception import VOSpaceError
 
@@ -13,6 +14,7 @@ from .exception import VOSpaceError
 Create_Response = namedtuple('CreateResponse', 'node_name '
                                                'node_type_text '
                                                'node_busy '
+                                               'node_target '
                                                'node_properties ')
 
 Node_Type = namedtuple('NodeType', 'Node '
@@ -89,12 +91,14 @@ def generate_node_response(space_name,
                            node_property=[],
                            node_accepts_views=[],
                            node_provides_views=[],
-                           node_container=[]):
+                           node_container=[],
+                           node_target=None):
     xml = '<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
           ' xmlns="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           ' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
           f' xsi:type="{node_type}" uri="vos://{space_name}!vospace/{node_path}" ' \
           f'busy="{"true" if node_busy else "false"}" >' \
+          f'{ "<vos:target>"+node_target+"</vos:target>" if node_target else ""}' \
           f'<vos:properties>{ generate_property_xml(node_property) }</vos:properties>' \
           f'<vos:accepts>{ generate_view_xml(node_accepts_views) }</vos:accepts>' \
           f'<vos:provides>{ generate_view_xml(node_provides_views) }</vos:provides>' \
@@ -200,7 +204,7 @@ async def get_node_request(app, path, params):
                 properties = await conn.fetch("select * from properties "
                                               "where node_path=$1 and space_id=$2",
                                               results[0]['path'], app['space_id'])
-
+    target = results[0]['target']
     busy = results[0]['busy']
     node_type_int = results[0]['type']
     node_type = NodeTextLookup[node_type_int]
@@ -222,7 +226,8 @@ async def get_node_request(app, path, params):
                                           node_property=properties,
                                           node_accepts_views=views,
                                           node_provides_views=provides,
-                                          node_container=results)
+                                          node_container=results,
+                                          node_target=target)
     return xml_response
 
 
@@ -239,7 +244,8 @@ async def delete_node(app, path):
             if not result:
                 raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
-            await app.delete_storage_node(result[0]['type'], '/'.join(path_array))
+            with suppress(OSError):
+                await app.delete_storage_node(result[0]['type'], '/'.join(path_array))
 
 
 async def create_node_request(app, xml_text, url_path):
@@ -263,7 +269,17 @@ async def create_node_request(app, xml_text, url_path):
         raise VOSpaceError(400, f"Invalid URI. URI node path does not "
                                 f"match request: {url_path} != {uri_path_xml.path}")
 
-    node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
+    node_type = NodeType.Node
+    node_type_text = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
+    if node_type_text:
+        node_type = NodeLookup.get(node_type_text, None)
+        if node_type is None:
+            raise VOSpaceError(400, "Type Not Supported. Invalid type.")
+
+    # get link if it exists
+    node_target = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}target', NS)
+    if node_target is not None:
+        node_target = node_target.text
 
     props = []
     for properties in root.findall('vos:properties', NS):
@@ -278,20 +294,23 @@ async def create_node_request(app, xml_text, url_path):
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            return await create_node(app, conn, uri_path_norm, node_type, props)
+            return await create_node(app, conn, uri_path_norm, node_type, props, node_target)
 
 
-async def create_node(app, conn, uri_path, node_type, properties):
+async def create_node(app, conn, uri_path, node_type, properties, node_target=None):
     space_id = app['space_id']
     try:
-        if node_type is None:
-            node_type = NodeType.Node # if not specified then default is Node
-            node_type_text = 'vos:Node'
-        else:
-            node_type_text = node_type
-            node_type = NodeLookup.get(node_type_text, None)
-            if node_type is None:
-                raise VOSpaceError(400, "Type Not Supported. Invalid type.")
+        node_type_text = NodeTextLookup.get(node_type, None)
+        if node_type_text is None:
+            raise VOSpaceError(400, "Type Not Supported. Invalid type.")
+
+        # We can not have a target unless its a link node
+        if node_type != NodeType.LinkNode and node_target is not None:
+            raise VOSpaceError(400, f"Type Not Supported. {node_type_text} can not have a target.")
+
+        if node_type == NodeType.LinkNode:
+            if node_target is None:
+                raise VOSpaceError(400, f"Type Not Supported. {node_type_text} does not have a target.")
 
         # remove empty entries as a result of strip
         path = list(filter(None, uri_path.split('/')))
@@ -323,8 +342,8 @@ async def create_node(app, conn, uri_path, node_type, properties):
             if row['type'] != NodeType.ContainerNode:
                 raise VOSpaceError(404, f"Container Not Found. {row['name']} is not a container.")
 
-        await conn.fetchrow("INSERT INTO nodes (type, name, path, space_id) VALUES ($1, $2, $3, $4)",
-                             node_type, node_name, path_tree, space_id)
+        await conn.fetchrow("INSERT INTO nodes (type, name, path, space_id, target) VALUES ($1, $2, $3, $4, $5)",
+                             node_type, node_name, path_tree, space_id, node_target)
 
         # call the specific provider, opportunity to get properties
         await app.create_storage_node(node_type, '/'.join(path))
@@ -338,7 +357,7 @@ async def create_node(app, conn, uri_path, node_type, properties):
                                    "VALUES ($1, $2, $3, $4, $5)",
                                    properties_list)
 
-        return Create_Response(node_name, node_type_text, False, properties)
+        return Create_Response(node_name, node_type_text, False, node_target, properties)
 
     except ParseError as p:
         raise VOSpaceError(500, f"Internal Error. XML error: {str(p)}.")
@@ -430,7 +449,8 @@ async def set_node_properties(app, xml_text, url_path):
                                               node_path=url_path,
                                               node_type=NodeTextLookup[node_type],
                                               node_busy=results['busy'],
-                                              node_property=properties_result)
+                                              node_property=properties_result,
+                                              node_target=results['target'])
         return xml_response
 
     except ParseError as p:
@@ -444,6 +464,5 @@ async def delete_properties(conn, uri_path, space_id):
     path = list(filter(None, uri_path.split('/')))
     path_tree = '.'.join(path)
 
-    await conn.execute("delete from properties "
-                       "where node_path=$1 and space_id=$2",
+    await conn.execute("delete from properties where node_path=$1 and space_id=$2",
                        path_tree, space_id)

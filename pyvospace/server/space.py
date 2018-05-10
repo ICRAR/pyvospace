@@ -163,7 +163,8 @@ class SpaceServer(web.Application, VOSpaceBase):
                                                   node_type=response.node_type_text,
                                                   node_busy=response.node_busy,
                                                   node_property=response.node_properties,
-                                                  node_accepts_views=accepts_views)
+                                                  node_accepts_views=accepts_views,
+                                                  node_target=response.node_target)
 
             return web.Response(status=201,
                                 content_type='text/xml',

@@ -56,7 +56,7 @@ class TestPushPull(TestBase):
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
             await self.pull_from_space('http://localhost:8081/vospace/pullFromVoSpace/1234',
-                                       '/tmp/download/', expected_status=400)
+                                       '/tmp/download/', expected_status=(400,))
 
             try:
                 await asyncio.wait_for(self.push_to_space(end.text,
@@ -74,7 +74,7 @@ class TestPushPull(TestBase):
             prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
             end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            await self.pull_from_space(end.text, '/tmp/download/', expected_status=500)
+            await self.pull_from_space(end.text, '/tmp/download/', expected_status=(500, 400))
 
         self.loop.run_until_complete(run())
 

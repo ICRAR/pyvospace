@@ -10,6 +10,3 @@ class VOSpaceBase(object):
 
     async def delete_storage_node(self, node_type, node_path):
         raise NotImplementedError()
-
-    async def get_storage_endpoints(self, conn, space_id, job_id, protocol, direction):
-        raise NotImplementedError()

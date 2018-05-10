@@ -102,9 +102,11 @@ class Node(object):
                  path,
                  properties=[],
                  capabilities=[],
-                 node_type='vos:Node'):
+                 node_type='vos:Node',
+                 node_uri_target=None):
 
         self.node_type = node_type
+        self.node_uri_target = node_uri_target
         self.path = os.path.normpath(path).strip('.').lstrip('/')
         self.properties = properties
         self.capabilities = capabilities
@@ -118,7 +120,7 @@ class Node(object):
 
         return self.path == other.path and \
                self.node_type == other.node_type and \
-               self.__properties == other.__properties
+               self._properties == other._properties
 
     def _build_node(self, root):
         for properties in root.findall('vos:properties', Node.NS):
@@ -135,12 +137,12 @@ class Node(object):
                     prop_ro = prop_ro_bool
 
                 prop_text = node_property.text
-                self.__properties.append(Property(prop_uri, prop_text, prop_ro))
+                self._properties.append(Property(prop_uri, prop_text, prop_ro))
 
-        self.__sort_properties()
+        self._sort_properties()
 
-    def __sort_properties(self):
-        self.__properties.sort(key=lambda x: x.uri)
+    def _sort_properties(self):
+        self._properties.sort(key=lambda x: x.uri)
 
     @classmethod
     def _create_node(cls, node_uri, node_type, node_busy):
@@ -191,21 +193,21 @@ class Node(object):
 
     @property
     def properties(self):
-        return self.__properties
+        return self._properties
 
     @properties.setter
     def properties(self, value):
-        self.__properties = []
+        self._properties = []
         if value:
-            self.__properties = value
-            self.__sort_properties()
+            self._properties = value
+            self._sort_properties()
 
     def add_property(self, value):
-        self.__properties.append(value)
-        self.__sort_properties()
+        self._properties.append(value)
+        self._sort_properties()
 
-    def __properties_tostring(self):
-        return ''.join([prop.tostring() for prop in self.__properties])
+    def _properties_tostring(self):
+        return ''.join([prop.tostring() for prop in self._properties])
 
     def to_uri(self):
         return f"vos://{Node.SPACE}!vospace/{self.path}"
@@ -215,18 +217,23 @@ class Node(object):
         if isinstance(self, DataNode):
             busy = f'busy="{str(self.busy).lower()}"'
 
+        target = ''
+        if isinstance(self, LinkNode):
+            if self.node_uri_target is not None:
+                target = f'<vos:target>{self.node_uri_target}</vos:target>'
+
         create_node_xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
                           f' xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
                           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
                           f' xsi:type="{self.node_type}" uri="{self.to_uri()}" {busy}>' \
-                          f'<vos:properties>{self.__properties_tostring()}</vos:properties>' \
+                          f'{target}' \
+                          f'<vos:properties>{self._properties_tostring()}</vos:properties>' \
                           f'<vos:accepts/><vos:provides/>' \
                           f'<vos:capabilities/></vos:node>'
         return create_node_xml
 
 
 class LinkNode(Node):
-
     def __init__(self,
                  path,
                  uri_target,
@@ -235,28 +242,31 @@ class LinkNode(Node):
         super().__init__(path=path,
                          properties=properties,
                          capabilities=capabilities,
-                         node_type='vos:LinkNode')
-        self.uri_target = uri_target
+                         node_type='vos:LinkNode',
+                         node_uri_target=uri_target)
+
+    @property
+    def target(self):
+        return self.node_uri_target
 
     def __eq__(self, other):
         if not isinstance(other, LinkNode):
             return False
 
         return super().__eq__(other) and \
-               self.uri_target == other.uri_target
+               self.node_uri_target == other.node_uri_target
 
     def _build_node(self, root):
         super()._build_node(root)
 
-        target = root.attrib.get('target', None)
+        target = root.find('vos:target', Node.NS)
         if target is None:
             raise Exception('LinkNode target does not exist.')
 
-        self.uri_target = target
+        self.node_uri_target = target.text
 
 
 class DataNode(Node):
-
     def __init__(self,
                  path,
                  properties=[],
@@ -302,16 +312,16 @@ class DataNode(Node):
 
     @property
     def accepts(self):
-        return self.__accepts
+        return self._accepts
 
     @accepts.setter
     def accepts(self, value):
-        self.__accepts = []
+        self._accepts = []
         if value:
             self._accepts = value
 
     def add_accepts_view(self, value):
-        self.__accepts.append(value)
+        self._accepts.append(value)
 
     @property
     def provides(self):
@@ -319,16 +329,15 @@ class DataNode(Node):
 
     @provides.setter
     def provides(self, value):
-        self.__provides = []
+        self._provides = []
         if value:
-            self.__provides = value
+            self._provides = value
 
     def add_provides_view(self, value):
-        self.__provides.append(value)
+        self._provides.append(value)
 
 
 class ContainerNode(DataNode):
-
     def __init__(self,
                  path,
                  nodes=[],
@@ -351,10 +360,10 @@ class ContainerNode(DataNode):
         if not isinstance(other, DataNode):
             return False
 
-        return super().__eq__(other) and self.__nodes == other.__nodes
+        return super().__eq__(other) and self._nodes == other._nodes
 
-    def __sort_nodes(self):
-        self.__nodes.sort(key=lambda x: x.path)
+    def _sort_nodes(self):
+        self._nodes.sort(key=lambda x: x.path)
 
     def _build_node(self, root):
         super()._build_node(root)
@@ -369,26 +378,26 @@ class ContainerNode(DataNode):
                 else:
                     node_busy = False
                 node = Node._create_node(node_uri, node_type, node_busy)
-                self.__nodes.append(node)
+                self._nodes.append(node)
 
-        self.__sort_nodes()
+        self._sort_nodes()
 
     @property
     def nodes(self):
-        return self.__nodes
+        return self._nodes
 
     @nodes.setter
     def nodes(self, node_list):
-        self.__nodes = []
+        self._nodes = []
         if node_list:
             if not isinstance(node_list, list):
                 raise Exception('Node not a list.')
-            self.__nodes = node_list
-            self.__sort_nodes()
+            self._nodes = node_list
+            self._sort_nodes()
 
     def add_node(self, value):
-        self.__nodes.append(value)
-        self.__sort_nodes()
+        self._nodes.append(value)
+        self._sort_nodes()
 
 
 class UnstructuredDataNode(DataNode):
@@ -458,8 +467,7 @@ class Transfer(object):
 class NodeTransfer(Transfer):
 
     def __init__(self, target, direction, keep_bytes):
-        self.target = target
-        self.direction = direction
+        super().__init__(target, direction)
         self.keep_bytes = keep_bytes
 
     def tostring(self):
@@ -501,13 +509,13 @@ class PushToSpace(Transfer):
         self.protocols = protocols
         self.view = view
 
-    def __view_tostring(self):
+    def _view_tostring(self):
         if not self.view:
             return ''
 
         return self.view.tostring()
 
-    def __protocols_tostring(self):
+    def _protocols_tostring(self):
         protocol_array = []
         for protocol in self.protocols:
             protocol_array.append(protocol.tostring())
@@ -518,8 +526,8 @@ class PushToSpace(Transfer):
                           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
                           f'<vos:target>{self.target.to_uri()}</vos:target>' \
                           f'<vos:direction>{self.direction}</vos:direction>' \
-                          f'{self.__view_tostring()}' \
-                          f'{self.__protocols_tostring()}' \
+                          f'{self._view_tostring()}' \
+                          f'{self._protocols_tostring()}' \
                           f'</vos:transfer>'
         return create_node_xml
 
@@ -533,13 +541,13 @@ class PullFromSpace(Transfer):
         self.protocols = protocols
         self.view = view
 
-    def __view_tostring(self):
+    def _view_tostring(self):
         if not self.view:
             return ''
 
         return self.view.tostring()
 
-    def __protocols_tostring(self):
+    def _protocols_tostring(self):
         protocol_array = []
         for protocol in self.protocols:
             protocol_array.append(protocol.tostring())
@@ -550,7 +558,7 @@ class PullFromSpace(Transfer):
                           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
                           f'<vos:target>{self.target.to_uri()}</vos:target>' \
                           f'<vos:direction>{self.direction}</vos:direction>' \
-                          f'{self.__view_tostring()}' \
-                          f'{self.__protocols_tostring()}' \
+                          f'{self._view_tostring()}' \
+                          f'{self._protocols_tostring()}' \
                           f'</vos:transfer>'
         return create_node_xml
