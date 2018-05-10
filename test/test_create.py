@@ -86,6 +86,9 @@ class TestCreate(TestBase):
             link_node = LinkNode('/test1/test2/test3', 'http://google.com')
             await self.create_node(link_node)
 
+            node = await self.get_node('/test1/test2/test3', params={'detail': 'max'})
+            self.assertEqual(node.target, link_node.target)
+
             # Check that Link Node is in Path
             node3 = Node('/test1/test2/test3/test4')
             await self.create_node(node3, expected_status=400)

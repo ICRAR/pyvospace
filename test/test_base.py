@@ -42,7 +42,7 @@ class TestBase(unittest.TestCase):
                                        'vos:UnstructuredDataNode': ['ivo://ivoa.net/vospace/core#anyview'],
                                        'vos:StructuredDataNode': ['ivo://ivoa.net/vospace/core#anyview'],
                                        'vos:ContainerNode': [],
-                                       'vos:LinkNode': ['ivo://ivoa.net/vospace/core#anyview']
+                                       'vos:LinkNode': []
                                    }),
                                'provides_views': json.dumps(
                                    {
@@ -51,7 +51,7 @@ class TestBase(unittest.TestCase):
                                        'vos:UnstructuredDataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
                                        'vos:StructuredDataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
                                        'vos:ContainerNode': [],
-                                       'vos:LinkNode': ['ivo://ivoa.net/vospace/core#defaultview']
+                                       'vos:LinkNode': []
                                    }),
                                'accepts_protocols':json.dumps([]),
                                'provides_protocols':
@@ -191,10 +191,10 @@ class TestBase(unittest.TestCase):
         status, response = await self.put(url, data=self.file_sender(file_name=file_path))
         self.assertEqual(status, expected_status, msg=response)
 
-    async def pull_from_space(self, url, output_path, expected_status=200):
+    async def pull_from_space(self, url, output_path, expected_status=(200,)):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
-                self.assertEqual(resp.status, expected_status)
+                self.assertIn(resp.status, expected_status)
                 if resp.status == 200:
                     hdr_length = int(resp.headers[aiohttp.hdrs.CONTENT_LENGTH])
                     path = f"{output_path}/{resp.content_disposition.filename}"
