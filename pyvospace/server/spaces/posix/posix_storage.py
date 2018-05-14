@@ -18,11 +18,11 @@ class PosixStorageServer(SpaceStorageServer):
     async def _setup(self):
         await super()._setup()
 
-        self['root_dir'] = self['space_parameters']['root_dir']
+        self['root_dir'] = self['storage_parameters']['root_dir']
         if not self['root_dir']:
             raise Exception('root_dir not found.')
 
-        self['staging_dir'] = self['space_parameters']['staging_dir']
+        self['staging_dir'] = self['storage_parameters']['staging_dir']
         if not self['staging_dir']:
             raise Exception('staging_dir not found.')
 
@@ -35,16 +35,16 @@ class PosixStorageServer(SpaceStorageServer):
         await app._setup()
         return app
 
-    async def download(self, app, conn, request, job_details):
-        root_dir = app['root_dir']
+    async def download(self, conn, request, job_details):
+        root_dir = self['root_dir']
         path_tree = job_details['path']
         file_path = f'{root_dir}/{path_tree}'
         return await send_file(request, job_details['name'], file_path)
 
-    async def upload(self, app, conn, request, job_details):
+    async def upload(self, conn, request, job_details):
         reader = request.content
 
-        root_dir = app['root_dir']
+        root_dir = self['root_dir']
         path_tree = job_details['path']
         file_name = f'{root_dir}/{path_tree}'
 

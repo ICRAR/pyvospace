@@ -13,13 +13,13 @@ class PosixServer(SpaceServer):
     async def _setup(self):
         await super()._setup()
 
-        self['parameters'] = json.loads(self['config']['Space']['parameters'])
+        self['storage_parameters'] = json.loads(self['config']['Storage']['parameters'])
 
-        self['root_dir'] = self['parameters']['root_dir']
+        self['root_dir'] = self['storage_parameters']['root_dir']
         if not self['root_dir']:
             raise Exception('root_dir not found.')
 
-        self['staging_dir'] = self['parameters']['staging_dir']
+        self['staging_dir'] = self['storage_parameters']['staging_dir']
         if not self['staging_dir']:
             raise Exception('staging_dir not found.')
 

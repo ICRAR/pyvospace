@@ -142,7 +142,7 @@ async def get_node(conn, path, space_id):
     # share lock both node and parent, important so we
     # dont have a dead lock with move/copy/create
     result = await conn.fetch("select * from nodes where path=$1 or path=$2 "
-                              "and space_id=$3 order by path asc for share",
+                              "and space_id=$3 order by path asc for update",
                               path_tree, path_parent_tree, space_id)
     result_len = len(result)
     if result_len == 1:
@@ -192,7 +192,7 @@ async def get_node_request(app, path, params):
     provides = []
 
     async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
+        async with conn.transaction(isolation='read_committed'):
             results = await conn.fetch("select * from nodes where path <@ $1 and "
                                        "nlevel(path)-nlevel($1)<=1 and space_id=$2"
                                        f"order by path asc for share {limit_str}",
@@ -329,7 +329,7 @@ async def create_node(app, conn, uri_path, node_type, properties, node_target=No
 
         # get parent node and check if its valid to add node to it
         row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
-                                  "FROM nodes WHERE path=$1 and space_id=$2 for share",
+                                  "FROM nodes WHERE path=$1 and space_id=$2 for update",
                                   path_parent_tree, space_id)
         # if the parent is not found but its expected to exist
         if not row and len(path_parent) > 0:

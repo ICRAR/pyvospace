@@ -4,24 +4,28 @@ import json
 import configparser
 
 from aiohttp import web
+from collections import namedtuple
 
 from .exception import VOSpaceError
 from .transfer import data_request
 from .uws import UWSJobExecutor
 
 
+StorageRegister = namedtuple('StorageRegister', 'space_id storage_id')
+
+
 async def register_storage(db_pool, name, host, port, parameters):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            result = await conn.fetchrow("select * from space where name=$1 for update", name)
-            if not result:
+            space_result = await conn.fetchrow("select * from space where name=$1 for update", name)
+            if not space_result:
                 raise VOSpaceError(404, f'Space not found. Name: {name}')
 
-            await conn.fetchrow("insert into storage (name, host, port, parameters) "
-                                "values ($1, $2, $3, $4) on conflict (name, host, port) "
-                                "do update set parameters=$4",
-                                name, host, port, parameters)
-            return int(result['id'])
+            storage = await conn.fetchrow("insert into storage (name, host, port, parameters) "
+                                          "values ($1, $2, $3, $4) on conflict (name, host, port) "
+                                          "do update set parameters=$4 returning id",
+                                          name, host, port, parameters)
+            return StorageRegister(int(space_result['id']), int(storage['id']))
 
 
 class SpaceStorageServer(web.Application):
@@ -44,30 +48,26 @@ class SpaceStorageServer(web.Application):
     async def _setup(self):
         config = self['config']
 
-        self['space_host'] = config['Space']['host']
-        self['space_port'] = int(config['Space']['port'])
-        self['space_name'] = config['Space']['name']
-        self['space_uri'] = config['Space']['uri']
-        self['space_parameters'] = json.loads(config['Space']['parameters'])
-
-        self['host'] = config['Storage']['host']
-        self['port'] = int(config['Storage']['port'])
-        self['parameters'] = json.loads(config['Storage']['parameters'])
+        self['storage_name'] = config['Storage']['name']
+        self['storage_host'] = config['Storage']['host']
+        self['storage_port'] = int(config['Storage']['port'])
+        self['storage_parameters'] = json.loads(config['Storage']['parameters'])
         self['db_pool'] = await asyncpg.create_pool(dsn=config['Space']['dsn'])
 
-        space_id = await register_storage(self['db_pool'],
-                                          self['space_name'],
-                                          self['host'],
-                                          self['port'],
-                                          json.dumps(self['parameters']))
+        result = await register_storage(self['db_pool'],
+                                        self['storage_name'],
+                                        self['storage_host'],
+                                        self['storage_port'],
+                                        json.dumps(self['storage_parameters']))
 
-        self['space_id'] = space_id
+        self['space_id'] = result.space_id
+        self['storage_id'] = result.storage_id
         self['executor'] = UWSJobExecutor()
 
-    async def download(self, app, conn, request, job_details):
+    async def download(self, conn, request, job_details):
         raise NotImplementedError()
 
-    async def upload(self, app, conn, request, job_details):
+    async def upload(self, conn, request, job_details):
         raise NotImplementedError()
 
     async def upload_data(self, request):

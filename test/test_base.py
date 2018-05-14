@@ -30,6 +30,10 @@ class TestBase(unittest.TestCase):
         self.config_filename = 'test_vo.ini'
         config = configparser.ConfigParser()
         if not os.path.exists(self.config_filename):
+            storage_details = json.dumps(
+                {'root_dir': '/tmp/posix/storage/',
+                 'staging_dir': '/tmp/posix/staging/'})
+
             config['Space'] = {'host': 'localhost',
                                'port': 8080,
                                'name': 'posix',
@@ -59,17 +63,17 @@ class TestBase(unittest.TestCase):
                                        ['ivo://ivoa.net/vospace/core#httpput',
                                         'ivo://ivoa.net/vospace/core#httpget']
                                    ),
-                               'parameters':
-                                   json.dumps(
-                                       {'root_dir': '/tmp/posix/storage/',
-                                        'staging_dir': '/tmp/posix/staging/'})
+                               'parameters': '{}'
                                }
 
-            config['Storage'] = {'host': 'localhost',
+            config['Storage'] = {'name': 'posix',
+                                 'host': 'localhost',
                                  'port': 8081,
-                                 'parameters': json.dumps({})}
+                                 'parameters': storage_details
+                                }
 
-            config.write(open(self.config_filename, 'w'))
+            with open(self.config_filename, 'w') as conf:
+                config.write(conf)
 
         self.app = self.loop.run_until_complete(PosixServer.create(self.config_filename))
         self.runner = web.AppRunner(self.app)
