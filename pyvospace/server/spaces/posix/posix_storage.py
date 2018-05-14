@@ -4,6 +4,7 @@ import aiofiles
 
 from aiohttp import web
 
+from pyvospace.server.node import NodeType
 from pyvospace.server.storage import SpaceStorageServer
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file
 
@@ -35,17 +36,21 @@ class PosixStorageServer(SpaceStorageServer):
         await app._setup()
         return app
 
-    async def download(self, conn, request, job_details):
+    async def download(self, request):
         root_dir = self['root_dir']
-        path_tree = job_details['path']
+        path_tree = request.vo_job['path']
         file_path = f'{root_dir}/{path_tree}'
-        return await send_file(request, job_details['name'], file_path)
+        return await send_file(request, request.vo_job['name'], file_path)
 
-    async def upload(self, conn, request, job_details):
+    async def upload(self, request):
         reader = request.content
 
+        # This implenentation wont accept container node data
+        if request.vo_job['type'] == NodeType.ContainerNode:
+            return web.Response(status=400, text='Unable to upload data to a container.')
+
         root_dir = self['root_dir']
-        path_tree = job_details['path']
+        path_tree = request.vo_job['path']
         file_name = f'{root_dir}/{path_tree}'
 
         try:

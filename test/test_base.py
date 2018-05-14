@@ -195,6 +195,9 @@ class TestBase(unittest.TestCase):
         status, response = await self.put(url, data=self.file_sender(file_name=file_path))
         self.assertEqual(status, expected_status, msg=response)
 
+    async def push_to_space_defer_error(self, url, file_path):
+        return await self.put(url, data=self.file_sender(file_name=file_path))
+
     async def pull_from_space(self, url, output_path, expected_status=(200,)):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
@@ -211,3 +214,20 @@ class TestBase(unittest.TestCase):
                                 break
                             await out_file.write(buff)
                     self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
+
+    async def pull_from_space_defer_error(self, url, output_path):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    hdr_length = int(resp.headers[aiohttp.hdrs.CONTENT_LENGTH])
+                    path = f"{output_path}/{resp.content_disposition.filename}"
+                    downloaded = 0
+                    async with aiofiles.open(path, mode='wb') as out_file:
+                        while True:
+                            buff = await resp.content.read(65536)
+                            downloaded += len(buff)
+                            if not buff:
+                                break
+                            await out_file.write(buff)
+                    self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
+                return resp.status
