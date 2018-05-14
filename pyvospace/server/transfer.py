@@ -5,6 +5,8 @@ import lxml.etree as ET
 
 from contextlib import suppress
 from urllib.parse import urlparse
+from aiohttp import web
+
 
 from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
     get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, \
@@ -12,8 +14,8 @@ from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
     set_uws_phase_to_abort
 from .node import NS, NodeType, create_node, NodeTextLookup, \
     delete_properties, get_node
-from .exception import VOSpaceError, NodeDoesNotExistError, JobDoesNotExistError, \
-    InvalidJobStateError, NodeBusyError, InvalidJobError
+from .exception import VOSpaceError, NodeDoesNotExistError, InvalidJobError, \
+    InvalidJobStateError, NodeBusyError
 
 
 def xml_transfer_details(target, direction, protocol_endpoints):
@@ -45,108 +47,97 @@ async def get_transfer_details(db_pool, space_id, job_id):
     return job['transfer']
 
 
-async def data_request(app, request, func):
+async def data_transfer_request(app, request, func):
     space_id = app['space_id']
     job_id = request.match_info.get('job_id', None)
+    direction = request.match_info.get('direction', None)
     key = UWSKey(space_id, job_id)
 
-    async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
-            job = await get_uws_job_conn(conn=conn, space_id=space_id, job_id=job_id, for_update=True)
-            # Can only start a EXECUTING Job
-            if job['phase'] != UWSPhase.Executing:
-                raise InvalidJobStateError('Invalid Job State')
-            # Only run job if pending has not already been called.
-            # If we dont do this then pending can be called many times before
-            # the running job transitions to execute creating many tasks for the same job.
-            fut = app['executor'].execute(_run_transfer_job, key, app, request, job, func)
-    return await fut
+    try:
+        async with app['db_pool'].acquire() as conn:
+            async with conn.transaction():
+                job = await get_uws_job_conn(conn=conn, space_id=space_id, job_id=job_id, for_update=True)
+
+                # Can only start a EXECUTING Job
+                if job['phase'] != UWSPhase.Executing:
+                    raise InvalidJobStateError('Invalid Job State. Job not EXECUTING.')
+
+                if job['direction'] != direction:
+                    raise InvalidJobError('Direction does not match request.')
+
+                fut = app['executor'].execute(_run_transfer_job, key, app, request, job, func)
+        return await fut
+
+    except VOSpaceError as e:
+        return web.Response(status=e.code, text=e.error)
+    except asyncio.CancelledError:
+        return web.Response(status=500, text="Cancelled")
+    except Exception as g:
+        return web.Response(status=500, text=str(g))
 
 
 async def _run_transfer_job(space_job_id, app, request, job, func):
     db_pool = app['db_pool']
-    results = None
+
     try:
-        results = await _get_node_and_set_to_busy(db_pool, space_job_id.space_id,
-                                                  space_job_id.job_id, job)
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await _lock_transfer_node(conn, space_job_id.space_id,
-                                          space_job_id.job_id, job['target'])
-                response = await func(conn, request, results)
+                results = await _lock_transfer_node(conn, space_job_id.space_id,
+                                                    space_job_id.job_id, job['direction'])
+                if job['direction'] == 'pushToVoSpace':
+                    setattr(request, 'vo_transaction', conn)
+                setattr(request, 'vo_job', results)
+                response = await func(request)
+
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(set_uws_phase_to_completed(db_pool, space_job_id.space_id,
+                                                            space_job_id.job_id))
         return response
-        # Ignore these errors i.e. don't set the job into error
-    except (JobDoesNotExistError, InvalidJobStateError, NodeBusyError, InvalidJobError):
+    # Ignore these errors i.e. don't set the job into error
+    except NodeBusyError:
         raise
-        # If the node has been deleted at some point then set the job into error
+    # If the node has been deleted at some point then set the job into error
     except NodeDoesNotExistError as e:
-        await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
-                                                    space_job_id.job_id, str(e)))
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
+                                                        space_job_id.job_id, str(e)))
         raise e
 
     except asyncio.CancelledError:
-        await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
-                                                    space_job_id.job_id, "Job Cancelled"))
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
+                                                        space_job_id.job_id, "Job Cancelled"))
         raise
 
     except Exception as f:
-        await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
-                                                    space_job_id.job_id, str(f)))
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
+                                                        space_job_id.job_id, str(f)))
         raise VOSpaceError(500, str(f))
 
-    finally:
-        if results and results['direction'] == 'pushToVoSpace':
-            await asyncio.shield(_set_transfer_job_to_not_busy(db_pool,
-                                                               space_job_id.space_id,
-                                                               results['target']))
 
-
-async def _get_node_and_set_to_busy(db_pool, space_id, job_id, job):
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            node_result = await conn.fetchrow("select * from nodes "
-                                              "where path=$1 and space_id=$2 for update nowait",
-                                              job['target'], space_id)
-
-            if not node_result:
-                raise NodeDoesNotExistError(f"Target node for job does not exist. JobID: {job_id}")
-
-            # Want to allow nodes to be appended to containers in parallel.
-            # Every other node should be blocked while uploading.
-            if node_result['busy'] is True and node_result['type'] != NodeType.ContainerNode:
-                raise NodeBusyError(f"Node Busy. Node: {node_result['path']} is busy.")
-
-            # set the node to busy so no other clients can manipulate the data
-            # only set busy when we are pushing data to the node.
-            if job['direction'] == 'pushToVoSpace':
-                await conn.fetchrow("update nodes set busy=true where path=$1 and space_id=$2",
-                                    node_result['path'], space_id)
-
-    path = list(filter(None, node_result['path'].split('.')))
-    path_slash = '/'.join(path)
-    dict_results = dict(node_result)
-    dict_results['path'] = path_slash
-    dict_results.update(job)
-    return dict_results
-
-
-async def _set_transfer_job_to_not_busy(db_pool, space_id, path):
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            # set the node to not busy so no other clients can manipulate the data
-            result = await conn.fetchrow("update nodes set busy=false "
-                                         "where path=$1 and space_id=$2 returning path",
-                                         path, space_id)
-            return result
-
-
-async def _lock_transfer_node(conn, space_id, job_id, target):
+async def _lock_transfer_node(conn, space_id, job_id, direction):
     # Row lock the node so updates/deletes can not occur for duration of upload/download
-    node_result = await conn.fetchrow("select path from nodes "
-                                      "where path=$1 and space_id=$2 for share",
-                                      target, space_id)
-    if not node_result:
-        raise NodeDoesNotExistError(f"Target node for job does not exist. JobID: {job_id}")
+    try:
+        if direction == 'pushToVoSpace':
+            node_result = await conn.fetchrow("select * from nodes left join uws_jobs "
+                                              "on uws_jobs.target = nodes.path and target_id = nodes.space_id "
+                                              "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
+                                              "for update of nodes nowait",
+                                              job_id, space_id)
+        else:
+            node_result = await conn.fetchrow("select * from nodes left join uws_jobs "
+                                              "on uws_jobs.target = nodes.path and target_id = nodes.space_id "
+                                              "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
+                                              "for share of nodes nowait",
+                                              job_id, space_id)
+
+        if not node_result:
+            raise NodeDoesNotExistError(f"Target node for job does not exist.")
+
+        return node_result
+    except asyncpg.exceptions.LockNotAvailableError:
+        raise NodeBusyError("Node Busy.")
 
 
 async def modify_transfer_job_phase(app, job_id, uws_cmd):
@@ -306,6 +297,12 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
                             raise VOSpaceError(404, f'Node Not Found. {target_path_norm} not found.')
 
                         node_type = node_results['type']
+
+            # Can't upload or download data to/from linknode
+            # Left out ContainerNode as the specific storage implementation might want to unpack
+            # it and create nodes.
+            if node_type == NodeType.LinkNode:
+                raise VOSpaceError(400, 'Operation Not Supported. No data transfer for a LinkNode.')
 
             end_points = await app.get_storage_endpoints(space_job_id.space_id,
                                                          space_job_id.job_id,

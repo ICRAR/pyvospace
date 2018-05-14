@@ -80,7 +80,7 @@ class UWSJobExecutor(object):
         # if task is already running then return it
         task = self.job_tasks.get(key, None)
         if task:
-            return task[0]
+            raise InvalidJobStateError("Job already running")
 
         task = asyncio.ensure_future(func(key, *args))
         self.job_tasks[key] = (task, *args)

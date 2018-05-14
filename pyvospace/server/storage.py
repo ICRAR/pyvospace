@@ -1,5 +1,4 @@
 import asyncpg
-import asyncio
 import json
 import configparser
 
@@ -7,7 +6,7 @@ from aiohttp import web
 from collections import namedtuple
 
 from .exception import VOSpaceError
-from .transfer import data_request
+from .transfer import data_transfer_request
 from .uws import UWSJobExecutor
 
 
@@ -36,8 +35,8 @@ class SpaceStorageServer(web.Application):
         config.read(cfg_file)
         self['config'] = config
 
-        self.router.add_put('/vospace/pushToVoSpace/{job_id}', self.upload_data)
-        self.router.add_get('/vospace/pullFromVoSpace/{job_id}', self.download_data)
+        self.router.add_put('/vospace/{direction}/{job_id}', self._upload_data)
+        self.router.add_get('/vospace/{direction}/{job_id}', self._download_data)
 
         self.on_shutdown.append(self.shutdown)
 
@@ -64,30 +63,14 @@ class SpaceStorageServer(web.Application):
         self['storage_id'] = result.storage_id
         self['executor'] = UWSJobExecutor()
 
-    async def download(self, conn, request, job_details):
+    async def download(self, request):
         raise NotImplementedError()
 
-    async def upload(self, conn, request, job_details):
+    async def upload(self, request):
         raise NotImplementedError()
 
-    async def upload_data(self, request):
-        try:
-            return await data_request(self, request, self.upload)
+    async def _upload_data(self, request):
+        return await data_transfer_request(self, request, self.upload)
 
-        except VOSpaceError as e:
-            return web.Response(status=e.code, text=e.error)
-        except asyncio.CancelledError:
-            return web.Response(status=500, text="Cancelled")
-        except Exception as g:
-            return web.Response(status=500, text=str(g))
-
-    async def download_data(self, request):
-        try:
-            return await data_request(self, request, self.download)
-
-        except VOSpaceError as e:
-            return web.Response(status=e.code, text=e.error)
-        except asyncio.CancelledError:
-            return web.Response(status=500, text="Cancelled")
-        except Exception as g:
-            return web.Response(status=500, text=str(g))
+    async def _download_data(self, request):
+        return await data_transfer_request(self, request, self.download)

@@ -6,7 +6,7 @@ import xml.dom.minidom as minidom
 
 from aiohttp import web
 
-from pyvospace.core.model import PushToSpace, PullFromSpace, Node, ContainerNode, HTTPPut, HTTPGet
+from pyvospace.core.model import PushToSpace, PullFromSpace, Node, ContainerNode, LinkNode, HTTPPut, HTTPGet
 from pyvospace.server.spaces.posix.posix_storage import PosixStorageServer
 from test.test_base import TestBase
 
@@ -43,7 +43,7 @@ class TestPushPull(TestBase):
 
         super().tearDown()
 
-    def test_push_to_space_sync(self):
+    def test_push_to_space_sync_node_error(self):
         async def run():
             node = Node('/syncdatanode')
             push = PushToSpace(node, [HTTPPut()])
@@ -52,14 +52,29 @@ class TestPushPull(TestBase):
             self.assertEqual(200, status, msg=response)
 
             root = ET.fromstring(response)
-            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            put_prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            put_end = put_prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            await self.pull_from_space('http://localhost:8081/vospace/pullFromVoSpace/1234',
-                                       '/tmp/download/', expected_status=(400,))
+            await self.delete('http://localhost:8080/vospace/nodes/syncdatanode')
+            await self.push_to_space(put_end.text, '/tmp/datafile.dat', expected_status=404)
+
+        self.loop.run_until_complete(run())
+
+    def test_push_to_space_sync_failed(self):
+        async def run():
+            node = Node('/syncdatanode')
+            push = PushToSpace(node, [HTTPPut()])
+            status, response = await self.post('http://localhost:8080/vospace/synctrans',
+                                               data=push.tostring())
+            self.assertEqual(200, status, msg=response)
+
+            root = ET.fromstring(response)
+            put_prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            put_end = put_prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
             try:
-                await asyncio.wait_for(self.push_to_space(end.text,
+                # Cut off
+                await asyncio.wait_for(self.push_to_space(put_end.text,
                                                           '/tmp/datafile.dat',
                                                           expected_status=200), 0.2)
             except Exception as e:
@@ -71,14 +86,14 @@ class TestPushPull(TestBase):
                                                data=push.tostring())
             self.assertEqual(200, status, msg=response)
             root = ET.fromstring(response)
-            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            prot_get = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            end_get = prot_get.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
-            await self.pull_from_space(end.text, '/tmp/download/', expected_status=(500, 400))
+            await self.pull_from_space(end_get.text, '/tmp/download/', expected_status=(500, 400))
 
         self.loop.run_until_complete(run())
 
-    def test_push_to_space(self):
+    def test_push_to_space_async(self):
         async def run():
             node1 = ContainerNode('/datanode')
             await self.create_node(node1)
@@ -101,19 +116,10 @@ class TestPushPull(TestBase):
             await self.push_to_space(f'http://localhost:8081/vospace/pushToVoSpace/{job_id}',
                                      '/tmp/datafile.dat', expected_status=400)
 
-            await self.get_job_details(job_id)
-
             # Get transfer details, should be in invalid state because its not Executing
             await self.get_transfer_details(job_id, expected_status=400)
-
-            #await self.delete('http://localhost:8080/vospace/nodes/datanode')
-
             await self.change_job_state(job_id)
-
             await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
-
-            # Check results
-            response = await self.get_job_details(job_id)
 
             # Get transferDetails
             response = await self.get_transfer_details(job_id, expected_status=200)
@@ -130,10 +136,123 @@ class TestPushPull(TestBase):
             await self.push_to_space('http://localhost:8081/vospace/pushToVoSpace/1324a40b-4c6a-453b-a756-cd41ca4b7408',
                                      '/tmp/datafile.dat', expected_status=404)
 
-            #await self.delete('http://localhost:8080/vospace/nodes/datanode')
+            tasks = [
+                asyncio.ensure_future(self.push_to_space_defer_error(end.text, '/tmp/datafile.dat')),
+                asyncio.ensure_future(self.push_to_space_defer_error(end.text, '/tmp/datafile.dat'))
+            ]
 
-            # node should not be found
-            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=200)
+            result = []
+            finished, unfinished = await asyncio.wait(tasks)
+            self.assertEqual(len(finished), 2)
+            for i in finished:
+                result.append((await i)[0])
+
+            self.assertIn(200, result)
+            self.assertIn(400, result)
+
+        self.loop.run_until_complete(run())
+
+    def test_push_to_space_async_error(self):
+        async def run():
+            # can not push data to container node
+            node1 = ContainerNode('/datanode')
+            await self.create_node(node1)
+
+            push = PushToSpace(node1, [HTTPPut()])
+            response = await self.transfer_node(push)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id)
+            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
+            response = await self.get_transfer_details(job_id, expected_status=200)
+
+            root = ET.fromstring(response)
+            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=400)
+
+            await self.delete('http://localhost:8080/vospace/nodes/datanode')
+
+            # can not push data to linknode
+            node1 = LinkNode('/datanode', 'http://google.com')
+            await self.create_node(node1)
+
+            push = PushToSpace(node1, [HTTPPut()])
+            response = await self.transfer_node(push)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id)
+            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='ERROR')
+
+            await self.delete('http://localhost:8080/vospace/nodes/datanode')
+
+            # delete node before job execute
+            node1 = Node('/datanode')
+            await self.create_node(node1)
+
+            push = PushToSpace(node1, [HTTPPut()])
+            response = await self.transfer_node(push)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id)
+            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
+            await self.delete('http://localhost:8080/vospace/nodes/datanode')
+
+            response = await self.get_transfer_details(job_id, expected_status=200)
+
+            root = ET.fromstring(response)
+            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=404)
+
+        self.loop.run_until_complete(run())
+
+    def test_push_to_space_concurrent(self):
+        async def run():
+            node1 = ContainerNode('/datanode')
+            await self.create_node(node1)
+
+            node1 = ContainerNode('/datanode/datanode1')
+            await self.create_node(node1)
+
+            node1 = Node('/datanode/datanode1/datanode2')
+            await self.create_node(node1)
+
+            node = Node('/datanode/datanode1/datanode2')
+            push = PushToSpace(node, [HTTPPut()])
+
+            response = await self.transfer_node(push)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id)
+            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
+            response = await self.get_transfer_details(job_id, expected_status=200)
+
+            root = ET.fromstring(response)
+            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            end1 = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+
+            # start job to upload to same node
+            response = await self.transfer_node(push)
+            job_id = self.get_job_id(response)
+            await self.change_job_state(job_id)
+            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
+            response = await self.get_transfer_details(job_id, expected_status=200)
+
+            root = ET.fromstring(response)
+            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
+            end2 = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+
+            # concurrent upload
+            tasks = [
+                asyncio.ensure_future(self.push_to_space_defer_error(end1.text, '/tmp/datafile.dat')),
+                asyncio.ensure_future(self.push_to_space_defer_error(end2.text, '/tmp/datafile.dat'))
+            ]
+
+            result = []
+            finished, unfinished = await asyncio.wait(tasks)
+            self.assertEqual(len(finished), 2)
+            for i in finished:
+                result.append((await i)[0])
+
+            self.assertIn(200, result)
+            self.assertIn(400, result)
 
 
         self.loop.run_until_complete(run())
