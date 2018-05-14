@@ -14,6 +14,7 @@ class TestCopyMove(TestBase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data0'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data1'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data2'))
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data3'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/test1'))
 
         super().tearDown()
@@ -126,6 +127,28 @@ class TestCopyMove(TestBase):
             node = Node.fromstring(response)
             orig_node = ContainerNode('/root1')
             self.assertEqual(node, orig_node)
+
+        self.loop.run_until_complete(run())
+
+    def test_move_to_existing_child_node(self):
+        async def run():
+            node1 = ContainerNode('/data1')
+            node3 = ContainerNode('/data3')
+            node12 = Node('/data1/data2')
+            node32 = Node('/data3/data2')
+
+            await self.create_node(node1)
+            await self.create_node(node3)
+            await self.create_node(node12)
+            await self.create_node(node32)
+
+            mv = Move(node12, node3)
+            response = await self.transfer_node(mv)
+            job_id = self.get_job_id(response)
+
+            await self.change_job_state(job_id, 'PHASE=RUN')
+            await self.poll_job(job_id, expected_status='ERROR')
+            await self.get_error_summary(job_id, error_contains='Duplicate')
 
         self.loop.run_until_complete(run())
 

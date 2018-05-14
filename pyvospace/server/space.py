@@ -8,8 +8,8 @@ from .exception import VOSpaceError, InvalidJobStateError
 from .node import create_node_request, delete_node, get_node_request, set_node_properties, \
     generate_protocol_response, generate_node_response
 from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
-    generate_uws_job_xml, PhaseLookup, UWSPhase
-from .transfer import create_transfer_job, modify_transfer_job_phase, get_transfer_details
+    generate_uws_job_xml, PhaseLookup, UWSPhase, create_uws_job
+from .transfer import modify_transfer_job_phase, get_transfer_details, perform_transfer_job
 from .base import VOSpaceBase
 
 
@@ -76,9 +76,9 @@ class SpaceServer(web.Application, VOSpaceBase):
 
     async def _setup(self):
         config = self['config']
-        self['host'] = config['Space']['host']
-        self['port'] = int(config['Space']['port'])
-        self['name'] = config['Space']['name']
+        self['space_host'] = config['Space']['host']
+        self['space_port'] = int(config['Space']['port'])
+        self['space_name'] = config['Space']['name']
         self['uri'] = config['Space']['uri']
         self['parameters'] = json.loads(config['Space']['parameters'])
         self['accepts_views'] = json.loads(config['Space']['accepts_views'])
@@ -88,9 +88,9 @@ class SpaceServer(web.Application, VOSpaceBase):
         self['db_pool'] = await asyncpg.create_pool(dsn=config['Space']['dsn'])
 
         space_id = await register_space(self['db_pool'],
-                                        self['name'],
-                                        self['host'],
-                                        self['port'],
+                                        self['space_name'],
+                                        self['space_host'],
+                                        self['space_port'],
                                         json.dumps(self['accepts_views']),
                                         json.dumps(self['provides_views']),
                                         json.dumps(self['accepts_protocols']),
@@ -190,9 +190,12 @@ class SpaceServer(web.Application, VOSpaceBase):
 
     async def _sync_transfer_node(self, request):
         try:
-            xml_text = await request.text()
-            id = await create_transfer_job(self, xml_text, UWSPhase.Executing)
-            return web.HTTPSeeOther(location=f'/vospace/transfers/{id}/results/transferDetails')
+            job_xml = await request.text()
+            space_job_id = await create_uws_job(self['db_pool'], self['space_id'],
+                                                job_xml, UWSPhase.Executing)
+            await perform_transfer_job(self, space_job_id, job_xml, sync=True)
+            return web.HTTPSeeOther(location=f'/vospace/transfers/{space_job_id.job_id}'
+                                             f'/results/transferDetails')
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
@@ -203,8 +206,9 @@ class SpaceServer(web.Application, VOSpaceBase):
     async def _transfer_node(self, request):
         try:
             xml_text = await request.text()
-            id = await create_transfer_job(self, xml_text)
-            return web.HTTPSeeOther(location=f'/vospace/transfers/{id}')
+            space_job_id = await create_uws_job(self['db_pool'], self['space_id'],
+                                                xml_text, UWSPhase.Pending)
+            return web.HTTPSeeOther(location=f'/vospace/transfers/{space_job_id.job_id}')
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
@@ -276,15 +280,18 @@ class SpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def get_storage_endpoints(self, conn, space_id, job_id, protocol, direction):
-        results = await conn.fetch("select storage.host, storage.port from storage "
-                                   "inner join space on space.name=storage.name "
-                                   "where space.id=$1", space_id)
-        if not results:
-            raise VOSpaceError(404, "No storage endpoints found.")
+    async def get_storage_endpoints(self, space_id, job_id, node_type, node_path, protocol, direction):
+        async with self['db_pool'].acquire() as conn:
+            async with conn.transaction():
+                results = await conn.fetch("select storage.id, storage.host, storage.port from storage "
+                                           "inner join space on space.name=storage.name "
+                                           "where space.id=$1", space_id)
 
+        storage_results = [dict(r) for r in results]
+        filtered = await self.filter_storage_endpoints(storage_results, node_type,
+                                                       node_path, protocol, direction)
         endpoints = []
-        for row in results:
+        for row in filtered:
             prot = 'http' if protocol.split('#')[1].startswith('http') else 'https'
             endpoints.append(f'{prot}://{row["host"]}:{row["port"]}/vospace/{direction}/{job_id}')
         return {'protocol': protocol, 'endpoints': endpoints}

@@ -73,7 +73,7 @@ async def _run_transfer_job(space_job_id, app, request, job, func):
             async with conn.transaction():
                 await _lock_transfer_node(conn, space_job_id.space_id,
                                           space_job_id.job_id, job['target'])
-                response = await func(app, conn, request, results)
+                response = await func(conn, request, results)
         return response
         # Ignore these errors i.e. don't set the job into error
     except (JobDoesNotExistError, InvalidJobStateError, NodeBusyError, InvalidJobError):
@@ -105,7 +105,7 @@ async def _get_node_and_set_to_busy(db_pool, space_id, job_id, job):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             node_result = await conn.fetchrow("select * from nodes "
-                                              "where path=$1 and space_id=$2 for update",
+                                              "where path=$1 and space_id=$2 for update nowait",
                                               job['target'], space_id)
 
             if not node_result:
@@ -122,12 +122,12 @@ async def _get_node_and_set_to_busy(db_pool, space_id, job_id, job):
                 await conn.fetchrow("update nodes set busy=true where path=$1 and space_id=$2",
                                     node_result['path'], space_id)
 
-            path = list(filter(None, node_result['path'].split('.')))
-            path_slash = '/'.join(path)
-            dict_results = dict(node_result)
-            dict_results['path'] = path_slash
-            dict_results.update(job)
-            return dict_results
+    path = list(filter(None, node_result['path'].split('.')))
+    path_slash = '/'.join(path)
+    dict_results = dict(node_result)
+    dict_results['path'] = path_slash
+    dict_results.update(job)
+    return dict_results
 
 
 async def _set_transfer_job_to_not_busy(db_pool, space_id, path):
@@ -173,8 +173,25 @@ async def modify_transfer_job_phase(app, job_id, uws_cmd):
                 exec.execute(run_job, key, app, job)
 
     elif phase == "PHASE=ABORT":
-        with suppress(asyncio.CancelledError):
-            await asyncio.shield(set_uws_phase_to_abort(db_pool, space_id, job_id))
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                job = await get_uws_job_conn(conn=conn, space_id=space_id,
+                                             job_id=job_id, for_update=True)
+
+                if job['phase'] in (UWSPhase.Completed, UWSPhase.Error):
+                    raise InvalidJobStateError("Invalid Request. "
+                                               "Can't cancel a job that is COMPLETED or in ERROR.")
+                # if its a move or copy operation
+                if job['direction'] not in ('pushToVoSpace', 'pullFromVoSpace'):
+                    # if the move or copy is being performed then do not abort
+                    # we dont want to abort because undoing a file copy/move is
+                    # difficult to do if the transaction fails
+                    if job['phase'] >= UWSPhase.Executing:
+                        raise InvalidJobStateError("Invalid Request. "
+                                                   "Can't abort a move/copy that is EXECUTING.")
+
+                with suppress(asyncio.CancelledError):
+                    await asyncio.shield(set_uws_phase_to_abort(conn, space_id, job_id))
 
         with suppress(asyncio.CancelledError):
             await asyncio.shield(exec.abort(UWSKey(space_id, job_id)))
@@ -183,37 +200,20 @@ async def modify_transfer_job_phase(app, job_id, uws_cmd):
 
 
 async def run_job(space_job_id, app, job):
-    async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
-            await perform_transfer_job(app=app, conn=conn, space_job_id=space_job_id,
-                                       job_xml=job['job_info'], phase=UWSPhase.Executing)
+    await perform_transfer_job(app=app, space_job_id=space_job_id, job_xml=job['job_info'])
 
 
-async def create_transfer_job(app, job_xml, phase=UWSPhase.Pending):
-    async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
-            space_job_id = await create_uws_job(app=app, conn=conn, job_info=job_xml, phase=phase)
-            # If the phase is Executing its assumes its a sync transfer, so run it now!
-            if phase == UWSPhase.Executing:
-                await perform_transfer_job(app=app, conn=conn, space_job_id=space_job_id,
-                                           job_xml=job_xml, phase=phase, sync=True)
-            return space_job_id.job_id
-
-
-async def perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync=False):
+async def perform_transfer_job(app, space_job_id, job_xml, sync=False):
     try:
-        try:
-            await _perform_transfer_job(app=app, conn=conn, space_job_id=space_job_id,
-                                         job_xml=job_xml, phase=phase, sync=sync)
-        except BaseException as f:
-            raise VOSpaceError(500, str(f))
+        await _perform_transfer_job(app=app, space_job_id=space_job_id, job_xml=job_xml, sync=sync)
     except VOSpaceError as e:
         await asyncio.shield(set_uws_phase_to_error(app['db_pool'], space_job_id.space_id,
                                                     space_job_id.job_id, e.error))
         raise e
 
 
-async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
+async def _perform_transfer_job(app, space_job_id, job_xml, sync):
+    db_pool = app['db_pool']
     try:
         root = ET.fromstring(job_xml)
 
@@ -267,43 +267,51 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
                 if node_view_uri is None:
                     raise VOSpaceError(400, "Invalid Argument. View uri not found.")
 
-            # get the node and its parent and lock it from being updated or deleted
-            node_results = await get_node(conn, target_path_norm, space_job_id.space_id)
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    # get the node and its parent and lock it from being updated or deleted
+                    node_results = await get_node(conn, target_path_norm, space_job_id.space_id)
 
-            if direction.text == 'pushToVoSpace':
-                node_type = NodeType.DataNode
-                node_type_text = NodeTextLookup[node_type]
+                    if direction.text == 'pushToVoSpace':
+                        if node_results:
+                            node_type = node_results['type']
+                            node_type_text = NodeTextLookup[node_type]
+                        else:
+                            node_type = NodeType.DataNode
+                            node_type_text = NodeTextLookup[node_type]
 
-                if node_results:
-                    node_type = node_results['type']
-                    node_type_text = NodeTextLookup[node_type]
+                        import_views = app['accepts_views'].get(node_type_text, [])
+                        if node_view_uri:
+                            if node_view_uri not in import_views:
+                                raise VOSpaceError(400, f"View Not Supported. "
+                                                        f"View {node_view_uri} not supported.")
 
-                import_views = app['accepts_views'].get(node_type_text, [])
-                if node_view_uri:
-                    if node_view_uri not in import_views:
-                        raise VOSpaceError(400, f"View Not Supported. View {node_view_uri} not supported.")
+                        # If there is no Node at the target URI, then the service SHALL
+                        # create a new Node using the uri and the default xsi:type for the space.
+                        if not node_results:
+                            await create_node(app=app,
+                                              conn=conn,
+                                              uri_path=target_path_norm,
+                                              node_type=node_type,
+                                              properties=None)
+                        else:
+                            # If a Node already exists at the target URI,
+                            # then the data SHALL be imported into the existing Node
+                            # and the Node properties SHALL be cleared unless the node is a ContainerNode.
+                            if node_results['type'] != NodeType.ContainerNode:
+                                await delete_properties(conn, target_path_norm, space_job_id.space_id)
 
-                # If there is no Node at the target URI, then the service SHALL
-                # create a new Node using the uri and the default xsi:type for the space.
-                if not node_results:
-                    await create_node(app=app,
-                                      conn=conn,
-                                      uri_path=target_path_norm,
-                                      node_type=node_type,
-                                      properties=None)
-                else:
-                    # If a Node already exists at the target URI,
-                    # then the data SHALL be imported into the existing Node
-                    # and the Node properties SHALL be cleared unless the node is a ContainerNode.
-                    if node_results['type'] != NodeType.ContainerNode:
-                        await delete_properties(conn, target_path_norm, space_job_id.space_id)
+                    else:
+                        if not node_results:
+                            raise VOSpaceError(404, f'Node Not Found. {target_path_norm} not found.')
 
-            else:
-                if not node_results:
-                    raise VOSpaceError(404, f'Node Not Found. {target_path_norm} not found.')
+                        node_type = node_results['type']
 
-            end_points = await app.get_storage_endpoints(conn, space_job_id.space_id,
-                                                         space_job_id.job_id, prot_uri,
+            end_points = await app.get_storage_endpoints(space_job_id.space_id,
+                                                         space_job_id.job_id,
+                                                         node_type,
+                                                         target_path_norm,
+                                                         prot_uri,
                                                          direction.text)
 
             xml_transfer = xml_transfer_details(target=target.text,
@@ -313,14 +321,16 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
             space_name = app['uri']
             attr_vals = []
             attr_vals.append('<uws:result id="transferDetails" '
-                             f'xlink:href="/vospace/transfers/{space_job_id.job_id}/results/transferDetails"/>')
+                             f'xlink:href="/vospace/transfers/{space_job_id.job_id}'
+                             f'/results/transferDetails"/>')
             attr_vals.append('<uws:result id="dataNode" '
                              f'xlink:href="vos://{space_name}!vospace/{target_path_norm}"/>')
             result = f"<uws:results>{''.join(attr_vals)}</uws:results>"
 
-            await update_uws_job(conn=conn, space_id=space_job_id.space_id, job_id=space_job_id.job_id,
-                                 target=target_path_norm, direction=direction_path_norm,
-                                 transfer=xml_transfer, result=result, phase=phase)
+            await update_uws_job(db_pool=db_pool, space_id=space_job_id.space_id,
+                                 job_id=space_job_id.job_id, target=target_path_norm,
+                                 direction=direction_path_norm, transfer=xml_transfer,
+                                 result=result, phase=UWSPhase.Executing)
         else:
             if sync is True:
                 raise VOSpaceError(403, "Permission Denied. Move/Copy denied.")
@@ -343,31 +353,34 @@ async def _perform_transfer_job(app, conn, space_job_id, job_xml, phase, sync):
             else:
                 raise VOSpaceError(500, "Unknown keepBytes value.")
 
-            await set_uws_phase_to_executing(app['db_pool'],
+            await set_uws_phase_to_executing(db_pool,
                                              space_job_id.space_id,
                                              space_job_id.job_id)
-            await _move_nodes(app=app,
-                              space_id=space_job_id.space_id,
-                              target_path=target_path_norm,
-                              direction_path=direction_path_norm,
-                              perform_copy=copy_node)
+
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(_move_nodes(app=app,
+                                                 space_id=space_job_id.space_id,
+                                                 target_path=target_path_norm,
+                                                 direction_path=direction_path_norm,
+                                                 perform_copy=copy_node))
+
             # need to shield because we have successfully compeleted
             # a potentially expensive operation
             with suppress(asyncio.CancelledError):
-                await asyncio.shield(set_uws_phase_to_completed(app['db_pool'],
+                await asyncio.shield(set_uws_phase_to_completed(db_pool,
                                                                 space_job_id.space_id,
                                                                 space_job_id.job_id))
 
     except VOSpaceError as f:
         raise f
 
-    except asyncpg.exceptions.UniqueViolationError as f:
+    except asyncpg.exceptions.UniqueViolationError:
         raise VOSpaceError(409, f"Duplicate Node. {target_path_norm} already exists.")
 
     except asyncpg.exceptions.ForeignKeyViolationError:
         raise VOSpaceError(404, f"Node Not Found. {target_path_norm} not found.")
 
-    except Exception as e:
+    except BaseException as e:
         raise VOSpaceError(500, str(e))
 
 
