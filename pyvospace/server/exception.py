@@ -35,3 +35,8 @@ class NodeBusyError(VOSpaceError):
 class ClosingError(VOSpaceError):
     def __init__(self):
         super().__init__(400, '')
+
+
+class PermissionDenied(VOSpaceError):
+    def __init__(self, error):
+        super().__init__(403, error)

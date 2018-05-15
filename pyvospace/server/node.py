@@ -8,14 +8,14 @@ from collections import namedtuple
 from xml.etree.ElementTree import ParseError
 from contextlib import suppress
 
-from .exception import VOSpaceError
+from .exception import VOSpaceError, PermissionDenied
 
 
-Create_Response = namedtuple('CreateResponse', 'node_name '
-                                               'node_type_text '
-                                               'node_busy '
-                                               'node_target '
-                                               'node_properties ')
+CreateResponse = namedtuple('CreateResponse', 'node_name '
+                                              'node_type_text '
+                                              'node_busy '
+                                              'node_target '
+                                              'node_properties ')
 
 Node_Type = namedtuple('NodeType', 'Node '
                                    'DataNode '
@@ -40,9 +40,6 @@ NodeTextLookup = {0: 'vos:Node',
 
 NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 
-Property = ['ivo://ivoa.net/vospace/core#description',
-            'ivo://ivoa.net/vospace/core#title']
-
 NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
 
 
@@ -62,12 +59,9 @@ def generate_property_xml(node_property):
 
     node_property_array = []
     for prop in node_property:
-        uri = prop['uri']
-        value = prop['value']
-        ro = prop['read_only']
-        node_property_array.append(f'<vos:property uri="{uri}" '
-                                   f'readOnly="{"true" if ro else "false"}">'
-                                   f'{value}</vos:property>')
+        node_property_array.append(f'<vos:property uri="{prop[0]}" '
+                                   f'readOnly="{"true" if prop[2] else "false"}">'
+                                   f'{prop[1]}</vos:property>')
     return ''.join(node_property_array)
 
 
@@ -287,17 +281,16 @@ async def create_node_request(app, xml_text, url_path):
             prop_uri = node_property.attrib.get('uri', None)
             if prop_uri is not None:
                 prop_uri = prop_uri.lower()
-                if prop_uri in Property:
-                    props.append({'uri': prop_uri,
-                                  'value': node_property.text,
-                                  'read_only': False})
+                if prop_uri in app['readonly_properties']:
+                    raise PermissionDenied(f'Permission Denied. uri: {prop_uri}.')
+                props.append([prop_uri, node_property.text, False])
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
             return await create_node(app, conn, uri_path_norm, node_type, props, node_target)
 
 
-async def create_node(app, conn, uri_path, node_type, properties, node_target=None):
+async def create_node(app, conn, uri_path, node_type, properties=None, node_target=None):
     space_id = app['space_id']
     try:
         node_type_text = NodeTextLookup.get(node_type, None)
@@ -324,9 +317,6 @@ async def create_node(app, conn, uri_path, node_type, properties, node_target=No
         path_parent_tree = '.'.join(path_parent)
         path_tree = '.'.join(path)
 
-        if properties:
-            properties_list = [list(p.values()) for p in properties]
-
         # get parent node and check if its valid to add node to it
         row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
                                   "FROM nodes WHERE path=$1 and space_id=$2 for update",
@@ -349,15 +339,15 @@ async def create_node(app, conn, uri_path, node_type, properties, node_target=No
         await app.create_storage_node(node_type, '/'.join(path))
 
         if properties:
-            for prop in properties_list:
+            for prop in properties:
                 prop.append(path_tree)
                 prop.append(space_id)
 
             await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
                                    "VALUES ($1, $2, $3, $4, $5)",
-                                   properties_list)
+                                   properties)
 
-        return Create_Response(node_name, node_type_text, False, node_target, properties)
+        return CreateResponse(node_name, node_type_text, False, node_target, properties)
 
     except ParseError as p:
         raise VOSpaceError(500, f"Internal Error. XML error: {str(p)}.")
@@ -412,15 +402,16 @@ async def set_node_properties(app, xml_text, url_path):
                                                     None)
                 if prop_uri is not None:
                     prop_uri = prop_uri.lower()
-                    if prop_uri in Property:
-                        if prop_nil == 'true':
-                            node_props_delete.append(prop_uri)
-                        else:
-                            node_props_insert.append([prop_uri,
-                                                      node_property.text,
-                                                      True,
-                                                      node_path_tree,
-                                                      space_id])
+                    if prop_uri in app['readonly_properties']:
+                        raise PermissionDenied(f'Permission Denied. uri: {prop_uri}.')
+                    if prop_nil == 'true':
+                        node_props_delete.append(prop_uri)
+                    else:
+                        node_props_insert.append([prop_uri,
+                                                  node_property.text,
+                                                  False,
+                                                  node_path_tree,
+                                                  space_id])
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
@@ -433,13 +424,14 @@ async def set_node_properties(app, xml_text, url_path):
                 # if a property already exists then update it, only if read_only = False
                 await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
                                        "VALUES ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
-                                       "do update set value=$2 where properties.read_only=False",
+                                       "do update set value=$2 where properties.read_only=False "
+                                       "and properties.value!=$2",
                                        node_props_insert)
 
                 # only delete properties where read_only=False
-                await conn.execute("DELETE FROM properties WHERE uri=any($1::text[]) "
-                                   "AND node_path=$2 and space_id=$3 and read_only=False",
-                                   node_props_delete, node_path_tree, space_id)
+                await conn.fetch("DELETE FROM properties WHERE uri=any($1::text[]) "
+                                 "AND node_path=$2 and space_id=$3 and read_only=False",
+                                 node_props_delete, node_path_tree, space_id)
 
                 properties_result = await conn.fetch("select * from properties "
                                                      "where node_path=$1 and space_id=$2",

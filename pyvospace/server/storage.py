@@ -8,6 +8,7 @@ from collections import namedtuple
 from .exception import VOSpaceError
 from .transfer import data_transfer_request
 from .uws import UWSJobExecutor
+from .base import AbstractStorage
 
 
 StorageRegister = namedtuple('StorageRegister', 'space_id storage_id')
@@ -27,7 +28,7 @@ async def register_storage(db_pool, name, host, port, parameters):
             return StorageRegister(int(space_result['id']), int(storage['id']))
 
 
-class SpaceStorageServer(web.Application):
+class SpaceStorageServer(web.Application, AbstractStorage):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -62,12 +63,6 @@ class SpaceStorageServer(web.Application):
         self['space_id'] = result.space_id
         self['storage_id'] = result.storage_id
         self['executor'] = UWSJobExecutor()
-
-    async def download(self, request):
-        raise NotImplementedError()
-
-    async def upload(self, request):
-        raise NotImplementedError()
 
     async def _upload_data(self, request):
         return await data_transfer_request(self, request, self.upload)

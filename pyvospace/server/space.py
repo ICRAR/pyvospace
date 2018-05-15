@@ -3,6 +3,7 @@ import configparser
 import json
 
 from aiohttp import web
+from aiohttp_security import has_permission
 
 from .exception import VOSpaceError, InvalidJobStateError
 from .node import create_node_request, delete_node, get_node_request, set_node_properties, \
@@ -10,11 +11,11 @@ from .node import create_node_request, delete_node, get_node_request, set_node_p
 from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
     generate_uws_job_xml, PhaseLookup, UWSPhase, create_uws_job
 from .transfer import modify_transfer_job_phase, get_transfer_details, perform_transfer_job
-from .base import VOSpaceBase
+from .base import AbstractSpace
 
 
 async def register_space(db_pool, name, host, port, accepts_views, provides_views,
-                         accepts_protocols, provides_protocols, parameters):
+                         accepts_protocols, provides_protocols, readonly_properties, parameters):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             result = await conn.fetchrow("select * from space where host=$1 and port=$2 for update",
@@ -28,17 +29,17 @@ async def register_space(db_pool, name, host, port, accepts_views, provides_view
                                             'space on the same host and port.')
 
             result = await conn.fetchrow("insert into space (host, port, name, accepts_views, provides_views, "
-                                         "accepts_protocols, provides_protocols, parameters) "
-                                         "values ($1, $2, $3, $4, $5, $6, $7, $8) on conflict (host, port) "
-                                         "do update set accepts_views=$4, provides_views=$5, "
-                                         "accepts_protocols=$6, provides_protocols=$7, parameters=$8 "
+                                         "accepts_protocols, provides_protocols, readonly_properties, parameters) "
+                                         "values ($1, $2, $3, $4, $5, $6, $7, $8, $9) on conflict (host, port) "
+                                         "do update set accepts_views=$4, provides_views=$5, accepts_protocols=$6, "
+                                         "provides_protocols=$7, readonly_properties=$8, parameters=$9 "
                                          "returning id",
                                          host, port, name, accepts_views, provides_views,
-                                         accepts_protocols, provides_protocols, parameters)
+                                         accepts_protocols, provides_protocols, readonly_properties, parameters)
             return int(result['id'])
 
 
-class SpaceServer(web.Application, VOSpaceBase):
+class SpaceServer(web.Application, AbstractSpace):
 
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -85,6 +86,7 @@ class SpaceServer(web.Application, VOSpaceBase):
         self['provides_views'] = json.loads(config['Space']['provides_views'])
         self['accepts_protocols'] = json.loads(config['Space']['accepts_protocols'])
         self['provides_protocols'] = json.loads(config['Space']['provides_protocols'])
+        self['readonly_properties'] = json.loads(config['Space']['readonly_properties'])
         self['db_pool'] = await asyncpg.create_pool(dsn=config['Space']['dsn'])
 
         space_id = await register_space(self['db_pool'],
@@ -95,6 +97,7 @@ class SpaceServer(web.Application, VOSpaceBase):
                                         json.dumps(self['provides_views']),
                                         json.dumps(self['accepts_protocols']),
                                         json.dumps(self['provides_protocols']),
+                                        json.dumps(self['readonly_properties']),
                                         json.dumps(self['parameters']))
 
         self['space_id'] = space_id
@@ -136,6 +139,7 @@ class SpaceServer(web.Application, VOSpaceBase):
         except Exception as g:
             return web.Response(status=500, text=str(g))
 
+    #@has_permission('getNode')
     async def _get_node(self, request):
         try:
             url_path = request.path.replace('/vospace/nodes', '')
@@ -280,7 +284,7 @@ class SpaceServer(web.Application, VOSpaceBase):
         except Exception as e:
             return web.Response(status=500)
 
-    async def get_storage_endpoints(self, space_id, job_id, node_type, node_path, protocol, direction):
+    async def _get_storage_endpoints(self, space_id, job_id, node_type, node_path, protocol, direction):
         async with self['db_pool'].acquire() as conn:
             async with conn.transaction():
                 results = await conn.fetch("select storage.id, storage.host, storage.port from storage "
