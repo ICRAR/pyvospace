@@ -266,10 +266,10 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
                     if direction.text == 'pushToVoSpace':
                         if node_results:
                             node_type = node_results['type']
-                            node_type_text = NodeTextLookup[node_type]
                         else:
                             node_type = NodeType.DataNode
-                            node_type_text = NodeTextLookup[node_type]
+
+                        node_type_text = NodeTextLookup[node_type]
 
                         import_views = app['accepts_views'].get(node_type_text, [])
                         if node_view_uri:
@@ -283,8 +283,7 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
                             await create_node(app=app,
                                               conn=conn,
                                               uri_path=target_path_norm,
-                                              node_type=node_type,
-                                              properties=None)
+                                              node_type=node_type)
                         else:
                             # If a Node already exists at the target URI,
                             # then the data SHALL be imported into the existing Node
@@ -304,12 +303,12 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
             if node_type == NodeType.LinkNode:
                 raise VOSpaceError(400, 'Operation Not Supported. No data transfer for a LinkNode.')
 
-            end_points = await app.get_storage_endpoints(space_job_id.space_id,
-                                                         space_job_id.job_id,
-                                                         node_type,
-                                                         target_path_norm,
-                                                         prot_uri,
-                                                         direction.text)
+            end_points = await app._get_storage_endpoints(space_job_id.space_id,
+                                                          space_job_id.job_id,
+                                                          node_type,
+                                                          target_path_norm,
+                                                          prot_uri,
+                                                          direction.text)
 
             xml_transfer = xml_transfer_details(target=target.text,
                                                 direction=direction.text,
