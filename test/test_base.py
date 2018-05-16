@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 from aiohttp import web
 
-from pyvospace.server.spaces.posix import PosixServer
+from pyvospace.server.spaces.posix import PosixSpaceServer, PosixSpace
 from pyvospace.core.model import Node
 
 
@@ -76,7 +76,7 @@ class TestBase(unittest.TestCase):
             with open(self.config_filename, 'w') as conf:
                 config.write(conf)
 
-        self.app = self.loop.run_until_complete(PosixServer.create(self.config_filename))
+        self.app = self.loop.run_until_complete(PosixSpaceServer.create(self.config_filename))
         self.runner = web.AppRunner(self.app)
         self.loop.run_until_complete(self.runner.setup())
         site = web.TCPSite(self.runner, 'localhost', 8080,
