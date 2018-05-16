@@ -5,17 +5,13 @@ import lxml.etree as ET
 
 from contextlib import suppress
 from urllib.parse import urlparse
-from aiohttp import web
 
 
 from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
-    get_uws_job, get_uws_job_conn, create_uws_job, UWSPhase, \
-    update_uws_job, set_uws_phase_to_error, UWSKey, \
-    set_uws_phase_to_abort
-from .node import NS, NodeType, create_node, NodeTextLookup, \
-    delete_properties, get_node
-from .exception import VOSpaceError, NodeDoesNotExistError, InvalidJobError, \
-    InvalidJobStateError, NodeBusyError
+    get_uws_job, get_uws_job_conn, UWSPhase, update_uws_job, \
+    set_uws_phase_to_error, UWSKey, set_uws_phase_to_abort
+from .node import NS, NodeType, create_node, NodeTextLookup, delete_properties, get_node
+from .exception import VOSpaceError, InvalidJobStateError
 
 
 def xml_transfer_details(target, direction, protocol_endpoints):
@@ -45,99 +41,6 @@ async def get_transfer_details(db_pool, space_id, job_id):
         raise VOSpaceError(400, f'No transferDetails for this job. Job: {job_id}')
 
     return job['transfer']
-
-
-async def data_transfer_request(app, request, func):
-    space_id = app['space_id']
-    job_id = request.match_info.get('job_id', None)
-    direction = request.match_info.get('direction', None)
-    key = UWSKey(space_id, job_id)
-
-    try:
-        async with app['db_pool'].acquire() as conn:
-            async with conn.transaction():
-                job = await get_uws_job_conn(conn=conn, space_id=space_id, job_id=job_id, for_update=True)
-
-                # Can only start a EXECUTING Job
-                if job['phase'] != UWSPhase.Executing:
-                    raise InvalidJobStateError('Invalid Job State. Job not EXECUTING.')
-
-                if job['direction'] != direction:
-                    raise InvalidJobError('Direction does not match request.')
-
-                fut = app['executor'].execute(_run_transfer_job, key, app, request, job, func)
-        return await fut
-
-    except VOSpaceError as e:
-        return web.Response(status=e.code, text=e.error)
-    except asyncio.CancelledError:
-        return web.Response(status=500, text="Cancelled")
-    except Exception as g:
-        return web.Response(status=500, text=str(g))
-
-
-async def _run_transfer_job(space_job_id, app, request, job, func):
-    db_pool = app['db_pool']
-
-    try:
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                results = await _lock_transfer_node(conn, space_job_id.space_id,
-                                                    space_job_id.job_id, job['direction'])
-                if job['direction'] == 'pushToVoSpace':
-                    setattr(request, 'vo_transaction', conn)
-                setattr(request, 'vo_job', results)
-                response = await func(request)
-
-        with suppress(asyncio.CancelledError):
-            await asyncio.shield(set_uws_phase_to_completed(db_pool, space_job_id.space_id,
-                                                            space_job_id.job_id))
-        return response
-    # Ignore these errors i.e. don't set the job into error
-    except NodeBusyError:
-        raise
-    # If the node has been deleted at some point then set the job into error
-    except NodeDoesNotExistError as e:
-        with suppress(asyncio.CancelledError):
-            await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
-                                                        space_job_id.job_id, str(e)))
-        raise e
-
-    except asyncio.CancelledError:
-        with suppress(asyncio.CancelledError):
-            await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
-                                                        space_job_id.job_id, "Job Cancelled"))
-        raise
-
-    except Exception as f:
-        with suppress(asyncio.CancelledError):
-            await asyncio.shield(set_uws_phase_to_error(db_pool, space_job_id.space_id,
-                                                        space_job_id.job_id, str(f)))
-        raise VOSpaceError(500, str(f))
-
-
-async def _lock_transfer_node(conn, space_id, job_id, direction):
-    # Row lock the node so updates/deletes can not occur for duration of upload/download
-    try:
-        if direction == 'pushToVoSpace':
-            node_result = await conn.fetchrow("select * from nodes left join uws_jobs "
-                                              "on uws_jobs.target = nodes.path and target_id = nodes.space_id "
-                                              "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
-                                              "for update of nodes nowait",
-                                              job_id, space_id)
-        else:
-            node_result = await conn.fetchrow("select * from nodes left join uws_jobs "
-                                              "on uws_jobs.target = nodes.path and target_id = nodes.space_id "
-                                              "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
-                                              "for share of nodes nowait",
-                                              job_id, space_id)
-
-        if not node_result:
-            raise NodeDoesNotExistError(f"Target node for job does not exist.")
-
-        return node_result
-    except asyncpg.exceptions.LockNotAvailableError:
-        raise NodeBusyError("Node Busy.")
 
 
 async def modify_transfer_job_phase(app, job_id, uws_cmd):
@@ -201,6 +104,23 @@ async def perform_transfer_job(app, space_job_id, job_xml, sync=False):
         await asyncio.shield(set_uws_phase_to_error(app['db_pool'], space_job_id.space_id,
                                                     space_job_id.job_id, e.error))
         raise e
+
+
+async def _get_storage_endpoints(app, space_id, job_id, node_type, node_path, protocol, direction):
+    async with app['db_pool'].acquire() as conn:
+        async with conn.transaction():
+            results = await conn.fetch("select storage.id, storage.host, storage.port from storage "
+                                       "inner join space on space.name=storage.name "
+                                       "where space.id=$1", space_id)
+
+    storage_results = [dict(r) for r in results]
+    filtered = await app['abstract_space'].filter_storage_endpoints(app, storage_results, node_type,
+                                                                    node_path, protocol, direction)
+    endpoints = []
+    for row in filtered:
+        prot = 'http' if protocol.split('#')[1].startswith('http') else 'https'
+        endpoints.append(f'{prot}://{row["host"]}:{row["port"]}/vospace/{direction}/{job_id}')
+    return {'protocol': protocol, 'endpoints': endpoints}
 
 
 async def _perform_transfer_job(app, space_job_id, job_xml, sync):
@@ -303,12 +223,13 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
             if node_type == NodeType.LinkNode:
                 raise VOSpaceError(400, 'Operation Not Supported. No data transfer for a LinkNode.')
 
-            end_points = await app._get_storage_endpoints(space_job_id.space_id,
-                                                          space_job_id.job_id,
-                                                          node_type,
-                                                          target_path_norm,
-                                                          prot_uri,
-                                                          direction.text)
+            end_points = await _get_storage_endpoints(app,
+                                                      space_job_id.space_id,
+                                                      space_job_id.job_id,
+                                                      node_type,
+                                                      target_path_norm,
+                                                      prot_uri,
+                                                      direction.text)
 
             xml_transfer = xml_transfer_details(target=target.text,
                                                 direction=direction.text,
@@ -447,7 +368,8 @@ async def _move_nodes(app, space_id, target_path, direction_path, perform_copy):
                                            "VALUES ($1, $2, $3, $4, $5)",
                                            user_props_insert)
 
-                    await app.copy_storage_node(target_record['type'], src, dest_record['type'], dest)
+                    await app['abstract_space'].copy_storage_node(app, target_record['type'], src,
+                                                                  dest_record['type'], dest)
 
                 else:
                     await conn.execute("update nodes set path = $2 || subpath(path, nlevel($1)-1) "
@@ -456,7 +378,8 @@ async def _move_nodes(app, space_id, target_path, direction_path, perform_copy):
                                        destination_path_tree,
                                        space_id)
 
-                    await app.move_storage_node(target_record['type'], src, dest_record['type'], dest)
+                    await app['abstract_space'].move_storage_node(app, target_record['type'], src,
+                                                                  dest_record['type'], dest)
 
 
     except asyncpg.exceptions.UniqueViolationError as f:

@@ -155,7 +155,7 @@ async def get_node(conn, path, space_id):
     return None
 
 
-async def get_node_request(app, path, params):
+async def _get_node_request(app, path, params):
 
     detail = params.get('detail', 'max')
     if detail:
@@ -239,10 +239,10 @@ async def delete_node(app, path):
                 raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
             with suppress(OSError):
-                await app.delete_storage_node(result[0]['type'], '/'.join(path_array))
+                await app['abstract_space'].delete_storage_node(app, result[0]['type'], '/'.join(path_array))
 
 
-async def create_node_request(app, xml_text, url_path):
+async def _create_node_request(app, xml_text, url_path):
     root = ET.fromstring(xml_text)
     uri_xml = root.attrib.get('uri', None)
 
@@ -336,7 +336,7 @@ async def create_node(app, conn, uri_path, node_type, properties=None, node_targ
                              node_type, node_name, path_tree, space_id, node_target)
 
         # call the specific provider, opportunity to get properties
-        await app.create_storage_node(node_type, '/'.join(path))
+        await app['abstract_space'].create_storage_node(app, node_type, '/'.join(path))
 
         if properties:
             for prop in properties:
