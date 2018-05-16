@@ -14,7 +14,7 @@ from .exception import VOSpaceError, PermissionDenied
 CreateResponse = namedtuple('CreateResponse', 'node_name '
                                               'node_type_text '
                                               'node_busy '
-                                              'node_target '
+                                              'node_link '
                                               'node_properties ')
 
 Node_Type = namedtuple('NodeType', 'Node '
@@ -198,7 +198,7 @@ async def _get_node_request(app, path, params):
                 properties = await conn.fetch("select * from properties "
                                               "where node_path=$1 and space_id=$2",
                                               results[0]['path'], app['space_id'])
-    target = results[0]['target']
+    target = results[0]['link']
     busy = results[0]['busy']
     node_type_int = results[0]['type']
     node_type = NodeTextLookup[node_type_int]
@@ -332,7 +332,7 @@ async def create_node(app, conn, uri_path, node_type, properties=None, node_targ
             if row['type'] != NodeType.ContainerNode:
                 raise VOSpaceError(404, f"Container Not Found. {row['name']} is not a container.")
 
-        await conn.fetchrow("INSERT INTO nodes (type, name, path, space_id, target) VALUES ($1, $2, $3, $4, $5)",
+        await conn.fetchrow("INSERT INTO nodes (type, name, path, space_id, link) VALUES ($1, $2, $3, $4, $5)",
                              node_type, node_name, path_tree, space_id, node_target)
 
         # call the specific provider, opportunity to get properties
@@ -442,7 +442,7 @@ async def set_node_properties(app, xml_text, url_path):
                                               node_type=NodeTextLookup[node_type],
                                               node_busy=results['busy'],
                                               node_property=properties_result,
-                                              node_target=results['target'])
+                                              node_target=results['link'])
         return xml_response
 
     except ParseError as p:

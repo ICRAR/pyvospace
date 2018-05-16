@@ -46,13 +46,12 @@ class AbstractSpace(metaclass=ABCMeta):
 
 
 class SpaceServer(web.Application):
-    def __init__(self, abstract_space, cfg_file, *args, **kwargs):
+    def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         config = configparser.ConfigParser()
         config.read(cfg_file)
-        self['config'] = config
-        self['abstract_space'] = abstract_space
+        self.config = config
 
         self.router.add_get('/vospace/protocols',
                             self._get_protocols)
@@ -81,19 +80,19 @@ class SpaceServer(web.Application):
 
         self.on_shutdown.append(self.shutdown)
 
-    async def setup(self):
-        config = self['config']
-        self['space_host'] = config['Space']['host']
-        self['space_port'] = int(config['Space']['port'])
-        self['space_name'] = config['Space']['name']
-        self['uri'] = config['Space']['uri']
-        self['parameters'] = json.loads(config['Space']['parameters'])
-        self['accepts_views'] = json.loads(config['Space']['accepts_views'])
-        self['provides_views'] = json.loads(config['Space']['provides_views'])
-        self['accepts_protocols'] = json.loads(config['Space']['accepts_protocols'])
-        self['provides_protocols'] = json.loads(config['Space']['provides_protocols'])
-        self['readonly_properties'] = json.loads(config['Space']['readonly_properties'])
-        self['db_pool'] = await asyncpg.create_pool(dsn=config['Space']['dsn'])
+    async def setup(self, abstract_space):
+        self['abstract_space'] = abstract_space
+        self['space_host'] = self.config['Space']['host']
+        self['space_port'] = int(self.config['Space']['port'])
+        self['space_name'] = self.config['Space']['name']
+        self['uri'] = self.config['Space']['uri']
+        self['parameters'] = json.loads(self.config['Space']['parameters'])
+        self['accepts_views'] = json.loads(self.config['Space']['accepts_views'])
+        self['provides_views'] = json.loads(self.config['Space']['provides_views'])
+        self['accepts_protocols'] = json.loads(self.config['Space']['accepts_protocols'])
+        self['provides_protocols'] = json.loads(self.config['Space']['provides_protocols'])
+        self['readonly_properties'] = json.loads(self.config['Space']['readonly_properties'])
+        self['db_pool'] = await asyncpg.create_pool(dsn=self.config['Space']['dsn'])
 
         space_id = await self._register_space(self['db_pool'],
                                               self['space_name'],
@@ -198,7 +197,7 @@ class SpaceServer(web.Application):
                                                   node_busy=response.node_busy,
                                                   node_property=response.node_properties,
                                                   node_accepts_views=accepts_views,
-                                                  node_target=response.node_target)
+                                                  node_target=response.node_link)
 
             return web.Response(status=201,
                                 content_type='text/xml',
