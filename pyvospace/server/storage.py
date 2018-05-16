@@ -7,6 +7,7 @@ import configparser
 from abc import ABCMeta, abstractmethod
 from aiohttp import web
 from contextlib import suppress
+from collections import namedtuple
 
 from .uws import set_uws_phase_to_completed, get_uws_job_conn, \
     UWSPhase, set_uws_phase_to_error, UWSKey, UWSJobExecutor
@@ -102,9 +103,9 @@ class AbstractServerStorage(metaclass=ABCMeta):
                 async with conn.transaction():
                     results = await self._lock_transfer_node(conn, space_job_id.space_id,
                                                              space_job_id.job_id, job['direction'])
-                    if job['direction'] == 'pushToVoSpace':
-                        setattr(request, 'vo_transaction', conn)
-                    setattr(request, 'vo_job', results)
+                    if results.direction == 'pushToVoSpace':
+                        setattr(request, 'transaction', conn)
+                    setattr(request, 'job', results)
                     response = await func(request)
 
             with suppress(asyncio.CancelledError):
@@ -137,13 +138,15 @@ class AbstractServerStorage(metaclass=ABCMeta):
         # Row lock the node so updates/deletes can not occur for duration of upload/download
         try:
             if direction == 'pushToVoSpace':
-                node_result = await conn.fetchrow("select * from nodes left join uws_jobs "
-                                                  "on uws_jobs.target = nodes.path and target_id = nodes.space_id "
+                node_result = await conn.fetchrow("select nodes.type, nodes.name, nodes.path, uws_jobs.job_info, "
+                                                  "uws_jobs.direction from nodes left join uws_jobs on "
+                                                  "uws_jobs.target = nodes.path and target_id = nodes.space_id "
                                                   "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
                                                   "for update of nodes nowait",
                                                   job_id, space_id)
             else:
-                node_result = await conn.fetchrow("select * from nodes left join uws_jobs "
+                node_result = await conn.fetchrow("select nodes.type, nodes.name, nodes.path, uws_jobs.job_info, "
+                                                  "uws_jobs.direction from nodes left join uws_jobs "
                                                   "on uws_jobs.target = nodes.path and target_id = nodes.space_id "
                                                   "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
                                                   "for share of nodes nowait",
@@ -152,6 +155,10 @@ class AbstractServerStorage(metaclass=ABCMeta):
             if not node_result:
                 raise NodeDoesNotExistError(f"Target node for job does not exist.")
 
-            return node_result
+            node_result = dict(node_result)
+            node_result['path'] = f"/{node_result['path'].replace('.', '/')}"
+            node = namedtuple('node', node_result.keys())(**node_result)
+            return node
+
         except asyncpg.exceptions.LockNotAvailableError:
             raise NodeBusyError("Node Busy.")

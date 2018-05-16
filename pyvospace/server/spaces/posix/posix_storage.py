@@ -29,18 +29,18 @@ class PosixStorage(AbstractServerStorage):
 
     async def download(self, request):
         root_dir = self.root_dir
-        path_tree = request.vo_job['path']
+        path_tree = request.job.path
         file_path = f'{root_dir}/{path_tree}'
-        return await send_file(request, request.vo_job['name'], file_path)
+        return await send_file(request, request.job.name, file_path)
 
     async def upload(self, request):
         reader = request.content
 
         # This implementation wont accept container node data
-        if request.vo_job['type'] == NodeType.ContainerNode:
+        if request.job.type == NodeType.ContainerNode:
             return web.Response(status=400, text='Unable to upload data to a container.')
 
-        path_tree = request.vo_job['path']
+        path_tree = request.job.path
         file_name = f'{self.root_dir}/{path_tree}'
 
         try:

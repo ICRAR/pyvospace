@@ -64,11 +64,11 @@ class PosixSpace(AbstractSpace):
 
 class PosixSpaceServer(SpaceServer):
     def __init__(self, cfg_file, *args, **kwargs):
+        super().__init__(cfg_file, *args, **kwargs)
         self.space = PosixSpace(cfg_file)
-        super().__init__(self.space, cfg_file, *args, **kwargs)
 
     async def setup(self):
-        await super().setup()
+        await super().setup(self.space)
         await self.space.setup()
 
     async def shutdown(self):
