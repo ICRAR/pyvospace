@@ -2,6 +2,31 @@ import os
 import xml.etree.ElementTree as ET
 
 from urllib.parse import urlparse
+from collections import namedtuple
+
+
+Node_Type = namedtuple('NodeType', 'Node '
+                                   'DataNode '
+                                   'UnstructuredDataNode  '
+                                   'StructuredDataNode '
+                                   'ContainerNode '
+                                   'LinkNode')
+
+NodeLookup = {'vos:Node': 0,
+              'vos:DataNode': 1,
+              'vos:UnstructuredDataNode': 2,
+              'vos:StructuredDataNode': 3,
+              'vos:ContainerNode': 4,
+              'vos:LinkNode': 5}
+
+NodeTextLookup = {0: 'vos:Node',
+                  1: 'vos:DataNode',
+                  2: 'vos:UnstructuredDataNode',
+                  3: 'vos:StructuredDataNode',
+                  4: 'vos:ContainerNode',
+                  5: 'vos:LinkNode'}
+
+NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 
 
 class Property(object):
@@ -26,6 +51,9 @@ class Property(object):
             ro_test = 'true'
 
         return f'readOnly="{ro_test}"'
+
+    def tolist(self):
+        return [self.uri, self.value, self.read_only]
 
     def tostring(self):
         return f'<vos:property uri="{self.uri}" ' \
@@ -105,7 +133,7 @@ class Node(object):
                  node_type='vos:Node',
                  node_uri_target=None):
 
-        self.node_type = node_type
+        self.node_type_text = node_type
         self.node_uri_target = node_uri_target
         self.path = os.path.normpath(path).strip('.').lstrip('/')
         self.properties = properties
@@ -119,8 +147,12 @@ class Node(object):
             return False
 
         return self.path == other.path and \
-               self.node_type == other.node_type and \
+               self.node_type_text == other.node_type_text and \
                self._properties == other._properties
+
+    @property
+    def node_type(self):
+        return NodeType.Node
 
     def _build_node(self, root):
         for properties in root.findall('vos:properties', Node.NS):
@@ -145,7 +177,7 @@ class Node(object):
         self._properties.sort(key=lambda x: x.uri)
 
     @classmethod
-    def _create_node(cls, node_uri, node_type, node_busy):
+    def _create_node(cls, node_uri, node_type, node_busy=False):
         if node_uri is None:
             raise Exception("Node URI does not exist.")
 
@@ -225,7 +257,7 @@ class Node(object):
         create_node_xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
                           f' xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
                           f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
-                          f' xsi:type="{self.node_type}" uri="{self.to_uri()}" {busy}>' \
+                          f' xsi:type="{self.node_type_text}" uri="{self.to_uri()}" {busy}>' \
                           f'{target}' \
                           f'<vos:properties>{self._properties_tostring()}</vos:properties>' \
                           f'<vos:accepts/><vos:provides/>' \
@@ -248,6 +280,10 @@ class LinkNode(Node):
     @property
     def target(self):
         return self.node_uri_target
+
+    @property
+    def node_type(self):
+        return NodeType.LinkNode
 
     def __eq__(self, other):
         if not isinstance(other, LinkNode):
@@ -288,6 +324,10 @@ class DataNode(Node):
             return False
 
         return super().__eq__(other)
+
+    @property
+    def node_type(self):
+        return NodeType.DataNode
 
     def _build_node(self, root):
         super()._build_node(root)
@@ -362,6 +402,10 @@ class ContainerNode(DataNode):
 
         return super().__eq__(other) and self._nodes == other._nodes
 
+    @property
+    def node_type(self):
+        return NodeType.ContainerNode
+
     def _sort_nodes(self):
         self._nodes.sort(key=lambda x: x.path)
 
@@ -423,6 +467,10 @@ class UnstructuredDataNode(DataNode):
 
         return super().__eq__(other)
 
+    @property
+    def node_type(self):
+        return NodeType.UnstructuredDataNode
+
     def _build_node(self, root):
         super()._build_node(root)
 
@@ -449,6 +497,10 @@ class StructuredDataNode(DataNode):
             return False
 
         return super().__eq__(other)
+
+    @property
+    def node_type(self):
+        return NodeType.StructuredDataNode
 
     def _build_node(self, root):
         super()._build_node(root)

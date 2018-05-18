@@ -102,6 +102,12 @@ class TestBase(unittest.TestCase):
                 yield chunk
                 chunk = await f.read(64 * 1024)
 
+    async def login(self, username, password):
+        session = aiohttp.ClientSession(auth=aiohttp.BasicAuth(username, password))
+        async with session.post(f'http://localhost:8080/login') as resp:
+            print(resp.status, await resp.text())
+        return session
+
     async def post(self, url, **kwargs):
         async with aiohttp.ClientSession() as session:
             async with session.post(url, **kwargs) as resp:

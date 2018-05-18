@@ -1,14 +1,17 @@
 import os
 import asyncpg
+import xmltodict
 
 import lxml.etree as ET
 
+from aiohttp_security import permits, authorized_userid
 from urllib.parse import urlparse
 from collections import namedtuple
 from xml.etree.ElementTree import ParseError
 from contextlib import suppress
 
 from .exception import VOSpaceError, PermissionDenied
+from pyvospace.core.model import Property, Node, NodeType, NodeTextLookup, NodeLookup
 
 
 CreateResponse = namedtuple('CreateResponse', 'node_name '
@@ -17,31 +20,9 @@ CreateResponse = namedtuple('CreateResponse', 'node_name '
                                               'node_link '
                                               'node_properties ')
 
-Node_Type = namedtuple('NodeType', 'Node '
-                                   'DataNode '
-                                   'UnstructuredDataNode  '
-                                   'StructuredDataNode '
-                                   'ContainerNode '
-                                   'LinkNode')
-
-NodeLookup = {'vos:Node': 0,
-              'vos:DataNode': 1,
-              'vos:UnstructuredDataNode': 2,
-              'vos:StructuredDataNode': 3,
-              'vos:ContainerNode': 4,
-              'vos:LinkNode': 5}
-
-NodeTextLookup = {0: 'vos:Node',
-                  1: 'vos:DataNode',
-                  2: 'vos:UnstructuredDataNode',
-                  3: 'vos:StructuredDataNode',
-                  4: 'vos:ContainerNode',
-                  5: 'vos:LinkNode'}
-
-NodeType = Node_Type(0, 1, 2, 3, 4, 5)
-
 NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
-
+namespaces = {'http://www.ivoa.net/xml/VOSpace/v2.1': 'vos',
+              'http://www.w3.org/2001/XMLSchema-instance': 'xs'}
 
 def generate_view_xml(node_views):
     if not node_views:
@@ -239,58 +220,75 @@ async def delete_node(app, path):
                 raise VOSpaceError(404, f"Node Not Found. {path} not found.")
 
             with suppress(OSError):
-                await app['abstract_space'].delete_storage_node(app, result[0]['type'], '/'.join(path_array))
+                await app['abstract_space'].delete_storage_node(result[0]['type'], '/'.join(path_array))
 
 
-async def _create_node_request(app, xml_text, url_path):
-    root = ET.fromstring(xml_text)
-    uri_xml = root.attrib.get('uri', None)
+def uri_to_path(uri):
+    uri_parsed = urlparse(uri)
 
-    uri_path_xml = urlparse(uri_xml)
-
-    if not uri_path_xml.path:
+    if not uri_parsed.path:
         raise VOSpaceError(400, "Invalid URI. URI does not exist.")
 
-    # make sure the request path and the URL are the same
-    # exclude '.' characters as they are used in ltree
-    if '.' in uri_path_xml.path:
+    if '.' in uri_parsed.path:
         raise VOSpaceError(400, f"Invalid URI. Invalid character: '.' in URI")
 
-    uri_path_norm = os.path.normpath(uri_path_xml.path).lstrip('/')
-    url_path_norm = os.path.normpath(url_path).lstrip('/')
+    return os.path.normpath(uri_parsed.path).lstrip('/')
 
-    if url_path_norm != uri_path_norm:
+
+def get(dic, key, default=None):
+    value = dic.get(key, default)
+    if value is None:
+        return default
+    return value
+
+
+async def _create_node_request(request):
+    ident = await authorized_userid(request)
+
+    xml_request = await request.text()
+    url_path = request.path.replace('/vospace/nodes', '')
+
+    create_request = xmltodict.parse(xml_request, process_namespaces=True, namespaces=namespaces)
+
+    node = create_request.get('vos:node', None)
+    if node is None:
+        raise VOSpaceError(400, "Invalid URI. Node does not exist.")
+
+    request_uri_path = uri_to_path(node.get('@uri', None))
+    request_url_path = uri_to_path(url_path)
+
+    if request_uri_path != request_url_path:
         raise VOSpaceError(400, f"Invalid URI. URI node path does not "
-                                f"match request: {url_path} != {uri_path_xml.path}")
+                                f"match request: {request_uri_path} != {request_url_path}")
 
     node_type = NodeType.Node
-    node_type_text = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
+    node_type_text = node.get('@xs:type', None)
     if node_type_text:
         node_type = NodeLookup.get(node_type_text, None)
         if node_type is None:
             raise VOSpaceError(400, "Type Not Supported. Invalid type.")
 
-    # get link if it exists
-    node_target = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}target', NS)
-    if node_target is not None:
-        node_target = node_target.text
+    node_target = node.get('vos:target', None)
 
     props = []
-    for properties in root.findall('vos:properties', NS):
-        for node_property in properties.findall('vos:property', NS):
-            prop_uri = node_property.attrib.get('uri', None)
-            if prop_uri is not None:
-                prop_uri = prop_uri.lower()
-                if prop_uri in app['readonly_properties']:
-                    raise PermissionDenied(f'Permission Denied. uri: {prop_uri}.')
-                props.append([prop_uri, node_property.text, False])
+    properties_dict = get(node, 'vos:properties', {})
+    property_list = get(properties_dict, 'vos:property', [])
+    for prop in property_list:
+        prop_uri = prop.get('@uri')
+        if prop_uri is None:
+            raise VOSpaceError(400, "Invalid URI. Property URI doesn't exist.")
+        if prop_uri in request.app['readonly_properties']:
+            raise PermissionDenied(f'Permission Denied. uri: {prop_uri}.')
+        props.append([prop_uri, prop.get('#text'), False])
 
-    async with app['db_pool'].acquire() as conn:
+    async with request.app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            return await create_node(app, conn, uri_path_norm, node_type, props, node_target)
+            await create_node(request.app, ident, conn, request_uri_path, node_type, props, node_target)
+
+    return create_request
 
 
-async def create_node(app, conn, uri_path, node_type, properties=None, node_target=None):
+async def create_node(app, ident, conn, node_path, node_type, properties=[], node_target=None):
     space_id = app['space_id']
     try:
         node_type_text = NodeTextLookup.get(node_type, None)
@@ -306,7 +304,7 @@ async def create_node(app, conn, uri_path, node_type, properties=None, node_targ
                 raise VOSpaceError(400, f"Type Not Supported. {node_type_text} does not have a target.")
 
         # remove empty entries as a result of strip
-        path = list(filter(None, uri_path.split('/')))
+        path = list(filter(None, node_path.split('/')))
 
         if len(path) == 0:
             raise VOSpaceError(400, "Invalid URI. Path is empty")
@@ -318,26 +316,35 @@ async def create_node(app, conn, uri_path, node_type, properties=None, node_targ
         path_tree = '.'.join(path)
 
         # get parent node and check if its valid to add node to it
-        row = await conn.fetchrow("SELECT type, name, path, nlevel(path) "
-                                  "FROM nodes WHERE path=$1 and space_id=$2 for update",
-                                  path_parent_tree, space_id)
+        parent_row = await conn.fetchrow("SELECT *, nlevel(path) "
+                                         "FROM nodes WHERE path=$1 and space_id=$2 for update",
+                                         path_parent_tree, space_id)
         # if the parent is not found but its expected to exist
-        if not row and len(path_parent) > 0:
+        if not parent_row and len(path_parent) > 0:
             raise VOSpaceError(404, f"Container Not Found. {'/'.join(path_parent)} not found.")
 
-        if row:
-            if row['type'] == NodeType.LinkNode:
-                raise VOSpaceError(400, f"Link Found. {row['name']} found in path.")
+        if parent_row:
+            if parent_row['type'] == NodeType.LinkNode:
+                raise VOSpaceError(400, f"Link Found. {parent_row['name']} found in path.")
 
-            if row['type'] != NodeType.ContainerNode:
-                raise VOSpaceError(404, f"Container Not Found. {row['name']} is not a container.")
+            if parent_row['type'] != NodeType.ContainerNode:
+                raise VOSpaceError(404, f"Container Not Found. {parent_row['name']} is not a container.")
+
+        if permits(ident, 'createNode', context=parent_row) is False:
+            raise Exception('not allowed')
 
         await conn.fetchrow("INSERT INTO nodes (type, name, path, space_id, link) VALUES ($1, $2, $3, $4, $5)",
                              node_type, node_name, path_tree, space_id, node_target)
 
         # call the specific provider, opportunity to get properties
-        await app['abstract_space'].create_storage_node(app, node_type, '/'.join(path))
+        parent_node = None
+        if parent_row:
+            parent_node = Node._create_node(f"/{'/'.join(path_parent)}", NodeTextLookup[parent_row['type']])
 
+        node = Node._create_node(f"/{'/'.join(path)}", node_type_text)
+        create_properties = await app['abstract_space'].create_storage_node(parent_node, node)
+
+        properties += [prop.tolist() for prop in create_properties]
         if properties:
             for prop in properties:
                 prop.append(path_tree)
@@ -356,7 +363,7 @@ async def create_node(app, conn, uri_path, node_type, properties=None, node_targ
         raise VOSpaceError(409, f"Duplicate Node. {node_name} already exists.")
 
 
-async def set_node_properties(app, xml_text, url_path):
+async def _set_node_properties(app, xml_text, url_path):
     space_id = app['space_id']
     try:
         root = ET.fromstring(xml_text)

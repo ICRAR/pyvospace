@@ -1,17 +1,21 @@
 import asyncpg
 import configparser
 import json
+import xmltodict
 
 from aiohttp import web
-from aiohttp_security import has_permission
 from abc import ABCMeta, abstractmethod
+from typing import List
+
 
 from .exception import VOSpaceError, InvalidJobStateError
-from .node import _create_node_request, delete_node, _get_node_request, set_node_properties, \
-    generate_protocol_response, generate_node_response
+from .node import _create_node_request, delete_node, _get_node_request, _set_node_properties, \
+    generate_protocol_response
 from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
     generate_uws_job_xml, PhaseLookup, UWSPhase, create_uws_job
 from .transfer import modify_transfer_job_phase, get_transfer_details, perform_transfer_job
+
+from pyvospace.core.model import Property, Node
 
 
 class AbstractSpace(metaclass=ABCMeta):
@@ -25,23 +29,23 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    async def move_storage_node(self, app, src_type, src_path, dest_type, dest_path):
+    async def move_storage_node(self, src_type, src_path, dest_type, dest_path):
         raise NotImplementedError()
 
     @abstractmethod
-    async def copy_storage_node(self, app, src_type, src_path, dest_type, dest_path):
+    async def copy_storage_node(self, src_type, src_path, dest_type, dest_path):
         raise NotImplementedError()
 
     @abstractmethod
-    async def create_storage_node(self, app, node_type, node_path):
+    async def create_storage_node(self, parent_node: Node, node: Node) -> List[Property]:
         raise NotImplementedError()
 
     @abstractmethod
-    async def delete_storage_node(self, app, node_type, node_path):
+    async def delete_storage_node(self, node_type, node_path):
         raise NotImplementedError()
 
     @abstractmethod
-    async def filter_storage_endpoints(self, app, storage_list, node_type, node_path, protocol, direction):
+    async def filter_storage_endpoints(self, storage_list, node_type, node_path, protocol, direction):
         raise NotImplementedError()
 
 
@@ -155,9 +159,9 @@ class SpaceServer(web.Application):
         try:
             xml_text = await request.text()
             url_path = request.path.replace('/vospace/nodes', '')
-            xml_response = await set_node_properties(self,
-                                                     xml_text,
-                                                     url_path)
+            xml_response = await _set_node_properties(self,
+                                                      xml_text,
+                                                      url_path)
             return web.Response(status=200,
                                 content_type='text/xml',
                                 text=xml_response)
@@ -185,19 +189,13 @@ class SpaceServer(web.Application):
 
     async def _create_node(self, request):
         try:
-            xml_text = await request.text()
-            url_path = request.path.replace('/vospace/nodes', '')
-            response = await _create_node_request(self, xml_text, url_path)
+            response = await _create_node_request(request)
 
-            accepts_views = self['accepts_views'].get(response.node_type_text, [])
-
-            xml_response = generate_node_response(space_name=self['uri'],
-                                                  node_path=response.node_name,
-                                                  node_type=response.node_type_text,
-                                                  node_busy=response.node_busy,
-                                                  node_property=response.node_properties,
-                                                  node_accepts_views=accepts_views,
-                                                  node_target=response.node_link)
+            node_type = response['vos:node']['@xs:type']
+            accepts_views = self['accepts_views'].get(node_type, [])
+            views = [{'vos:view':{'@uri':view}} for view in accepts_views]
+            response['vos:node']['vos:accepts'] = views
+            xml_response = xmltodict.unparse(response)
 
             return web.Response(status=201,
                                 content_type='text/xml',
@@ -207,6 +205,8 @@ class SpaceServer(web.Application):
             return web.Response(status=e.code, text=e.error)
 
         except Exception as g:
+            #import traceback
+            #traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def _delete_node(self, request):
