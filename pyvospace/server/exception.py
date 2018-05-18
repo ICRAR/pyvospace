@@ -6,7 +6,6 @@ class VOSpaceError(Exception):
     def __str__(self):
         return self.error
 
-
 class NodeDoesNotExistError(VOSpaceError):
     def __init__(self, error):
         super().__init__(404, error)

@@ -114,7 +114,7 @@ async def _get_storage_endpoints(app, space_id, job_id, node_type, node_path, pr
                                        "where space.id=$1", space_id)
 
     storage_results = [dict(r) for r in results]
-    filtered = await app['abstract_space'].filter_storage_endpoints(app, storage_results, node_type,
+    filtered = await app['abstract_space'].filter_storage_endpoints(storage_results, node_type,
                                                                     node_path, protocol, direction)
     endpoints = []
     for row in filtered:
@@ -201,8 +201,9 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
                         # create a new Node using the uri and the default xsi:type for the space.
                         if not node_results:
                             await create_node(app=app,
+                                              ident=None,
                                               conn=conn,
-                                              uri_path=target_path_norm,
+                                              node_path=target_path_norm,
                                               node_type=node_type)
                         else:
                             # If a Node already exists at the target URI,
@@ -368,7 +369,7 @@ async def _move_nodes(app, space_id, target_path, direction_path, perform_copy):
                                            "VALUES ($1, $2, $3, $4, $5)",
                                            user_props_insert)
 
-                    await app['abstract_space'].copy_storage_node(app, target_record['type'], src,
+                    await app['abstract_space'].copy_storage_node(target_record['type'], src,
                                                                   dest_record['type'], dest)
 
                 else:
@@ -378,7 +379,7 @@ async def _move_nodes(app, space_id, target_path, direction_path, perform_copy):
                                        destination_path_tree,
                                        space_id)
 
-                    await app['abstract_space'].move_storage_node(app, target_record['type'], src,
+                    await app['abstract_space'].move_storage_node(target_record['type'], src,
                                                                   dest_record['type'], dest)
 
 
