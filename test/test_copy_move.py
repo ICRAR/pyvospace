@@ -19,32 +19,6 @@ class TestCopyMove(TestBase):
 
         super().tearDown()
 
-    def test_set_properties(self):
-        async def run():
-            properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello1"),
-                          Property('ivo://ivoa.net/vospace/core#description', "Hello2")]
-            node1 = ContainerNode('/test1', properties=properties)
-            await self.create_node(node1)
-
-            # Set properties
-            properties = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle"),
-                          DeleteProperty('ivo://ivoa.net/vospace/core#description')]
-            node1 = ContainerNode('/test1', properties=properties)
-
-            # Node doesnt exist
-            await self.set_node_properties(Node('/test2'), expected_status=404)
-
-            await self.set_node_properties(node1)
-
-            params = {'detail': 'max'}
-            node = await self.get_node('test1', params)
-
-            prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle")]
-            orig_node = ContainerNode('/test1', properties=prop)
-            self.assertEqual(node, orig_node)
-
-        self.loop.run_until_complete(run())
-
     def test_move_node(self):
         async def run():
             root1 = ContainerNode('root1')

@@ -144,6 +144,7 @@ class TestBase(unittest.TestCase):
     async def set_node_properties(self, node, expected_status=200):
         status, response = await self.post(f'http://localhost:8080/vospace/nodes/{node.path}', data=node.tostring())
         self.assertEqual(expected_status, status, msg=response)
+        return response
 
     async def transfer_node(self, transfer):
         status, response = await self.post('http://localhost:8080/vospace/transfers', data=transfer.tostring())

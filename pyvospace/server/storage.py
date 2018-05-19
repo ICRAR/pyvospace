@@ -11,7 +11,7 @@ from collections import namedtuple
 
 from .uws import set_uws_phase_to_completed, get_uws_job_conn, \
     UWSPhase, set_uws_phase_to_error, UWSKey, UWSJobExecutor
-from .exception import VOSpaceError, NodeDoesNotExistError, InvalidJobError, \
+from pyvospace.core.exception import VOSpaceError, NodeDoesNotExistError, InvalidJobError, \
     InvalidJobStateError, NodeBusyError
 
 

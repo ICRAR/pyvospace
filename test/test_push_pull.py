@@ -101,9 +101,6 @@ class TestPushPull(TestBase):
             node1 = ContainerNode('/datanode/datanode1')
             await self.create_node(node1)
 
-            node1 = Node('/datanode/datanode1/datanode2')
-            await self.create_node(node1)
-
             node = Node('/datanode/datanode1/datanode2')
             push = PushToSpace(node, [HTTPPut()])
 

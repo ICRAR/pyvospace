@@ -5,7 +5,7 @@ import functools
 from contextlib import suppress
 from collections import namedtuple
 
-from .exception import VOSpaceError, ClosingError, InvalidJobStateError
+from pyvospace.core.exception import VOSpaceError, ClosingError, InvalidJobStateError
 
 
 UWS_Phase = namedtuple('NodeType', 'Pending '

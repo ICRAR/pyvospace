@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import tostring
 
 from test.test_base import TestBase
-from pyvospace.core.model import Node, ContainerNode, LinkNode, Property
+from pyvospace.core.model import *
 
 
 class TestCreate(TestBase):
@@ -18,6 +18,33 @@ class TestCreate(TestBase):
             status, response = await self.get('http://localhost:8080/vospace/protocols',
                                               params=None)
             self.assertEqual(200, status, msg=response)
+
+        self.loop.run_until_complete(run())
+
+    def test_set_properties(self):
+        async def run():
+            properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello1", False),
+                          Property('ivo://ivoa.net/vospace/core#description', "Hello2", False)]
+            node1 = ContainerNode('/test1', properties=properties)
+
+            await self.create_node(node1)
+
+            # Set properties
+            properties = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle"),
+                          DeleteProperty('ivo://ivoa.net/vospace/core#description')]
+            node1 = ContainerNode('/test1', properties=properties)
+
+            # Node doesnt exist
+            await self.set_node_properties(Node('/test2'), expected_status=404)
+
+            await self.set_node_properties(node1)
+
+            params = {'detail': 'max'}
+            node = await self.get_node('test1', params)
+
+            prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle")]
+            orig_node = ContainerNode('/test1', properties=prop)
+            self.assertEqual(node, orig_node)
 
         self.loop.run_until_complete(run())
 
@@ -142,6 +169,7 @@ class TestCreate(TestBase):
             cmp_node = ContainerNode('test1',
                                      nodes=[Node('/test1/data'),
                                             ContainerNode('/test1/test2')])
+
             self.assertEqual(node, cmp_node)
 
         self.loop.run_until_complete(run())

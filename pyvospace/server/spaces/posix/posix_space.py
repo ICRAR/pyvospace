@@ -53,12 +53,10 @@ class PosixSpace(AbstractSpace):
         d_path = f"{self.root_dir}/{dest_path}"
         await copy(s_path, d_path)
 
-    async def create_storage_node(self, parent_node: Node, node: Node) -> List[Property]:
-        print(parent_node, node)
+    async def create_storage_node(self, node: Node):
         if node.node_type == NodeType.ContainerNode:
             m_path = f"{self.root_dir}/{node.path}"
             await mkdir(m_path)
-        return []
 
     async def delete_storage_node(self, node_type, node_path):
         m_path = f"{self.root_dir}/{node_path}"
