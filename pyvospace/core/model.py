@@ -1,8 +1,11 @@
 import os
-import xml.etree.ElementTree as ET
+import copy
+import lxml.etree as ET
 
 from urllib.parse import urlparse
 from collections import namedtuple
+
+from .exception import *
 
 
 Node_Type = namedtuple('NodeType', 'Node '
@@ -30,7 +33,7 @@ NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 
 
 class Property(object):
-    def __init__(self, uri, value, read_only=None):
+    def __init__(self, uri, value, read_only=True):
         self.uri = uri
         self.value = value
         self.read_only = read_only
@@ -38,30 +41,13 @@ class Property(object):
     def __eq__(self, other):
         if not isinstance(other, Property):
             return False
-
-        return self.uri == other.uri and \
-               self.value == other.value
-
-    def _ro_tostring(self):
-        if self.read_only is None:
-            return ''
-
-        ro_test = 'false'
-        if self.read_only:
-            ro_test = 'true'
-
-        return f'readOnly="{ro_test}"'
+        return self.uri == other.uri and self.value == other.value
 
     def tolist(self):
         return [self.uri, self.value, self.read_only]
 
-    def tostring(self):
-        return f'<vos:property uri="{self.uri}" ' \
-               f'{self._ro_tostring()}>' \
-               f'{self.value}</vos:property>'
-
     def __str__(self):
-        return self.uri, self.value
+        return f"{self.uri}"
 
     def __repr__(self):
         return f'{self.uri, self.value}'
@@ -69,11 +55,7 @@ class Property(object):
 
 class DeleteProperty(Property):
     def __init__(self, uri):
-        super().__init__(uri, None, None)
-
-    def tostring(self):
-        return f'<vos:property uri="{self.uri}" ' \
-               f'xsi:nil="true"></vos:property>'
+        super().__init__(uri, None, False)
 
 
 class Capability(object):
@@ -122,21 +104,22 @@ class View(object):
 
 
 class Node(object):
+    NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1',
+          'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+          'xs': 'http://www.w3.org/2001/XMLSchema-instance'}
 
-    NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
     SPACE = 'icrar.org'
 
     def __init__(self,
                  path,
                  properties=[],
                  capabilities=[],
-                 node_type='vos:Node',
-                 node_uri_target=None):
+                 node_type='vos:Node'):
 
         self.node_type_text = node_type
-        self.node_uri_target = node_uri_target
         self.path = os.path.normpath(path).strip('.').lstrip('/')
-        self.properties = properties
+        self._properties = []
+        self.set_properties(properties, True)
         self.capabilities = capabilities
 
     def __repr__(self):
@@ -154,63 +137,61 @@ class Node(object):
     def node_type(self):
         return NodeType.Node
 
-    def _build_node(self, root):
-        for properties in root.findall('vos:properties', Node.NS):
-            for node_property in properties.findall('vos:property', Node.NS):
-                prop_uri = node_property.attrib.get('uri', None)
-                if prop_uri is None:
-                    raise Exception("Property URI does not exist.")
+    def build_node(self, root):
+        for node_property in root.xpath('/vos:node/vos:properties/vos:property', namespaces=Node.NS):
+            prop_uri = node_property.attrib.get('uri', None)
+            if prop_uri is None:
+                raise InvalidURI("Property URI does not exist.")
 
-                prop_ro = node_property.attrib.get('readOnly', None)
-                if prop_ro:
-                    prop_ro_bool = False
-                    if prop_ro == 'true':
-                        prop_ro_bool = True
-                    prop_ro = prop_ro_bool
+            delete_prop = node_property.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}nil', None)
+            prop_ro = node_property.attrib.get('readOnly', None)
+            if prop_ro:
+                prop_ro_bool = False
+                if prop_ro == 'true':
+                    prop_ro_bool = True
+                prop_ro = prop_ro_bool
 
-                prop_text = node_property.text
-                self._properties.append(Property(prop_uri, prop_text, prop_ro))
+            prop_text = node_property.text
 
-        self._sort_properties()
+            if delete_prop is None:
+                prop = Property(prop_uri, prop_text, prop_ro)
+            else:
+                prop = DeleteProperty(prop_uri)
+            self._properties.append(prop)
 
-    def _sort_properties(self):
+        self.sort_properties()
+
+    def sort_properties(self):
         self._properties.sort(key=lambda x: x.uri)
 
     @classmethod
-    def _create_node(cls, node_uri, node_type, node_busy=False):
+    def create_node(cls, node_uri, node_type, node_busy=False):
         if node_uri is None:
-            raise Exception("Node URI does not exist.")
+            raise InvalidURI("Node URI does not exist.")
+
+        if node_type is None:
+            raise InvalidURI("Node Type does not exist.")
 
         node_path = urlparse(node_uri).path
 
-        if node_type is None:
-            raise Exception("Node Type does not exist.")
-
         if node_type == 'vos:Node':
             return Node(node_path)
-
         elif node_type == 'vos:DataNode':
             return DataNode(node_path, busy=node_busy)
-
         elif node_type == 'vos:UnstructuredDataNode':
             return UnstructuredDataNode(node_path, busy=node_busy)
-
         elif node_type == 'vos:StructuredDataNode':
             return StructuredDataNode(node_path, busy=node_busy)
-
         elif node_type == 'vos:ContainerNode':
             return ContainerNode(node_path, busy=node_busy)
-
         elif node_type == 'vos:LinkNode':
             return LinkNode(node_path, None)
-
         else:
-            raise Exception('Unknown node type.')
+            raise InvalidURI('Unknown node type.')
 
     @classmethod
     def fromstring(cls, xml):
         root = ET.fromstring(xml)
-
         node_uri = root.attrib.get('uri', None)
         node_type = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
         node_busy = root.attrib.get('busy', 'false')
@@ -218,51 +199,56 @@ class Node(object):
             node_busy = True
         else:
             node_busy = False
-        node = Node._create_node(node_uri, node_type, node_busy)
-        node._build_node(root)
-
+        node = Node.create_node(node_uri, node_type, node_busy)
+        node.build_node(root)
         return node
 
     @property
     def properties(self):
         return self._properties
 
-    @properties.setter
-    def properties(self, value):
+    def remove_properties(self):
         self._properties = []
-        if value:
-            self._properties = value
-            self._sort_properties()
 
-    def add_property(self, value):
+    def set_properties(self, property_list, sort=False):
+        assert isinstance(property_list, list) is True
+        for prop in property_list:
+            assert isinstance(prop, Property) is True
+        self._properties = copy.deepcopy(property_list)
+        if sort:
+            self.sort_properties()
+
+    def add_property(self, value, sort=False):
+        assert isinstance(value, Property) is True
         self._properties.append(value)
-        self._sort_properties()
+        if sort:
+            self.sort_properties()
 
-    def _properties_tostring(self):
-        return ''.join([prop.tostring() for prop in self._properties])
+    def properties_tolist(self):
+        return [prop.tolist() for prop in self._properties]
 
     def to_uri(self):
         return f"vos://{Node.SPACE}!vospace/{self.path}"
 
     def tostring(self):
-        busy = ''
-        if isinstance(self, DataNode):
-            busy = f'busy="{str(self.busy).lower()}"'
+        root = self.toxml()
+        return ET.tostring(root).decode("utf-8")
 
-        target = ''
-        if isinstance(self, LinkNode):
-            if self.node_uri_target is not None:
-                target = f'<vos:target>{self.node_uri_target}</vos:target>'
+    def toxml(self):
+        root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}node", nsmap = Node.NS)
+        root.set("{http://www.w3.org/2001/XMLSchema-instance}type", self.node_type_text)
+        root.set("uri", self.to_uri())
 
-        create_node_xml = f'<vos:node xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
-                          f' xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
-                          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1"' \
-                          f' xsi:type="{self.node_type_text}" uri="{self.to_uri()}" {busy}>' \
-                          f'{target}' \
-                          f'<vos:properties>{self._properties_tostring()}</vos:properties>' \
-                          f'<vos:accepts/><vos:provides/>' \
-                          f'<vos:capabilities/></vos:node>'
-        return create_node_xml
+        if self._properties:
+            properties = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}properties")
+            for prop in self._properties:
+                property_element = ET.SubElement(properties, "{http://www.ivoa.net/xml/VOSpace/v2.1}property")
+                property_element.set('uri', prop.uri)
+                property_element.set('readOnly', str(prop.read_only).lower())
+                property_element.text = prop.value
+                if isinstance(prop, DeleteProperty):
+                    property_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
+        return root
 
 
 class LinkNode(Node):
@@ -274,8 +260,8 @@ class LinkNode(Node):
         super().__init__(path=path,
                          properties=properties,
                          capabilities=capabilities,
-                         node_type='vos:LinkNode',
-                         node_uri_target=uri_target)
+                         node_type='vos:LinkNode')
+        self.node_uri_target = uri_target
 
     @property
     def target(self):
@@ -292,14 +278,17 @@ class LinkNode(Node):
         return super().__eq__(other) and \
                self.node_uri_target == other.node_uri_target
 
-    def _build_node(self, root):
-        super()._build_node(root)
-
+    def build_node(self, root):
+        super().build_node(root)
         target = root.find('vos:target', Node.NS)
         if target is None:
-            raise Exception('LinkNode target does not exist.')
-
+            raise InvalidURI('LinkNode target does not exist.')
         self.node_uri_target = target.text
+
+    def tostring(self):
+        root = super().toxml()
+        ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}target").text = self.node_uri_target
+        return ET.tostring(root).decode("utf-8")
 
 
 class DataNode(Node):
@@ -322,7 +311,6 @@ class DataNode(Node):
     def __eq__(self, other):
         if not isinstance(other, DataNode):
             return False
-
         return super().__eq__(other)
 
     @property
@@ -330,21 +318,19 @@ class DataNode(Node):
         return NodeType.DataNode
 
     def _build_node(self, root):
-        super()._build_node(root)
+        super().build_node(root)
 
-        for accepts in root.findall('vos:accepts', Node.NS):
-            for view in accepts.findall('vos:view', Node.NS):
-                view_uri = view.attrib.get('uri', None)
-                if view_uri is None:
-                    raise Exception("Accepts URI does not exist.")
-                self._accepts.append(View(view_uri))
+        for view in root.xpath('/vos:node/vos:accepts/vos:view', namespaces=Node.NS):
+            view_uri = view.attrib.get('uri', None)
+            if view_uri is None:
+                raise InvalidURI("Accepts URI does not exist.")
+            self._accepts.append(View(view_uri))
 
-        for provides in root.findall('vos:provides', Node.NS):
-            for view in provides.findall('vos:view', Node.NS):
-                view_uri = view.attrib.get('uri', None)
-                if view_uri is None:
-                    raise Exception("Provides URI does not exist.")
-                self._provides.append(View(view_uri))
+        for view in root.xpath('/vos:node/vos:provides/vos:view', namespaces=Node.NS):
+            view_uri = view.attrib.get('uri', None)
+            if view_uri is None:
+                raise InvalidURI("Provides URI does not exist.")
+            self._provides.append(View(view_uri))
 
     @property
     def busy(self):
@@ -356,11 +342,13 @@ class DataNode(Node):
 
     @accepts.setter
     def accepts(self, value):
-        self._accepts = []
-        if value:
-            self._accepts = value
+        assert isinstance(value, list) is True
+        for val in value:
+            assert isinstance(val, View)
+        self._accepts = copy.deepcopy(value)
 
     def add_accepts_view(self, value):
+        assert isinstance(value, View)
         self._accepts.append(value)
 
     @property
@@ -369,12 +357,19 @@ class DataNode(Node):
 
     @provides.setter
     def provides(self, value):
-        self._provides = []
-        if value:
-            self._provides = value
+        assert isinstance(value, list) is True
+        for val in value:
+            assert isinstance(val, View)
+        self._provides = copy.deepcopy(value)
 
     def add_provides_view(self, value):
+        assert isinstance(value, View)
         self._provides.append(value)
+
+    def tostring(self):
+        root = super().toxml()
+        root.set("busy", str(self.busy).lower())
+        return ET.tostring(root).decode("utf-8")
 
 
 class ContainerNode(DataNode):
@@ -394,58 +389,64 @@ class ContainerNode(DataNode):
                          busy=busy,
                          node_type='vos:ContainerNode')
 
-        self.nodes = nodes
+        self._nodes = []
+        self.set_nodes(nodes, True)
 
     def __eq__(self, other):
         if not isinstance(other, DataNode):
             return False
-
         return super().__eq__(other) and self._nodes == other._nodes
-
-    @property
-    def node_type(self):
-        return NodeType.ContainerNode
-
-    def _sort_nodes(self):
-        self._nodes.sort(key=lambda x: x.path)
-
-    def _build_node(self, root):
-        super()._build_node(root)
-
-        for nodes in root.findall('vos:nodes', Node.NS):
-            for node_obj in nodes.findall('vos:node', Node.NS):
-                node_uri = node_obj.attrib.get('uri', None)
-                node_type = node_obj.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
-                node_busy = root.attrib.get('busy', 'false')
-                if node_busy == 'true':
-                    node_busy = True
-                else:
-                    node_busy = False
-                node = Node._create_node(node_uri, node_type, node_busy)
-                self._nodes.append(node)
-
-        self._sort_nodes()
 
     @property
     def nodes(self):
         return self._nodes
 
-    @nodes.setter
-    def nodes(self, node_list):
-        self._nodes = []
-        if node_list:
-            if not isinstance(node_list, list):
-                raise Exception('Node not a list.')
-            self._nodes = node_list
-            self._sort_nodes()
+    @property
+    def node_type(self):
+        return NodeType.ContainerNode
 
-    def add_node(self, value):
+    def sort_nodes(self):
+        self._nodes.sort(key=lambda x: x.path)
+
+    def build_node(self, root):
+        super()._build_node(root)
+        for nodes in root.xpath('/vos:node/vos:nodes/vos:node', namespaces=Node.NS):
+            node_uri = nodes.attrib.get('uri', None)
+            node_type = nodes.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
+            node_busy = root.attrib.get('busy', 'false')
+            if node_busy == 'true':
+                node_busy = True
+            else:
+                node_busy = False
+            node = Node.create_node(node_uri, node_type, node_busy)
+            self._nodes.append(node)
+        self.sort_nodes()
+
+    def set_nodes(self, node_list, sort=False):
+        assert isinstance(node_list, list) is True
+        for node in node_list:
+            assert isinstance(node, Node) is True
+        self._nodes = copy.deepcopy(node_list)
+        if sort:
+            self.sort_nodes()
+
+    def add_node(self, value, sort=False):
+        assert isinstance(value, Node) is True
         self._nodes.append(value)
-        self._sort_nodes()
+        if sort:
+            self.sort_nodes()
+
+    def tostring(self):
+        root = super().toxml()
+        nodes_element = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}nodes")
+        for node in self.nodes:
+            node_element = ET.SubElement(nodes_element, '{http://www.ivoa.net/xml/VOSpace/v2.1}node')
+            node_element.set('uri', node.to_uri())
+            node_element.set("{http://www.w3.org/2001/XMLSchema-instance}type", node.node_type_text)
+        return ET.tostring(root).decode("utf-8")
 
 
 class UnstructuredDataNode(DataNode):
-
     def __init__(self,
                  path,
                  properties=[],
@@ -464,19 +465,17 @@ class UnstructuredDataNode(DataNode):
     def __eq__(self, other):
         if not isinstance(other, UnstructuredDataNode):
             return False
-
         return super().__eq__(other)
 
     @property
     def node_type(self):
         return NodeType.UnstructuredDataNode
 
-    def _build_node(self, root):
-        super()._build_node(root)
+    def build_node(self, root):
+        super().build_node(root)
 
 
 class StructuredDataNode(DataNode):
-
     def __init__(self,
                  path,
                  properties=[],
@@ -502,8 +501,8 @@ class StructuredDataNode(DataNode):
     def node_type(self):
         return NodeType.StructuredDataNode
 
-    def _build_node(self, root):
-        super()._build_node(root)
+    def build_node(self, root):
+        super().build_node(root)
 
 
 class Transfer(object):

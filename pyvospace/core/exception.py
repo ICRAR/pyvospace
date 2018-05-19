@@ -6,8 +6,33 @@ class VOSpaceError(Exception):
     def __str__(self):
         return self.error
 
+
+class InvalidURI(VOSpaceError):
+    def __init__(self, error):
+        error = f"Invalid URI. {error}"
+        super().__init__(400, error)
+
+
+class InvalidArgument(VOSpaceError):
+    def __init__(self, error):
+        super().__init__(400, error)
+
+
 class NodeDoesNotExistError(VOSpaceError):
     def __init__(self, error):
+        error = f"Node Not Found. {error}"
+        super().__init__(404, error)
+
+
+class DuplicateNodeError(VOSpaceError):
+    def __init__(self, error):
+        error = f"Duplicate Node. {error}"
+        super().__init__(409, error)
+
+
+class ContainerDoesNotExistError(VOSpaceError):
+    def __init__(self, error):
+        error = f"Container Not Found. {error}"
         super().__init__(404, error)
 
 

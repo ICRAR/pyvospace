@@ -10,9 +10,9 @@ from urllib.parse import urlparse
 from .uws import set_uws_phase_to_executing, set_uws_phase_to_completed, \
     get_uws_job, get_uws_job_conn, UWSPhase, update_uws_job, \
     set_uws_phase_to_error, UWSKey, set_uws_phase_to_abort
-from .node import NS, NodeType, create_node, NodeTextLookup, delete_properties, get_node
-from .exception import VOSpaceError, InvalidJobStateError
-
+from .node import NS, NodeType, NodeTextLookup
+from pyvospace.core.exception import VOSpaceError, InvalidJobStateError, NodeDoesNotExistError
+from pyvospace.core.model import DataNode
 
 def xml_transfer_details(target, direction, protocol_endpoints):
     prot_end = []
@@ -180,49 +180,40 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
 
             async with db_pool.acquire() as conn:
                 async with conn.transaction():
-                    # get the node and its parent and lock it from being updated or deleted
-                    node_results = await get_node(conn, target_path_norm, space_job_id.space_id)
+                    _, child_row = await app['db']._get_node_and_parent(target_path_norm, conn)
 
                     if direction.text == 'pushToVoSpace':
-                        if node_results:
-                            node_type = node_results['type']
+                        # If there is no Node at the target URI, then the service SHALL
+                        # create a new Node using the uri and the default xsi:type for the space.
+                        if child_row:
+                            node = app['db']._resultset_to_node([child_row], [])
+                            # If a Node already exists at the target URI,
+                            # then the data SHALL be imported into the existing Node
+                            # and the Node properties SHALL be cleared unless the node is a ContainerNode.
+                            if node.node_type != NodeType.ContainerNode:
+                                await app['db'].delete_properties(path=target_path_norm, conn=conn)
+                                node.remove_properties()
                         else:
-                            node_type = NodeType.DataNode
+                            node = DataNode(path=target_path_norm)
+                            await app['db'].insert(node=node, conn=conn)
+                            await app['abstract_space'].create_storage_node(node)
 
-                        node_type_text = NodeTextLookup[node_type]
-
-                        import_views = app['accepts_views'].get(node_type_text, [])
+                        import_views = app['accepts_views'].get(node.node_type_text, [])
                         if node_view_uri:
                             if node_view_uri not in import_views:
                                 raise VOSpaceError(400, f"View Not Supported. "
                                                         f"View {node_view_uri} not supported.")
-
-                        # If there is no Node at the target URI, then the service SHALL
-                        # create a new Node using the uri and the default xsi:type for the space.
-                        if not node_results:
-                            await create_node(app=app,
-                                              ident=None,
-                                              conn=conn,
-                                              node_path=target_path_norm,
-                                              node_type=node_type)
-                        else:
-                            # If a Node already exists at the target URI,
-                            # then the data SHALL be imported into the existing Node
-                            # and the Node properties SHALL be cleared unless the node is a ContainerNode.
-                            if node_results['type'] != NodeType.ContainerNode:
-                                await delete_properties(conn, target_path_norm, space_job_id.space_id)
-
+                        node_type = node.node_type
                     else:
-                        if not node_results:
-                            raise VOSpaceError(404, f'Node Not Found. {target_path_norm} not found.')
-
-                        node_type = node_results['type']
+                        if not child_row:
+                            raise NodeDoesNotExistError(f"{target_path_norm} not found.")
+                        node_type = child_row['type']
 
             # Can't upload or download data to/from linknode
             # Left out ContainerNode as the specific storage implementation might want to unpack
             # it and create nodes.
             if node_type == NodeType.LinkNode:
-                raise VOSpaceError(400, 'Operation Not Supported. No data transfer for a LinkNode.')
+                raise VOSpaceError(400, 'Operation Not Supported. No data transfer to a LinkNode.')
 
             end_points = await _get_storage_endpoints(app,
                                                       space_job_id.space_id,
@@ -299,6 +290,8 @@ async def _perform_transfer_job(app, space_job_id, job_xml, sync):
         raise VOSpaceError(404, f"Node Not Found. {target_path_norm} not found.")
 
     except BaseException as e:
+        import traceback
+        traceback.print_exc()
         raise VOSpaceError(500, str(e))
 
 

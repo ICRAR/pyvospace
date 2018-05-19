@@ -1,19 +1,18 @@
 import asyncpg
 import configparser
 import json
-import xmltodict
 
 from aiohttp import web
 from abc import ABCMeta, abstractmethod
 from typing import List
 
 
-from .exception import VOSpaceError, InvalidJobStateError
-from .node import _create_node_request, delete_node, _get_node_request, _set_node_properties, \
-    generate_protocol_response
+from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
+from .node import _create_node_request, delete_node, _get_node_request, _set_node_properties_request
 from .uws import UWSJobExecutor, get_uws_job, get_uws_job_phase, \
     generate_uws_job_xml, PhaseLookup, UWSPhase, create_uws_job
 from .transfer import modify_transfer_job_phase, get_transfer_details, perform_transfer_job
+from .database import NodeDatabase
 
 from pyvospace.core.model import Property, Node
 
@@ -37,7 +36,7 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    async def create_storage_node(self, parent_node: Node, node: Node) -> List[Property]:
+    async def create_storage_node(self, node: Node):
         raise NotImplementedError()
 
     @abstractmethod
@@ -96,9 +95,9 @@ class SpaceServer(web.Application):
         self['accepts_protocols'] = json.loads(self.config['Space']['accepts_protocols'])
         self['provides_protocols'] = json.loads(self.config['Space']['provides_protocols'])
         self['readonly_properties'] = json.loads(self.config['Space']['readonly_properties'])
-        self['db_pool'] = await asyncpg.create_pool(dsn=self.config['Space']['dsn'])
+        db_pool = await asyncpg.create_pool(dsn=self.config['Space']['dsn'])
 
-        space_id = await self._register_space(self['db_pool'],
+        space_id = await self._register_space(db_pool,
                                               self['space_name'],
                                               self['space_host'],
                                               self['space_port'],
@@ -109,8 +108,10 @@ class SpaceServer(web.Application):
                                               json.dumps(self['readonly_properties']),
                                               json.dumps(self['parameters']))
 
+        self['db_pool'] = db_pool
         self['space_id'] = space_id
         self['executor'] = UWSJobExecutor()
+        self['db'] = NodeDatabase(space_id, db_pool)
 
     async def _register_space(self, db_pool, name, host, port, accepts_views, provides_views,
                               accepts_protocols, provides_protocols, readonly_properties, parameters):
@@ -157,49 +158,40 @@ class SpaceServer(web.Application):
 
     async def _set_node_properties(self, request):
         try:
-            xml_text = await request.text()
-            url_path = request.path.replace('/vospace/nodes', '')
-            xml_response = await _set_node_properties(self,
-                                                      xml_text,
-                                                      url_path)
-            return web.Response(status=200,
-                                content_type='text/xml',
-                                text=xml_response)
+            node = await _set_node_properties_request(request)
+            return web.Response(status=200, content_type='text/xml', text=node.tostring())
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
 
         except Exception as g:
+            #import traceback
+            #traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
-    #@has_permission('getNode')
     async def _get_node(self, request):
         try:
-            url_path = request.path.replace('/vospace/nodes', '')
-            xml_response = await _get_node_request(self, url_path, request.query)
-            return web.Response(status=200,
-                                content_type='text/xml',
-                                text=xml_response)
+            node = await _get_node_request(request)
+
+            #import xml.dom.minidom
+
+            #xml = xml.dom.minidom.parseString(node.tostring())
+            #print(xml.toprettyxml())
+
+            return web.Response(status=200, content_type='text/xml', text=node.tostring())
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
 
         except Exception as g:
+            #import traceback
+            #traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def _create_node(self, request):
         try:
-            response = await _create_node_request(request)
-
-            node_type = response['vos:node']['@xs:type']
-            accepts_views = self['accepts_views'].get(node_type, [])
-            views = [{'vos:view':{'@uri':view}} for view in accepts_views]
-            response['vos:node']['vos:accepts'] = views
-            xml_response = xmltodict.unparse(response)
-
-            return web.Response(status=201,
-                                content_type='text/xml',
-                                text=xml_response)
+            node = await _create_node_request(request)
+            return web.Response(status=201, content_type='text/xml', text=node.tostring())
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
