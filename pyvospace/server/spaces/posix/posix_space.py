@@ -1,8 +1,7 @@
 import json
 import configparser
 import base64
-
-from typing import List
+import asyncpg
 
 from aiohttp_security import setup as setup_security
 from aiohttp_security import SessionIdentityPolicy
@@ -13,7 +12,7 @@ from cryptography import fernet
 from pyvospace.server.space import SpaceServer
 from pyvospace.server.node import NodeType
 from pyvospace.server.space import AbstractSpace
-from pyvospace.core.model import Property, Node
+from pyvospace.core.model import *
 
 from .utils import move, copy, mkdir, remove, rmtree, exists
 from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
@@ -23,10 +22,12 @@ class PosixSpace(AbstractSpace):
     def __init__(self, cfg_file):
         super().__init__()
 
-        config = configparser.ConfigParser()
-        config.read(cfg_file)
+        self.config = configparser.ConfigParser()
+        self.config.read(cfg_file)
 
-        self.storage_parameters = json.loads(config['Storage']['parameters'])
+        self.name = self.config['Storage']['name']
+
+        self.storage_parameters = json.loads(self.config['Storage']['parameters'])
 
         self.root_dir = self.storage_parameters['root_dir']
         if not self.root_dir:
@@ -36,7 +37,10 @@ class PosixSpace(AbstractSpace):
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
 
+        self.db_pool = None
+
     async def setup(self):
+        self.db_pool = await asyncpg.create_pool(dsn=self.config['Space']['dsn'])
         await mkdir(self.root_dir)
         await mkdir(self.staging_dir)
 
@@ -69,8 +73,57 @@ class PosixSpace(AbstractSpace):
             if await exists(m_path):
                 await remove(m_path)
 
-    async def filter_storage_endpoints(self, storage_list, node_type, node_path, protocol, direction):
-        return storage_list
+    async def set_protocol_transfer(self, job):
+        new_protocols = []
+        protocols = job.job_info.protocols
+        if isinstance(job.job_info, PushToSpace):
+            if any(i in [HTTPPut(), HTTPSPut()] for i in protocols) is False:
+                raise VOSpaceError(400, "Protocol Not Supported.")
+
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    results = await conn.fetch("select * from storage where name=$1", self.name)
+
+            if HTTPPut() in protocols:
+                for row in results:
+                    if row['https'] is False:
+                        endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPPut(endpoint))
+
+            if HTTPSPut() in protocols:
+                for row in results:
+                    if row['https'] is True:
+                        endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPPut(endpoint))
+
+        elif isinstance(job.job_info, PullFromSpace):
+            if any(i in [HTTPGet(), HTTPSGet()] for i in protocols) is False:
+                raise VOSpaceError(400, "Protocol Not Supported.")
+
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    results = await conn.fetch("select * from storage where name=$1", self.name)
+
+            if HTTPGet() in protocols:
+                for row in results:
+                    if row['https'] is False:
+                        endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPPut(endpoint))
+
+            if HTTPSGet() in protocols:
+                for row in results:
+                    if row['https'] is True:
+                        endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPPut(endpoint))
+
+        if not new_protocols:
+            raise VOSpaceError(400, "Protocol Not Supported. No storage found")
+
+        job.transfer.set_protocols(new_protocols)
 
 
 class PosixSpaceServer(SpaceServer):

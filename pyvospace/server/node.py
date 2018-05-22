@@ -1,13 +1,3 @@
-import os
-import asyncpg
-import xmltodict
-
-import lxml.etree as ET
-
-from aiohttp_security import permits, authorized_userid
-from urllib.parse import urlparse
-from collections import namedtuple
-from xml.etree.ElementTree import ParseError
 from contextlib import suppress
 
 from pyvospace.core.exception import *
@@ -74,31 +64,19 @@ async def delete_node(app, path):
                 await app['abstract_space'].delete_storage_node(result[0]['type'], '/'.join(path_array))
 
 
-def uri_to_path(uri):
-    uri_parsed = urlparse(uri)
-
-    if not uri_parsed.path:
-        raise VOSpaceError(400, "Invalid URI. URI does not exist.")
-
-    if '.' in uri_parsed.path:
-        raise VOSpaceError(400, f"Invalid URI. Invalid character: '.' in URI")
-
-    return os.path.normpath(uri_parsed.path).lstrip('/')
-
-
 async def _create_node_request(request):
-    identity = await authorized_userid(request)
+    #identity = await authorized_userid(request)
 
     xml_request = await request.text()
     url_path = request.path.replace('/vospace/nodes', '')
 
     node = Node.fromstring(xml_request)
 
-    if node.path != uri_to_path(url_path):
+    if node.path != Node.uri_to_path(url_path):
         raise InvalidURI("Paths do not match")
 
-    if permits(identity, 'createNode', context=node) is False:
-        raise Exception('not allowed')
+    #if permits(identity, 'createNode', context=node) is False:
+    #    raise Exception('not allowed')
 
     async with request.app['db_pool'].acquire() as conn:
         async with conn.transaction():
@@ -109,18 +87,18 @@ async def _create_node_request(request):
 
 
 async def _set_node_properties_request(request):
-    identity = await authorized_userid(request)
+    #identity = await authorized_userid(request)
 
     xml_request = await request.text()
     path = request.path.replace('/vospace/nodes', '')
 
     node = Node.fromstring(xml_request)
 
-    if node.path != uri_to_path(path):
+    if node.path != Node.uri_to_path(path):
         raise InvalidURI("Paths do not match")
 
-    if permits(identity, 'setNode', context=node) is False:
-        raise Exception('not allowed')
+    #if permits(identity, 'setNode', context=node) is False:
+    #    raise Exception('not allowed')
 
     async with request.app['db_pool'].acquire() as conn:
         async with conn.transaction():
