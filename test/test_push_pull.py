@@ -6,7 +6,7 @@ import xml.dom.minidom as minidom
 
 from aiohttp import web
 
-from pyvospace.core.model import PushToSpace, PullFromSpace, Node, ContainerNode, LinkNode, HTTPPut, HTTPGet
+from pyvospace.core.model import *
 from pyvospace.server.spaces.posix.posix_storage import PosixStorageServer
 from test.test_base import TestBase
 
@@ -73,7 +73,6 @@ class TestPushPull(TestBase):
             put_end = put_prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
 
             try:
-                # Cut off
                 await asyncio.wait_for(self.push_to_space(put_end.text,
                                                           '/tmp/datafile.dat',
                                                           expected_status=200), 0.2)
@@ -120,10 +119,8 @@ class TestPushPull(TestBase):
 
             # Get transferDetails
             response = await self.get_transfer_details(job_id, expected_status=200)
-
-            root = ET.fromstring(response)
-            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            transfer = Transfer.fromstring(response)
+            end = str(transfer.protocols[0].endpoint)
 
             # badly formed job id
             await self.push_to_space('http://localhost:8081/vospace/pushToVoSpace/1234',
@@ -134,8 +131,8 @@ class TestPushPull(TestBase):
                                      '/tmp/datafile.dat', expected_status=404)
 
             tasks = [
-                asyncio.ensure_future(self.push_to_space_defer_error(end.text, '/tmp/datafile.dat')),
-                asyncio.ensure_future(self.push_to_space_defer_error(end.text, '/tmp/datafile.dat'))
+                asyncio.ensure_future(self.push_to_space_defer_error(end, '/tmp/datafile.dat')),
+                asyncio.ensure_future(self.push_to_space_defer_error(end, '/tmp/datafile.dat'))
             ]
 
             result = []
@@ -250,7 +247,6 @@ class TestPushPull(TestBase):
 
             self.assertIn(200, result)
             self.assertIn(400, result)
-
 
         self.loop.run_until_complete(run())
 

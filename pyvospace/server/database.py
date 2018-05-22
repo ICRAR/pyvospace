@@ -9,6 +9,13 @@ class NodeDatabase(object):
         self.space_id = space_id
         self.db_pool = db_pool
 
+    @classmethod
+    def path_to_ltree(cls, path):
+        path_array = list(filter(None, path.split('/')))
+        if len(path_array) == 0:
+            raise InvalidURI("Path is empty")
+        return '.'.join(path_array)
+
     def _resultset_to_properties(self, results):
         properties = []
         for result in results:
@@ -45,9 +52,18 @@ class NodeDatabase(object):
         node.set_properties(self._resultset_to_properties(root_properties_row))
         return node
 
+    async def _lock_node(self, job, conn, lock='share'):
+        result = await conn.fetchrow("select * from nodes left join uws_jobs on "
+                                     "nodes.space_id = uws_jobs.space_id and nodes.path = uws_jobs.target "
+                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
+                                     f"and uws_jobs.phase=2 for {lock} of nodes nowait",
+                                     job.job_id, self.space_id)
+        if not result:
+            raise NodeDoesNotExistError(f"{job.job_info.target.path} not found.")
+        return result
+
     async def _get_node_and_parent(self, path, conn):
         path_list = list(filter(None, path.split('/')))
-
         if len(path_list) == 0:
             raise VOSpaceError(400, "Invalid URI. Path is empty")
 
@@ -77,11 +93,7 @@ class NodeDatabase(object):
         return None, None
 
     async def directory(self, path, conn):
-        path_array = list(filter(None, path.split('/')))
-        if len(path_array) == 0:
-            raise VOSpaceError(400, "Invalid URI. Path is empty")
-
-        path_tree = '.'.join(path_array)
+        path_tree = NodeDatabase.path_to_ltree(path)
 
         results = await conn.fetch("select * from nodes where path <@ $1 and "
                                    "nlevel(path)-nlevel($1)<=1 and space_id=$2 "
@@ -146,12 +158,7 @@ class NodeDatabase(object):
             raise DuplicateNodeError(f"{node_name} already exists.")
 
     async def update(self, node, conn):
-        path = list(filter(None, node.path.split('/')))
-
-        if len(path) == 0:
-            raise InvalidURI("Path is empty")
-
-        node_path_tree = '.'.join(path)
+        node_path_tree = NodeDatabase.path_to_ltree(node.path)
 
         node_props_delete = []
         node_props_insert = []
@@ -183,8 +190,7 @@ class NodeDatabase(object):
         pass
 
     async def delete_properties(self, path, conn):
-        path = list(filter(None, path.split('/')))
-        path_tree = '.'.join(path)
+        path_tree = NodeDatabase.path_to_ltree(path)
 
         await conn.execute("delete from properties where node_path=$1 and space_id=$2",
                            path_tree, self.space_id)

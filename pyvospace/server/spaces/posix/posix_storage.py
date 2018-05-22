@@ -1,18 +1,31 @@
 import io
 import asyncio
 import aiofiles
+import os
 import configparser
+import json
 
 from aiohttp import web
 
 from pyvospace.server.node import NodeType
-from pyvospace.server.storage import AbstractServerStorage
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file
+from pyvospace.core.exception import *
+from pyvospace.server.storage import SpaceStorage
 
 
-class PosixStorage(AbstractServerStorage):
-    def __init__(self, app, config):
-        super().__init__(app, config)
+class PosixStorageServer(web.Application):
+    def __init__(self, cfg_file, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        config = configparser.ConfigParser()
+        config.read(cfg_file)
+
+        self.cfg_file = cfg_file
+        self.name = config.get('Storage', 'name')
+        self.host = config.get('Storage', 'host')
+        self.https = config.getboolean('Storage', 'https', fallback=False)
+        self.port = config.getint('Storage', 'port')
+        self.parameters = json.loads(config.get('Storage', 'parameters'))
 
         self.root_dir = self.parameters['root_dir']
         if not self.root_dir:
@@ -22,25 +35,57 @@ class PosixStorage(AbstractServerStorage):
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
 
+        self.db_pool = None
+        self.storage = None
+        self.on_shutdown.append(self.shutdown)
+
+    async def shutdown(self):
+        await self.storage.close()
+
     async def setup(self):
-        await super().setup()
+        self.storage = await SpaceStorage.get(self.cfg_file)
+
+        self.router.add_put('/vospace/{direction}/{job_id}', self.upload_request)
+        self.router.add_get('/vospace/{direction}/{job_id}', self.download_request)
+
+        async with self.storage.db_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.fetchrow("insert into storage (name, host, port, parameters, https) "
+                                    "values ($1, $2, $3, $4, $5) on conflict (name, host, port) "
+                                    "do update set parameters=$4, https=$5",
+                                    self.name, self.host,
+                                    self.port, json.dumps(self.parameters), self.https)
+
         await mkdir(self.root_dir)
         await mkdir(self.staging_dir)
 
-    async def download(self, request):
+    @classmethod
+    async def create(cls, cfg_file, *args, **kwargs):
+        app = PosixStorageServer(cfg_file, *args, **kwargs)
+        await app.setup()
+        return app
+
+    async def upload_request(self, request):
+        job_id = request.match_info.get('job_id', None)
+        return await self.storage.execute(request, job_id, self.upload)
+
+    async def download_request(self, request):
+        job_id = request.match_info.get('job_id', None)
+        return await self.storage.execute(request, job_id, self.download)
+
+    async def download(self, job, request):
         root_dir = self.root_dir
-        path_tree = request.job.path
+        path_tree = job.transfer.target.path
         file_path = f'{root_dir}/{path_tree}'
-        return await send_file(request, request.job.name, file_path)
+        return await send_file(request, os.path.splitext(path_tree)[0], file_path)
 
-    async def upload(self, request):
+    async def upload(self, job, request):
         reader = request.content
-
         # This implementation wont accept container node data
-        if request.job.type == NodeType.ContainerNode:
+        if job.transfer.target.node_type == NodeType.ContainerNode:
             return web.Response(status=400, text='Unable to upload data to a container.')
 
-        path_tree = request.job.path
+        path_tree = job.transfer.target.path
         file_name = f'{self.root_dir}/{path_tree}'
 
         try:
@@ -55,25 +100,3 @@ class PosixStorage(AbstractServerStorage):
             raise
 
         return web.Response(status=200)
-
-
-class PosixStorageServer(web.Application):
-    def __init__(self, cfg_file, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        config = configparser.ConfigParser()
-        config.read(cfg_file)
-        self.storage = PosixStorage(self, config)
-        self.on_shutdown.append(self.shutdown)
-
-    async def shutdown(self):
-        await self.storage.shutdown()
-
-    async def setup(self):
-        await self.storage.setup()
-
-    @classmethod
-    async def create(cls, cfg_file, *args, **kwargs):
-        app = PosixStorageServer(cfg_file, *args, **kwargs)
-        await app.setup()
-        return app

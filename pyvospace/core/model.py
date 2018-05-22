@@ -65,42 +65,83 @@ class Capability(object):
         self.param = param
 
 
+class Endpoint(object):
+    def __init__(self, url):
+        self._url = url
+
+    @property
+    def url(self):
+        return self._url
+
+    def __str__(self):
+        return self._url
+
+
 class Protocol(object):
-    def __init__(self, uri):
-        self.uri = uri
+    def __init__(self, uri, endpoint=None):
+        self._uri = uri
+        self._endpoint = None
+        self.endpoint = endpoint
+
+    def __str__(self):
+        return self.uri
+
+    @property
+    def endpoint(self):
+        return self._endpoint
+
+    @endpoint.setter
+    def endpoint(self, value):
+        if value:
+            assert isinstance(value, Endpoint) is True
+            self._endpoint = value
+
+    @property
+    def uri(self):
+        return self._uri
 
     def __eq__(self, other):
         if not isinstance(other, Protocol):
             return False
-
         return self.uri == other.uri
 
-    def tostring(self):
-        return f'<vos:protocol uri="{self.uri}"></vos:protocol>'
 
 
 class HTTPPut(Protocol):
-    def __init__(self):
-        super().__init__('ivo://ivoa.net/vospace/core#httpput')
+    def __init__(self, endpoint=None):
+        super().__init__('ivo://ivoa.net/vospace/core#httpput', endpoint)
 
 
 class HTTPGet(Protocol):
-    def __init__(self):
-        super().__init__('ivo://ivoa.net/vospace/core#httpget')
+    def __init__(self, endpoint=None):
+        super().__init__('ivo://ivoa.net/vospace/core#httpget', endpoint)
+
+
+class HTTPSPut(Protocol):
+    def __init__(self, endpoint=None):
+        super().__init__('ivo://ivoa.net/vospace/core#httpsput', endpoint)
+
+
+class HTTPSGet(Protocol):
+    def __init__(self, endpoint=None):
+        super().__init__('ivo://ivoa.net/vospace/core#httpsget', endpoint)
 
 
 class View(object):
     def __init__(self, uri):
-        self.uri = uri
+        self._uri = uri
+
+    @property
+    def uri(self):
+        return self._uri
 
     def __eq__(self, other):
         if not isinstance(other, View):
             return False
-
         return self.uri == other.uri
 
-    def tostring(self):
-        return f'<vos:view uri="{self.uri}"/>'
+    def __str__(self):
+        return self.uri
 
 
 class Node(object):
@@ -116,11 +157,14 @@ class Node(object):
                  capabilities=[],
                  node_type='vos:Node'):
 
+        self._path = Node.uri_to_path(path)
         self.node_type_text = node_type
-        self.path = os.path.normpath(path).strip('.').lstrip('/')
         self._properties = []
         self.set_properties(properties, True)
         self.capabilities = capabilities
+
+    def __str__(self):
+        return self.path
 
     def __repr__(self):
         return self.path
@@ -128,10 +172,22 @@ class Node(object):
     def __eq__(self, other):
         if not isinstance(other, Node):
             return False
-
         return self.path == other.path and \
                self.node_type_text == other.node_type_text and \
                self._properties == other._properties
+
+    @classmethod
+    def uri_to_path(cls, uri):
+        uri_parsed = urlparse(uri)
+        if not uri_parsed.path:
+            raise InvalidURI("URI does not exist.")
+        if '.' in uri_parsed.path:
+            raise InvalidURI("Invalid character: '.' in URI")
+        return os.path.normpath(uri_parsed.path).lstrip('/')
+
+    @property
+    def path(self):
+        return self._path
 
     @property
     def node_type(self):
@@ -166,26 +222,18 @@ class Node(object):
 
     @classmethod
     def create_node(cls, node_uri, node_type, node_busy=False):
-        if node_uri is None:
-            raise InvalidURI("Node URI does not exist.")
-
-        if node_type is None:
-            raise InvalidURI("Node Type does not exist.")
-
-        node_path = urlparse(node_uri).path
-
         if node_type == 'vos:Node':
-            return Node(node_path)
+            return Node(node_uri)
         elif node_type == 'vos:DataNode':
-            return DataNode(node_path, busy=node_busy)
+            return DataNode(node_uri, busy=node_busy)
         elif node_type == 'vos:UnstructuredDataNode':
-            return UnstructuredDataNode(node_path, busy=node_busy)
+            return UnstructuredDataNode(node_uri, busy=node_busy)
         elif node_type == 'vos:StructuredDataNode':
-            return StructuredDataNode(node_path, busy=node_busy)
+            return StructuredDataNode(node_uri, busy=node_busy)
         elif node_type == 'vos:ContainerNode':
-            return ContainerNode(node_path, busy=node_busy)
+            return ContainerNode(node_uri, busy=node_busy)
         elif node_type == 'vos:LinkNode':
-            return LinkNode(node_path, None)
+            return LinkNode(node_uri, None)
         else:
             raise InvalidURI('Unknown node type.')
 
@@ -426,12 +474,14 @@ class ContainerNode(DataNode):
         assert isinstance(node_list, list) is True
         for node in node_list:
             assert isinstance(node, Node) is True
+            assert node.path.startswith(self.path) is True
         self._nodes = copy.deepcopy(node_list)
         if sort:
             self.sort_nodes()
 
     def add_node(self, value, sort=False):
         assert isinstance(value, Node) is True
+        assert value.path.startswith(self.path) is True
         self._nodes.append(value)
         if sort:
             self.sort_nodes()
@@ -506,110 +556,184 @@ class StructuredDataNode(DataNode):
 
 
 class Transfer(object):
-
     def __init__(self, target, direction):
-        self.target = target
-        self.direction = direction
+        self._target = target
+        self._direction = direction
+
+    @property
+    def target(self):
+        return self._target
+
+    @property
+    def direction(self):
+        return self._direction
+
+    @target.setter
+    def target(self, value):
+        assert isinstance(value, Node) is True
+        self._target = value
+
+    def build_node(self, root):
+        return NotImplementedError()
+
+    def toxml(self):
+        root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}transfer", nsmap=Node.NS)
+        target = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}target")
+        target.text = str(self.target)
+        direction = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}direction")
+        direction.text = str(self.direction)
+        return root
 
     def tostring(self):
-        return Exception('Not implemented')
+        root = self.toxml()
+        return ET.tostring(root).decode("utf-8")
+
+    @classmethod
+    def create_node(cls, target, direction, keep_bytes):
+        if direction == 'pushToVoSpace':
+            return PushToSpace(Node(target))
+        elif direction == 'pullFromVoSpace':
+            return PullFromSpace(Node(target))
+        elif direction == 'pushFromVoSpace':
+            raise NotImplementedError()
+        elif direction == 'pullToVoSpace':
+            raise NotImplementedError()
+        else:
+            if keep_bytes:
+                return Copy(Node(target), Node(direction))
+            return Move(Node(target), Node(direction))
+
+    @classmethod
+    def fromstring(cls, xml):
+        root = ET.fromstring(xml)
+        target = root.xpath('/vos:transfer/vos:target', namespaces=Node.NS)
+        if not target:
+            raise InvalidURI('target not found')
+        direction = root.xpath('/vos:transfer/vos:direction', namespaces=Node.NS)
+        if not direction:
+            raise InvalidURI('direction not found')
+        keep_bytes = root.xpath('/vos:transfer/vos:keepBytes', namespaces=Node.NS)
+        if keep_bytes:
+            if keep_bytes[0].text == 'false':
+                keep_bytes = False
+            elif keep_bytes[0].text == 'true':
+                keep_bytes = True
+            else:
+                raise InvalidURI('keepBytes invalid')
+        node = Transfer.create_node(target[0].text, direction[0].text, keep_bytes)
+        node.build_node(root)
+        return node
 
 
 class NodeTransfer(Transfer):
-
     def __init__(self, target, direction, keep_bytes):
         super().__init__(target, direction)
-        self.keep_bytes = keep_bytes
+        self._keep_bytes = keep_bytes
+
+    @property
+    def keep_bytes(self):
+        return self._keep_bytes
 
     def tostring(self):
+        root = super().toxml()
         keep_bytes_str = 'false'
         if self.keep_bytes:
             keep_bytes_str = 'true'
 
-        create_node_xml = f'<vos:transfer xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
-                          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
-                          f'<vos:target>{self.target.to_uri()}</vos:target>' \
-                          f'<vos:direction>{self.direction.to_uri()}</vos:direction>' \
-                          f'<vos:keepBytes>{keep_bytes_str}</vos:keepBytes>' \
-                          f'</vos:transfer>'
-        return create_node_xml
+        keep_bytes = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}keepBytes")
+        keep_bytes.text = keep_bytes_str
+        return ET.tostring(root).decode("utf-8")
 
 
 class Copy(NodeTransfer):
-
     def __init__(self, target, direction):
         super().__init__(target=target,
                          direction=direction,
                          keep_bytes=True)
 
+    def build_node(self, root):
+        pass
+
 
 class Move(NodeTransfer):
-
     def __init__(self, target, direction):
         super().__init__(target=target,
                          direction=direction,
                          keep_bytes=False)
 
-
-class PushToSpace(Transfer):
-
-    def __init__(self, target, protocols, view=None):
-        super().__init__(target=target,
-                         direction='pushToVoSpace')
-
-        self.protocols = protocols
-        self.view = view
-
-    def _view_tostring(self):
-        if not self.view:
-            return ''
-
-        return self.view.tostring()
-
-    def _protocols_tostring(self):
-        protocol_array = []
-        for protocol in self.protocols:
-            protocol_array.append(protocol.tostring())
-        return ''.join(protocol_array)
-
-    def tostring(self):
-        create_node_xml = f'<vos:transfer xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
-                          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
-                          f'<vos:target>{self.target.to_uri()}</vos:target>' \
-                          f'<vos:direction>{self.direction}</vos:direction>' \
-                          f'{self._view_tostring()}' \
-                          f'{self._protocols_tostring()}' \
-                          f'</vos:transfer>'
-        return create_node_xml
+    def build_node(self, root):
+        pass
 
 
-class PullFromSpace(Transfer):
+class ProtocolTransfer(Transfer):
+    def __init__(self, target, direction, protocols=[], view=None):
+        super().__init__(target=target, direction=direction)
+        self._protocols = []
+        self.set_protocols(protocols)
+        self._view = view
 
-    def __init__(self, target, protocols, view=None):
-        super().__init__(target=target,
-                         direction='pullFromVoSpace')
+    @property
+    def view(self):
+        return self._view
 
-        self.protocols = protocols
-        self.view = view
+    @property
+    def protocols(self):
+        return self._protocols
 
-    def _view_tostring(self):
-        if not self.view:
-            return ''
-
-        return self.view.tostring()
-
-    def _protocols_tostring(self):
-        protocol_array = []
-        for protocol in self.protocols:
-            protocol_array.append(protocol.tostring())
-        return ''.join(protocol_array)
+    def set_protocols(self, protocol_list,):
+        assert isinstance(protocol_list, list) is True
+        for protocol in protocol_list:
+            assert isinstance(protocol, Protocol) is True
+        self._protocols = copy.deepcopy(protocol_list)
 
     def tostring(self):
-        create_node_xml = f'<vos:transfer xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"' \
-                          f' xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.1">' \
-                          f'<vos:target>{self.target.to_uri()}</vos:target>' \
-                          f'<vos:direction>{self.direction}</vos:direction>' \
-                          f'{self._view_tostring()}' \
-                          f'{self._protocols_tostring()}' \
-                          f'</vos:transfer>'
-        return create_node_xml
+        root = super().toxml()
+        if self.view:
+            view_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}view")
+            view_elem.set('uri', str(self.view))
+        for protocol in self._protocols:
+            protocol_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}protocol")
+            protocol_elem.set('uri', str(protocol))
+            if protocol.endpoint:
+                endpoint_tag = ET.SubElement(protocol_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint")
+                endpoint_tag.text = str(protocol.endpoint)
+        return ET.tostring(root).decode("utf-8")
+
+    def build_node(self, root):
+        view_elem = root.xpath('/vos:transfer/vos:view', namespaces=Node.NS)
+        if view_elem:
+            view_uri = view_elem.attrib.get('uri', None)
+            self._view = View(view_uri)
+        protocols = root.xpath('/vos:transfer/vos:protocol', namespaces=Node.NS)
+        for protocol in protocols:
+            uri = protocol.attrib.get('uri', None)
+            endpoint = None
+            endpoint_elem = protocol.xpath('vos:endpoint', namespaces=Node.NS)
+            if endpoint_elem:
+                endpoint = Endpoint(endpoint_elem[0].text)
+            if uri == 'ivo://ivoa.net/vospace/core#httpput':
+                self._protocols.append(HTTPPut(endpoint))
+            elif uri == 'ivo://ivoa.net/vospace/core#httpget':
+                self._protocols.append(HTTPGet(endpoint))
+            elif uri == 'ivo://ivoa.net/vospace/core#httpsput':
+                self._protocols.append(HTTPSPut(endpoint))
+            elif uri == 'ivo://ivoa.net/vospace/core#httpsget':
+                self._protocols.append(HTTPSGet(endpoint))
+            else:
+                raise InvalidURI("unknown protocol")
+
+
+class PushToSpace(ProtocolTransfer):
+    def __init__(self, target, protocols=[], view=None):
+        super().__init__(target=target,
+                         direction='pushToVoSpace',
+                         protocols=protocols,
+                         view=view)
+
+
+class PullFromSpace(ProtocolTransfer):
+    def __init__(self, target, protocols=[], view=None):
+        super().__init__(target=target,
+                         direction='pullFromVoSpace',
+                         protocols=protocols,
+                         view=view)

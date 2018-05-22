@@ -72,8 +72,11 @@ class TestCopyMove(TestBase):
 
             # Move tree from node1 to root2
             mv = Move(node1, root2)
+            #print (mv.tostring())
+            #print(mv.fromstring(mv.tostring()))
             response = await self.transfer_node(mv)
             job_id = self.get_job_id(response)
+
             await self.change_job_state(job_id, 'PHASE=RUN')
             await self.poll_job(job_id, expected_status='COMPLETED')
 

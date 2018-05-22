@@ -57,8 +57,8 @@ class TestCreate(TestBase):
             self.assertEqual(500, status, msg=response)
 
             # Empty Path
-            node = Node('')
-            await self.create_node(node, expected_status=400)
+            #node = Node('')
+            #await self.create_node(node, expected_status=400)
 
             # URI name in node does not match URL path
             node = Node('data1')
@@ -91,10 +91,10 @@ class TestCreate(TestBase):
     def test_create_node(self):
         async def run():
             # Invalid Path
-            node1 = ContainerNode('')
-            status, response = await self.put('http://localhost:8080/vospace/nodes/',
-                                              data=node1.tostring())
-            self.assertEqual(400, status, msg=response)
+            #node1 = ContainerNode('')
+            #status, response = await self.put('http://localhost:8080/vospace/nodes/',
+            #                                  data=node1.tostring())
+            #self.assertEqual(400, status, msg=response)
 
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Test", True),
                           Property('ivo://ivoa.net/vospace/core#description', "Hello", True)]
