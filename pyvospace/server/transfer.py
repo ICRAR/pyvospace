@@ -44,7 +44,7 @@ async def modify_transfer_job_phase(app, job_id, uws_cmd):
 async def perform_transfer_job(job, app, sync):
     try:
         with suppress(asyncio.CancelledError):
-            asyncio.shield(await _perform_transfer_job(job, app, sync))
+            await asyncio.shield(_perform_transfer_job(job, app, sync))
     except VOSpaceError as v:
         with suppress(asyncio.CancelledError):
             await asyncio.shield(app['executor'].set_error(job.job_id, v.error))

@@ -42,7 +42,10 @@ class PosixSpace(AbstractSpace):
         await mkdir(self.staging_dir)
 
     async def shutdown(self):
-        pass
+        await self.db_pool.close()
+
+    def get_protocols(self) -> Protocols:
+        return Protocols(accepts=[], provides=[HTTPGet(), HTTPGet()])
 
     async def move_storage_node(self, src, dest):
         s_path = f"{self.root_dir}/{src.path}"
@@ -113,30 +116,31 @@ class PosixSpace(AbstractSpace):
                     if row['https'] is False:
                         endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
                                             f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPPut(endpoint))
+                        new_protocols.append(HTTPGet(endpoint))
 
             if HTTPSGet() in protocols:
                 for row in results:
                     if row['https'] is True:
                         endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
                                             f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPPut(endpoint))
+                        new_protocols.append(HTTPSGet(endpoint))
 
         if not new_protocols:
             raise VOSpaceError(400, "Protocol Not Supported. No storage found")
-
         job.transfer.set_protocols(new_protocols)
 
 
 class PosixSpaceServer(SpaceServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
-        self.space = PosixSpace(cfg_file)
+        self.cfg_file = cfg_file
+        self.space = None
         self.authentication = None
 
     async def setup(self):
-        await super().setup(self.space)
+        self.space = PosixSpace(self.cfg_file)
         await self.space.setup()
+        await super().setup(self.space)
 
         # secret_key must be 32 url-safe base64-encoded bytes
         fernet_key = fernet.Fernet.generate_key()

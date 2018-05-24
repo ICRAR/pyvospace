@@ -19,6 +19,10 @@ from .database import NodeDatabase
 
 class AbstractSpace(metaclass=ABCMeta):
     @abstractmethod
+    def get_protocols(self) -> Protocols:
+        raise NotImplementedError()
+
+    @abstractmethod
     async def move_storage_node(self, src: Node, dest: Node):
         raise NotImplementedError()
 
@@ -47,30 +51,18 @@ class SpaceServer(web.Application):
         config.read(cfg_file)
         self.config = config
 
-        self.router.add_get('/vospace/protocols',
-                            self._get_protocols)
-        self.router.add_get('/vospace/nodes/{name:.*}',
-                            self._get_node)
-        self.router.add_put('/vospace/nodes/{name:.*}',
-                            self._create_node)
-        self.router.add_post('/vospace/nodes/{name:.*}',
-                             self._set_node_properties)
-        self.router.add_delete('/vospace/nodes/{name:.*}',
-                               self._delete_node)
-        self.router.add_post('/vospace/transfers',
-                             self._create_transfer)
-        self.router.add_post('/vospace/synctrans',
-                             self._sync_transfer_node)
-        self.router.add_get('/vospace/transfers/{job_id}',
-                            self._get_complete_transfer_job)
-        self.router.add_post('/vospace/transfers/{job_id}/phase',
-                             self._change_transfer_job_phase)
-        self.router.add_get('/vospace/transfers/{job_id}/phase',
-                             self._get_transfer_job_phase)
-        self.router.add_get('/vospace/transfers/{job_id}/error',
-                            self._get_complete_transfer_job)
-        self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails',
-                            self._transfer_details)
+        self.router.add_get('/vospace/protocols', self._get_protocols)
+        self.router.add_get('/vospace/nodes/{name:.*}', self._get_node)
+        self.router.add_put('/vospace/nodes/{name:.*}', self._create_node)
+        self.router.add_post('/vospace/nodes/{name:.*}', self._set_node_properties)
+        self.router.add_delete('/vospace/nodes/{name:.*}', self._delete_node)
+        self.router.add_post('/vospace/transfers', self._create_transfer)
+        self.router.add_post('/vospace/synctrans', self._sync_transfer_node)
+        self.router.add_get('/vospace/transfers/{job_id}', self._get_complete_transfer_job)
+        self.router.add_post('/vospace/transfers/{job_id}/phase', self._change_transfer_job_phase)
+        self.router.add_get('/vospace/transfers/{job_id}/phase', self._get_transfer_job_phase)
+        self.router.add_get('/vospace/transfers/{job_id}/error', self._get_complete_transfer_job)
+        self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails', self._transfer_details)
 
         self.on_shutdown.append(self.shutdown)
 
@@ -134,12 +126,8 @@ class SpaceServer(web.Application):
 
     async def _get_protocols(self, request):
         try:
-            accepts = self['accepts_protocols']
-            provides = self['provides_protocols']
-            xml_response = generate_protocol_response(accepts, provides)
-            return web.Response(status=200,
-                                content_type='text/xml',
-                                text=xml_response)
+            protocols = self['abstract_space'].get_protocols()
+            return web.Response(status=200, content_type='text/xml', text=protocols.tostring())
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
