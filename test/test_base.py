@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from aiohttp import web
 
 from pyvospace.server.spaces.posix import PosixSpaceServer, PosixSpace
-from pyvospace.core.model import Node
+from pyvospace.core.model import *
 
 
 class TestBase(unittest.TestCase):
@@ -149,7 +149,7 @@ class TestBase(unittest.TestCase):
     async def transfer_node(self, transfer):
         status, response = await self.post('http://localhost:8080/vospace/transfers', data=transfer.tostring())
         self.assertEqual(200, status, msg=response)
-        return response
+        return UWSJob.fromstring(response)
 
     def get_job_id(self, response):
         root = ET.fromstring(response)
@@ -173,7 +173,9 @@ class TestBase(unittest.TestCase):
         status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id}'
                                           f'/results/transferDetails', params=None)
         self.assertEqual(expected_status, status, msg=response)
-        return response
+        if status == 200:
+            return Transfer.fromstring(response)
+        return None
 
     async def change_job_state(self, job_id, state='PHASE=RUN', expected_status=200):
         status, response = await self.post(f'http://localhost:8080/vospace/transfers/{job_id}/phase',
@@ -194,10 +196,9 @@ class TestBase(unittest.TestCase):
         status, response = await self.get(f'http://localhost:8080/vospace/transfers/{job_id}/error',
                                           params=None)
         self.assertEqual(200, status, msg=response)
-        root = ET.fromstring(response)
-        error = root.find('{http://www.ivoa.net/xml/UWS/v1.0}errorSummary')
-        self.assertIsNotNone(error)
-        self.assertTrue(error_contains in error[0].text, msg=error[0].text)
+        job = UWSJob.fromstring(response)
+        self.assertIsNotNone(job.error)
+        self.assertTrue(error_contains in job.error, msg=job.error)
 
     async def push_to_space(self, url, file_path, expected_status=200):
         status, response = await self.put(url, data=self.file_sender(file_name=file_path))

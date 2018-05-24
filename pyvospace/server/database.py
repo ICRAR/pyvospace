@@ -16,14 +16,27 @@ class NodeDatabase(object):
             raise InvalidURI("Path is empty")
         return '.'.join(path_array)
 
-    def _resultset_to_properties(self, results):
+    @classmethod
+    def _resultset_to_node(cls, root_node_rows, root_properties_row):
+        node = NodeDatabase._create_node(root_node_rows[0])
+        root_node_rows.pop(0)
+        child_nodes = [NodeDatabase._create_node(node_row) for node_row in root_node_rows]
+        if len(child_nodes) > 0:
+            assert node.node_type == NodeType.ContainerNode
+            node.set_nodes(child_nodes)
+        node.set_properties(NodeDatabase._resultset_to_properties(root_properties_row))
+        return node
+
+    @classmethod
+    def _resultset_to_properties(cls, results):
         properties = []
         for result in results:
             dic = dict(result)
             properties.append(Property(dic['uri'], dic['value'], dic['read_only']))
         return properties
 
-    def _create_node(self, node_row):
+    @classmethod
+    def _create_node(cls, node_row):
         path = node_row['path'].replace('.', '/')
         node_type = node_row['type']
 
@@ -41,26 +54,6 @@ class NodeDatabase(object):
             return LinkNode(path, uri_target=node_row['link'])
         else:
             raise VOSpaceError(500, "Unknown type")
-
-    def _resultset_to_node(self, root_node_rows, root_properties_row):
-        node = self._create_node(root_node_rows[0])
-        root_node_rows.pop(0)
-        child_nodes = [self._create_node(node_row) for node_row in root_node_rows]
-        if len(child_nodes) > 0:
-            assert node.node_type == NodeType.ContainerNode
-            node.set_nodes(child_nodes)
-        node.set_properties(self._resultset_to_properties(root_properties_row))
-        return node
-
-    async def _lock_node(self, job, conn, lock='share'):
-        result = await conn.fetchrow("select * from nodes left join uws_jobs on "
-                                     "nodes.space_id = uws_jobs.space_id and nodes.path = uws_jobs.target "
-                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
-                                     f"and uws_jobs.phase=2 for {lock} of nodes nowait",
-                                     job.job_id, self.space_id)
-        if not result:
-            raise NodeDoesNotExistError(f"{job.job_info.target.path} not found.")
-        return result
 
     async def _get_node_and_parent(self, path, conn):
         path_list = list(filter(None, path.split('/')))
@@ -183,14 +176,24 @@ class NodeDatabase(object):
 
         # only delete properties where read_only=False
         a = await conn.execute("DELETE FROM properties WHERE uri=any($1::text[]) "
-                         "AND node_path=$2 and space_id=$3 and read_only=False",
-                         node_props_delete, node_path_tree, self.space_id)
+                               "AND node_path=$2 and space_id=$3 and read_only=False",
+                               node_props_delete, node_path_tree, self.space_id)
 
-    async def delete(self):
-        pass
+    async def delete(self, path, conn):
+        path_tree = NodeDatabase.path_to_ltree(path)
+        results = await conn.fetch("delete from nodes where path <@ $1 and space_id=$2 returning *",
+                                  path_tree, self.space_id)
+        if not results:
+            raise NodeDoesNotExistError(f"{path} not found.")
+
+        node_result = None
+        for result in results:
+            if result['path'] == path_tree:
+                node_result = result
+        assert node_result['path'] == path_tree
+        return NodeDatabase._resultset_to_node([node_result], [])
 
     async def delete_properties(self, path, conn):
         path_tree = NodeDatabase.path_to_ltree(path)
-
         await conn.execute("delete from properties where node_path=$1 and space_id=$2",
                            path_tree, self.space_id)

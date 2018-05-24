@@ -1,6 +1,6 @@
 import unittest
 
-from pyvospace.core.model import Node, ContainerNode, Property, DeleteProperty, Move, Copy
+from pyvospace.core.model import *
 from test.test_base import TestBase
 
 
@@ -72,13 +72,10 @@ class TestCopyMove(TestBase):
 
             # Move tree from node1 to root2
             mv = Move(node1, root2)
-            #print (mv.tostring())
-            #print(mv.fromstring(mv.tostring()))
-            response = await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
+            job = await self.transfer_node(mv)
 
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='COMPLETED')
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='COMPLETED')
 
             # Check tree has been moved from node1 to root2
             params = {'detail': 'max'}
@@ -117,12 +114,11 @@ class TestCopyMove(TestBase):
             await self.create_node(node32)
 
             mv = Move(node12, node3)
-            response = await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
+            job = await self.transfer_node(mv)
 
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='ERROR')
-            await self.get_error_summary(job_id, error_contains='Duplicate')
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
+            await self.get_error_summary(job.job_id, error_contains='Duplicate')
 
         self.loop.run_until_complete(run())
 
@@ -146,55 +142,50 @@ class TestCopyMove(TestBase):
 
             # Node doesn't exist
             mv = Move(Node('/data11'), node2)
-            response = await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='ERROR')
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
 
             # move node1 -> node2
             mv = Move(node1, node2)
-            response = await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
+            job = await self.transfer_node(mv)
 
             # Invalid Phase
-            await self.change_job_state(job_id, 'PHASE=STOP', expected_status=400)
+            await self.change_job_state(job.job_id, 'PHASE=STOP', expected_status=400)
 
             # delete node before move
             await self.delete('http://localhost:8080/vospace/nodes/data1')
 
             # start move job
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='ERROR')
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
             # Check error, node should not exist
-            await self.get_error_summary(job_id, "Node Not Found")
+            await self.get_error_summary(job.job_id, "Node Not Found")
 
             # Create the deleted node from previous test
             await self.create_node(node1)
 
             # Invalid move to a non-container
             mv = Move(node1, node0)
-            response = await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='ERROR')
-            await self.get_error_summary(job_id, error_contains='Duplicate Node')
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
+            await self.get_error_summary(job.job_id, error_contains='Duplicate Node')
 
             # Invalid move if node already exists in destination tree
             await self.create_node(node3)
             mv = Move(node3, node2)
-            await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='ERROR')
-            await self.get_error_summary(job_id, error_contains='Duplicate Node')
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
+            await self.get_error_summary(job.job_id, error_contains='Duplicate Node')
 
             # Move parent to child which should be invalid because node1 is node3s parent
             mv = Move(node1, node3)
-            response = await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='ERROR')
-            await self.get_error_summary(job_id, error_contains='Invalid URI.')
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
+            await self.get_error_summary(job.job_id, error_contains='Invalid URI.')
 
         self.loop.run_until_complete(run())
 
@@ -218,13 +209,12 @@ class TestCopyMove(TestBase):
 
             # Copy tree from node1 to root2
             mv = Copy(node1, root2)
-            response = await self.transfer_node(mv)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id, 'PHASE=RUN')
-            await self.poll_job(job_id, expected_status='COMPLETED')
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='COMPLETED')
 
             # Just chek there isn't any transfer details for a move or copy
-            await self.get_transfer_details(job_id, expected_status=400)
+            await self.get_transfer_details(job.job_id, expected_status=400)
 
             # Check tree has been moved from node1 to root2
             params = {'detail': 'max'}

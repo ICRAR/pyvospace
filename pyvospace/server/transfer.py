@@ -43,7 +43,8 @@ async def modify_transfer_job_phase(app, job_id, uws_cmd):
 
 async def perform_transfer_job(job, app, sync):
     try:
-        await _perform_transfer_job(job, app, sync)
+        with suppress(asyncio.CancelledError):
+            asyncio.shield(await _perform_transfer_job(job, app, sync))
     except VOSpaceError as v:
         with suppress(asyncio.CancelledError):
             await asyncio.shield(app['executor'].set_error(job.job_id, v.error))
@@ -68,7 +69,7 @@ async def _perform_transfer_job(job, app, sync):
                         # If there is no Node at the target URI, then the service SHALL
                         # create a new Node using the uri and the default xsi:type for the space.
                         if child_row:
-                            node = app['db']._resultset_to_node([child_row], [])
+                            node = NodeDatabase._resultset_to_node([child_row], [])
                             # If a Node already exists at the target URI,
                             # then the data SHALL be imported into the existing Node
                             # and the Node properties SHALL be cleared unless the node is a ContainerNode.
@@ -88,8 +89,7 @@ async def _perform_transfer_job(job, app, sync):
                     else:
                         if not child_row:
                             raise NodeDoesNotExistError(f"{job.job_info.target.path} not found.")
-
-                        node = app['db']._resultset_to_node([child_row], [])
+                        node = NodeDatabase._resultset_to_node([child_row], [])
 
                     # Can't upload or download data to/from linknode
                     # Left out ContainerNode as the specific storage implementation might want to unpack
@@ -151,17 +151,22 @@ async def _move_nodes(app, target_path, direction_path, perform_copy):
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
-                result = await conn.fetch("select name, type, path, "
-                                          "path = subltree($2, 0, nlevel(path)) as common "
-                                          "from nodes where path <@ $1 "
-                                          "or path <@ $2 and space_id=$3 order by path asc for update",
-                                          target_path_tree,
-                                          destination_path_tree,
-                                          space_id)
-                result_dict = {r['path']: r for r in result}
+                results = await conn.fetch("select *, path = subltree($2, 0, nlevel(path)) as common "
+                                           "from nodes where path <@ $1 or path <@ $2 and space_id=$3 "
+                                           "order by path asc for update",
+                                           target_path_tree,
+                                           destination_path_tree,
+                                           space_id)
 
-                target_record = result_dict.get(target_path_tree, None)
-                dest_record = result_dict.get(destination_path_tree, None)
+                target_record = None
+                dest_record = None
+                for result in results:
+                    if result['path'] == target_path_tree:
+                        target_record = result
+                    if result['path'] == destination_path_tree:
+                        dest_record = result
+                    if target_record and dest_record:
+                        break
 
                 if target_record is None:
                     raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
@@ -177,11 +182,10 @@ async def _move_nodes(app, target_path, direction_path, perform_copy):
                     raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
                                             f"is invalid.")
 
-                src = '/'.join(target_path_array)
-                dest = f"{'/'.join(direction_path_array)}/"
+                src = NodeDatabase._resultset_to_node([target_record], [])
+                dest = NodeDatabase._resultset_to_node([dest_record], [])
 
                 if perform_copy:
-                    # copy properties
                     prop_results = await conn.fetch("select properties.uri, properties.value, "
                                                     "properties.read_only, properties.space_id, "
                                                     "$2||subpath(node_path, nlevel($1)-1) as concat "
@@ -208,8 +212,7 @@ async def _move_nodes(app, target_path, direction_path, perform_copy):
                                            "VALUES ($1, $2, $3, $4, $5)",
                                            user_props_insert)
 
-                    await app['abstract_space'].copy_storage_node(target_record['type'], src,
-                                                                  dest_record['type'], dest)
+                    await app['abstract_space'].copy_storage_node(src, dest)
 
                 else:
                     await conn.execute("update nodes set path = $2 || subpath(path, nlevel($1)-1) "
@@ -218,8 +221,7 @@ async def _move_nodes(app, target_path, direction_path, perform_copy):
                                        destination_path_tree,
                                        space_id)
 
-                    await app['abstract_space'].move_storage_node(target_record['type'], src,
-                                                                  dest_record['type'], dest)
+                    await app['abstract_space'].move_storage_node(src, dest)
 
     except asyncpg.exceptions.UniqueViolationError as f:
         raise VOSpaceError(409, f"Duplicate Node. {f.detail}")

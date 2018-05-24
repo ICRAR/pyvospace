@@ -4,12 +4,14 @@ import json
 import asyncio
 
 from aiohttp import web
+from contextlib import suppress
 from abc import ABCMeta, abstractmethod
 
 from pyvospace.core.exception import *
 from pyvospace.core.model import *
 
-from .node import _create_node_request, delete_node, _get_node_request, _set_node_properties_request
+from .view import create_node_request, delete_node_request, \
+    get_node_request, set_node_properties_request
 from .uws import UWSJobPool, UWSPhase, PhaseLookup
 from .transfer import modify_transfer_job_phase, perform_transfer_job
 from .database import NodeDatabase
@@ -17,11 +19,11 @@ from .database import NodeDatabase
 
 class AbstractSpace(metaclass=ABCMeta):
     @abstractmethod
-    async def move_storage_node(self, src_type, src_path, dest_type, dest_path):
+    async def move_storage_node(self, src: Node, dest: Node):
         raise NotImplementedError()
 
     @abstractmethod
-    async def copy_storage_node(self, src_type, src_path, dest_type, dest_path):
+    async def copy_storage_node(self, src: Node, dest: Node):
         raise NotImplementedError()
 
     @abstractmethod
@@ -29,11 +31,11 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    async def delete_storage_node(self, node_type, node_path):
+    async def delete_storage_node(self, node: Node):
         raise NotImplementedError()
 
     @abstractmethod
-    async def set_protocol_transfer(self, job):
+    async def set_protocol_transfer(self, job: UWSJob):
         raise NotImplementedError()
 
 
@@ -56,7 +58,7 @@ class SpaceServer(web.Application):
         self.router.add_delete('/vospace/nodes/{name:.*}',
                                self._delete_node)
         self.router.add_post('/vospace/transfers',
-                             self._transfer_node)
+                             self._create_transfer)
         self.router.add_post('/vospace/synctrans',
                              self._sync_transfer_node)
         self.router.add_get('/vospace/transfers/{job_id}',
@@ -64,7 +66,7 @@ class SpaceServer(web.Application):
         self.router.add_post('/vospace/transfers/{job_id}/phase',
                              self._change_transfer_job_phase)
         self.router.add_get('/vospace/transfers/{job_id}/phase',
-                             self._get_transfer_node_job_phase)
+                             self._get_transfer_job_phase)
         self.router.add_get('/vospace/transfers/{job_id}/error',
                             self._get_complete_transfer_job)
         self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails',
@@ -146,44 +148,40 @@ class SpaceServer(web.Application):
 
     async def _set_node_properties(self, request):
         try:
-            node = await _set_node_properties_request(request)
+            with suppress(asyncio.CancelledError):
+                node = await asyncio.shield(set_node_properties_request(request))
             return web.Response(status=200, content_type='text/xml', text=node.tostring())
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except Exception as g:
-            #import traceback
-            #traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def _get_node(self, request):
         try:
-            node = await _get_node_request(request)
+            node = await get_node_request(request)
             return web.Response(status=200, content_type='text/xml', text=node.tostring())
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except Exception as g:
-            #import traceback
-            #traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def _create_node(self, request):
         try:
-            node = await _create_node_request(request)
+            with suppress(asyncio.CancelledError):
+                node = await asyncio.shield(create_node_request(request))
             return web.Response(status=201, content_type='text/xml', text=node.tostring())
 
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except Exception as g:
-            #import traceback
-            #traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def _delete_node(self, request):
         try:
-            url_path = request.path.replace('/vospace/nodes', '')
-            await delete_node(self, url_path)
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(delete_node_request(self, request))
             return web.Response(status=204)
 
         except VOSpaceError as f:
@@ -195,8 +193,10 @@ class SpaceServer(web.Application):
         try:
             job_xml = await request.text()
             transfer = Transfer.fromstring(job_xml)
-            job = await self['executor'].create(transfer, UWSPhase.Executing)
-            await perform_transfer_job(job, self, sync=True)
+            with suppress(asyncio.CancelledError):
+                job = await asyncio.shield(self['executor'].create(transfer, UWSPhase.Executing))
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(perform_transfer_job(job, self, sync=True))
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job.job_id}'
                                              f'/results/transferDetails')
 
@@ -205,18 +205,17 @@ class SpaceServer(web.Application):
         except Exception as e:
             return web.Response(status=500)
 
-    async def _transfer_node(self, request):
+    async def _create_transfer(self, request):
         try:
             job_xml = await request.text()
             transfer = Transfer.fromstring(job_xml)
-            job = await self['executor'].create(transfer, UWSPhase.Pending)
+            with suppress(asyncio.CancelledError):
+                job = await asyncio.shield(self['executor'].create(transfer, UWSPhase.Pending))
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job.job_id}')
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
     async def _get_complete_transfer_job(self, request):
@@ -229,8 +228,6 @@ class SpaceServer(web.Application):
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
     async def _transfer_details(self, request):
@@ -246,11 +243,9 @@ class SpaceServer(web.Application):
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
-    async def _get_transfer_node_job_phase(self, request):
+    async def _get_transfer_job_phase(self, request):
         try:
             job_id = request.match_info.get('job_id', None)
             job = await self['executor'].get_uws_job_phase(job_id)
@@ -259,8 +254,6 @@ class SpaceServer(web.Application):
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)
 
     async def _change_transfer_job_phase(self, request):
@@ -274,7 +267,5 @@ class SpaceServer(web.Application):
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
+        except Exception:
             return web.Response(status=500)

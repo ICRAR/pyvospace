@@ -2,6 +2,7 @@ from contextlib import suppress
 
 from pyvospace.core.exception import *
 from pyvospace.core.model import *
+from .database import *
 
 
 NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
@@ -9,7 +10,7 @@ namespaces = {'http://www.ivoa.net/xml/VOSpace/v2.1': 'vos',
               'http://www.w3.org/2001/XMLSchema-instance': 'xs'}
 
 
-async def _get_node_request(request):
+async def get_node_request(request):
     path = request.path.replace('/vospace/nodes', '')
 
     detail = request.query.get('detail', 'max')
@@ -48,23 +49,17 @@ async def _get_node_request(request):
     return node
 
 
-async def delete_node(app, path):
-    path_array = list(filter(None, path.split('/')))
-    path_tree = '.'.join(path_array)
+async def delete_node_request(app, request):
+    path = request.path.replace('/vospace/nodes', '')
 
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            result = await conn.fetch("delete from nodes where "
-                                      "path <@ $1 and space_id=$2 returning path, type",
-                                      path_tree, app['space_id'])
-            if not result:
-                raise VOSpaceError(404, f"Node Not Found. {path} not found.")
-
+            node = await request.app['db'].delete(path, conn)
             with suppress(OSError):
-                await app['abstract_space'].delete_storage_node(result[0]['type'], '/'.join(path_array))
+                await app['abstract_space'].delete_storage_node(node)
 
 
-async def _create_node_request(request):
+async def create_node_request(request):
     #identity = await authorized_userid(request)
 
     xml_request = await request.text()
@@ -86,7 +81,7 @@ async def _create_node_request(request):
     return node
 
 
-async def _set_node_properties_request(request):
+async def set_node_properties_request(request):
     #identity = await authorized_userid(request)
 
     xml_request = await request.text()

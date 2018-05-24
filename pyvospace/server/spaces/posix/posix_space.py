@@ -3,6 +3,7 @@ import configparser
 import base64
 import asyncpg
 
+from contextlib import suppress
 from aiohttp_security import setup as setup_security
 from aiohttp_security import SessionIdentityPolicy
 from aiohttp_session import setup as setup_session
@@ -10,7 +11,6 @@ from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from cryptography import fernet
 
 from pyvospace.server.space import SpaceServer
-from pyvospace.server.node import NodeType
 from pyvospace.server.space import AbstractSpace
 from pyvospace.core.model import *
 
@@ -21,12 +21,9 @@ from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 class PosixSpace(AbstractSpace):
     def __init__(self, cfg_file):
         super().__init__()
-
         self.config = configparser.ConfigParser()
         self.config.read(cfg_file)
-
         self.name = self.config['Storage']['name']
-
         self.storage_parameters = json.loads(self.config['Storage']['parameters'])
 
         self.root_dir = self.storage_parameters['root_dir']
@@ -47,24 +44,29 @@ class PosixSpace(AbstractSpace):
     async def shutdown(self):
         pass
 
-    async def move_storage_node(self, src_type, src_path, dest_type, dest_path):
-        s_path = f"{self.root_dir}/{src_path}"
-        d_path = f"{self.root_dir}/{dest_path}"
+    async def move_storage_node(self, src, dest):
+        s_path = f"{self.root_dir}/{src.path}"
+        d_path = f"{self.root_dir}/{dest.path}"
         await move(s_path, d_path)
 
-    async def copy_storage_node(self, src_type, src_path, dest_type, dest_path):
-        s_path = f"{self.root_dir}/{src_path}"
-        d_path = f"{self.root_dir}/{dest_path}"
+    async def copy_storage_node(self, src, dest):
+        s_path = f"{self.root_dir}/{src.path}"
+        d_path = f"{self.root_dir}/{dest.path}"
         await copy(s_path, d_path)
 
     async def create_storage_node(self, node: Node):
+        m_path = f"{self.root_dir}/{node.path}"
+        # Remove what may be left over from a failed xfer.
+        # The only way this could happen if the storage server was
+        # shutdown forcibly during an upload leaving a partial file.
+        with suppress(Exception):
+            await remove(m_path)
         if node.node_type == NodeType.ContainerNode:
-            m_path = f"{self.root_dir}/{node.path}"
             await mkdir(m_path)
 
-    async def delete_storage_node(self, node_type, node_path):
-        m_path = f"{self.root_dir}/{node_path}"
-        if node_type == NodeType.ContainerNode:
+    async def delete_storage_node(self, node):
+        m_path = f"{self.root_dir}/{node.path}"
+        if node.node_type == NodeType.ContainerNode:
             # The directory should always exists unless
             # it has been deleted under us.
             await rmtree(m_path)

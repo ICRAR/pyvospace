@@ -57,6 +57,7 @@ class TestPushPull(TestBase):
 
             await self.delete('http://localhost:8080/vospace/nodes/syncdatanode')
             await self.push_to_space(put_end.text, '/tmp/datafile.dat', expected_status=404)
+            #await self.push_to_space(put_end.text, '/tmp/datafile.dat', expected_status=200)
 
         self.loop.run_until_complete(run())
 
@@ -75,7 +76,7 @@ class TestPushPull(TestBase):
             try:
                 await asyncio.wait_for(self.push_to_space(put_end.text,
                                                           '/tmp/datafile.dat',
-                                                          expected_status=200), 0.2)
+                                                          expected_status=200), 0.1)
             except Exception as e:
                 pass
 
@@ -103,24 +104,21 @@ class TestPushPull(TestBase):
             node = Node('/datanode/datanode1/datanode2')
             push = PushToSpace(node, [HTTPPut()])
 
-            response = await self.transfer_node(push)
-            job_id = self.get_job_id(response)
-
+            job = await self.transfer_node(push)
             # Job that is not in the correct phase
             # This means that the node is not yet associated with the job.
             # It gets associated when the job is run.
-            await self.push_to_space(f'http://localhost:8081/vospace/pushToVoSpace/{job_id}',
+            await self.push_to_space(f'http://localhost:8081/vospace/pushToVoSpace/{job.job_id}',
                                      '/tmp/datafile.dat', expected_status=400)
 
             # Get transfer details, should be in invalid state because its not Executing
-            await self.get_transfer_details(job_id, expected_status=400)
-            await self.change_job_state(job_id)
-            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
+            await self.get_transfer_details(job.job_id, expected_status=400)
+            await self.change_job_state(job.job_id)
+            await self.poll_job(job.job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
 
             # Get transferDetails
-            response = await self.get_transfer_details(job_id, expected_status=200)
-            transfer = Transfer.fromstring(response)
-            end = str(transfer.protocols[0].endpoint)
+            transfer = await self.get_transfer_details(job.job_id, expected_status=200)
+            end = transfer.protocols[0].endpoint.url
 
             # badly formed job id
             await self.push_to_space('http://localhost:8081/vospace/pushToVoSpace/1234',
@@ -153,16 +151,13 @@ class TestPushPull(TestBase):
             await self.create_node(node1)
 
             push = PushToSpace(node1, [HTTPPut()])
-            response = await self.transfer_node(push)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id)
-            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
-            response = await self.get_transfer_details(job_id, expected_status=200)
+            job = await self.transfer_node(push)
+            await self.change_job_state(job.job_id)
+            await self.poll_job(job.job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
 
-            root = ET.fromstring(response)
-            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
-            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=400)
+            transfer = await self.get_transfer_details(job.job_id, expected_status=200)
+            end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(end, '/tmp/datafile.dat', expected_status=400)
 
             await self.delete('http://localhost:8080/vospace/nodes/datanode')
 
@@ -171,10 +166,9 @@ class TestPushPull(TestBase):
             await self.create_node(node1)
 
             push = PushToSpace(node1, [HTTPPut()])
-            response = await self.transfer_node(push)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id)
-            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='ERROR')
+            job = await self.transfer_node(push)
+            await self.change_job_state(job.job_id)
+            await self.poll_job(job.job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='ERROR')
 
             await self.delete('http://localhost:8080/vospace/nodes/datanode')
 
@@ -183,18 +177,14 @@ class TestPushPull(TestBase):
             await self.create_node(node1)
 
             push = PushToSpace(node1, [HTTPPut()])
-            response = await self.transfer_node(push)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id)
-            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
+            job = await self.transfer_node(push)
+            await self.change_job_state(job.job_id)
+            await self.poll_job(job.job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
             await self.delete('http://localhost:8080/vospace/nodes/datanode')
 
-            response = await self.get_transfer_details(job_id, expected_status=200)
-
-            root = ET.fromstring(response)
-            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
-            await self.push_to_space(end.text, '/tmp/datafile.dat', expected_status=404)
+            transfer = await self.get_transfer_details(job.job_id, expected_status=200)
+            end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(end, '/tmp/datafile.dat', expected_status=404)
 
         self.loop.run_until_complete(run())
 
@@ -212,31 +202,25 @@ class TestPushPull(TestBase):
             node = Node('/datanode/datanode1/datanode2')
             push = PushToSpace(node, [HTTPPut()])
 
-            response = await self.transfer_node(push)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id)
-            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
-            response = await self.get_transfer_details(job_id, expected_status=200)
+            job = await self.transfer_node(push)
+            await self.change_job_state(job.job_id)
+            await self.poll_job(job.job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
 
-            root = ET.fromstring(response)
-            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end1 = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            transfer = await self.get_transfer_details(job.job_id, expected_status=200)
+            end1 = transfer.protocols[0].endpoint.url
 
             # start job to upload to same node
-            response = await self.transfer_node(push)
-            job_id = self.get_job_id(response)
-            await self.change_job_state(job_id)
-            await self.poll_job(job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
-            response = await self.get_transfer_details(job_id, expected_status=200)
+            job = await self.transfer_node(push)
+            await self.change_job_state(job.job_id)
+            await self.poll_job(job.job_id, poll_until=('EXECUTING', 'ERROR'), expected_status='EXECUTING')
 
-            root = ET.fromstring(response)
-            prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end2 = prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            transfer = await self.get_transfer_details(job.job_id, expected_status=200)
+            end2 = transfer.protocols[0].endpoint.url
 
             # concurrent upload
             tasks = [
-                asyncio.ensure_future(self.push_to_space_defer_error(end1.text, '/tmp/datafile.dat')),
-                asyncio.ensure_future(self.push_to_space_defer_error(end2.text, '/tmp/datafile.dat'))
+                asyncio.ensure_future(self.push_to_space_defer_error(end1, '/tmp/datafile.dat')),
+                asyncio.ensure_future(self.push_to_space_defer_error(end2, '/tmp/datafile.dat'))
             ]
 
             result = []

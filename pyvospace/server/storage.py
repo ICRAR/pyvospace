@@ -1,11 +1,12 @@
+import asyncio
 import asyncpg
 import configparser
 
-from .uws import *
-from .database import *
-from pyvospace.core.exception import *
-
 from aiohttp import web
+from contextlib import suppress
+
+from .uws import *
+from pyvospace.core.exception import *
 
 
 class SpaceStorage(object):
@@ -25,7 +26,8 @@ class SpaceStorage(object):
 
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                space_result = await conn.fetchrow("select * from space where name=$1 for update", name)
+                space_result = await conn.fetchrow("select * from space "
+                                                   "where name=$1 for update", name)
                 if not space_result:
                     raise VOSpaceError(404, f'Space not found. {name}')
 
@@ -37,17 +39,17 @@ class SpaceStorage(object):
 
     async def _execute(self, job, func, request):
         lock = 'share'
-        if isinstance(job.transfer, PushToSpace):
+        if isinstance(job.job_info, PushToSpace):
             lock = 'update'
-
         try:
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
-                    result = await self.executor.node_db._lock_node(job, conn, lock)
-                    job.transfer.target = self.executor.node_db._resultset_to_node([result], [])
+                    node_result = await self.executor._get_executing_target(job.job_id, conn, lock)
+                    target_node = NodeDatabase._resultset_to_node([node_result], [])
+                    job.transfer.target = target_node
                     return await func(job, request)
         except asyncpg.exceptions.LockNotAvailableError:
-            raise NodeBusyError(f"{job.transfer.target.path} is busy")
+            raise NodeBusyError('')
 
     async def execute(self, request, job_id, func):
         try:

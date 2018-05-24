@@ -557,7 +557,8 @@ class StructuredDataNode(DataNode):
 
 class Transfer(object):
     def __init__(self, target, direction):
-        self._target = target
+        self._target = None
+        self.target = target
         self._direction = direction
 
     @property
@@ -604,8 +605,7 @@ class Transfer(object):
             return Move(Node(target), Node(direction))
 
     @classmethod
-    def fromstring(cls, xml):
-        root = ET.fromstring(xml)
+    def fromroot(cls, root):
         target = root.xpath('/vos:transfer/vos:target', namespaces=Node.NS)
         if not target:
             raise InvalidURI('target not found')
@@ -623,6 +623,11 @@ class Transfer(object):
         node = Transfer.create_node(target[0].text, direction[0].text, keep_bytes)
         node.build_node(root)
         return node
+
+    @classmethod
+    def fromstring(cls, xml):
+        root = ET.fromstring(xml)
+        return Transfer.fromroot(root)
 
 
 class NodeTransfer(Transfer):
@@ -737,3 +742,150 @@ class PullFromSpace(ProtocolTransfer):
                          direction='pullFromVoSpace',
                          protocols=protocols,
                          view=view)
+
+
+##### UWS JOBS ######
+UWS_Phase = namedtuple('NodeType', 'Pending '
+                                   'Queued '
+                                   'Executing '
+                                   'Completed '
+                                   'Error '
+                                   'Aborted '
+                                   'Unknown '
+                                   'Held '
+                                   'Suspended '
+                                   'Archived')
+
+UWSPhase = UWS_Phase(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+
+PhaseLookup = {0: 'PENDING',
+               1: 'QUEUED',
+               2: 'EXECUTING',
+               3: 'COMPLETED',
+               4: 'ERROR',
+               5: 'ABORTED',
+               6: 'UNKNOWN',
+               7: 'HELD',
+               8: 'SUSPENDED',
+               9: 'ARCHIVED'}
+
+
+class UWSResult(object):
+    def __init__(self, id, attrs):
+        self.id = id
+        self.attrs = attrs
+
+    def toxml(self, root):
+        result = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}result')
+        result.set('id', self.id)
+        for key, value in self.attrs.items():
+            result.set(key, value)
+
+    @classmethod
+    def fromroot(cls, root):
+        result_set = []
+        for result in root.xpath('/uws:results/uws:result', namespaces=UWSJob.NS):
+            id = result.attrib.get('id', None)
+            assert id
+            del result.attrib['id']
+            result_set.append(UWSResult(id, result.attrib))
+        return result_set
+
+    @classmethod
+    def fromstring(cls, xml):
+        root = ET.fromstring(xml)
+        return UWSResult.fromroot(root)
+
+
+class UWSJob(object):
+
+    NS = {'uws': 'http://www.ivoa.net/xml/UWS/v1.0',
+          'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+          'xlink': 'http://www.w3.org/1999/xlink',
+          'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1'}
+
+    def __init__(self, job_id, phase, destruction, job_info=None, results=None, error=None):
+        self.job_id = str(job_id)
+        self.phase = phase
+        self.destruction = destruction
+        if job_info:
+            assert isinstance(job_info, Transfer)
+        self.job_info = job_info
+        self._results = None
+        self.results = results
+        self.error = error
+        #if transfer:
+        #    assert isinstance(transfer, Transfer)
+        #self.transfer = transfer
+
+    @property
+    def results(self):
+        return self._results
+
+    @results.setter
+    def results(self, value):
+        if value:
+            assert isinstance(value, list) is True
+            for result in value:
+                assert isinstance(result, UWSResult) is True
+                self._results = copy.deepcopy(value)
+
+    def toxml(self):
+        root = ET.Element("{http://www.ivoa.net/xml/UWS/v1.0}job", nsmap=UWSJob.NS)
+        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}jobId').text = self.job_id
+        owner_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}ownerId')
+        owner_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
+        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}phase').text = PhaseLookup[self.phase]
+        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}quote').text = None
+        starttime_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}startTime')
+        starttime_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
+        endtime_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}endTime')
+        endtime_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
+        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}executionDuration').text = str(0)
+        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}destruction').text = str(self.destruction)
+        if self.job_info:
+            job_info_elem = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}jobInfo')
+            job_info_elem.append(self.job_info.toxml())
+        if self.results:
+            results = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}results')
+            for result in results:
+                result.toxml(results)
+        if self.error:
+            error_summary = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}errorSummary')
+            ET.SubElement(error_summary, '{http://www.ivoa.net/xml/UWS/v1.0}message').text = self.error
+        return root
+
+    def results_tostring(self):
+        if not self.results:
+            return None
+        results_elem = ET.Element('{http://www.ivoa.net/xml/UWS/v1.0}results', nsmap=UWSJob.NS)
+        for result in self.results:
+            result.toxml(results_elem)
+        return ET.tostring(results_elem).decode("utf-8")
+
+    def tostring(self):
+        root = self.toxml()
+        return ET.tostring(root).decode("utf-8")
+
+    @classmethod
+    def fromstring(cls, xml):
+        root = ET.fromstring(xml)
+        root_elem = root.xpath('/uws:job/uws:jobId', namespaces=UWSJob.NS)
+        assert root_elem
+        job_id = root_elem[0].text
+        phase_elem = root.xpath('/uws:job/uws:phase', namespaces=UWSJob.NS)
+        assert phase_elem
+        phase = phase_elem[0].text
+        destruction_elem = root.xpath('/uws:job/uws:destruction', namespaces=UWSJob.NS)
+        assert destruction_elem
+        destruction = destruction_elem[0].text
+        result_set = UWSResult.fromroot(root)
+        job_info = None
+        job_info_elem = root.xpath('/uws:job/uws:jobInfo/vos:transfer', namespaces=UWSJob.NS)
+        if job_info_elem:
+            job_info = Transfer.fromstring(ET.tostring(job_info_elem[0]))
+        error = None
+        error_summary_elem = root.xpath('/uws:job/uws:errorSummary/uws:message', namespaces=UWSJob.NS)
+        if error_summary_elem:
+            error = error_summary_elem[0].text
+        return UWSJob(job_id, phase, destruction, job_info, result_set, error)
