@@ -13,10 +13,9 @@ class TestCreate(TestBase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/test1'))
         super().tearDown()
 
-    def ttest_get_protocol(self):
+    def test_get_protocol(self):
         async def run():
-            status, response = await self.get('http://localhost:8080/vospace/protocols',
-                                              params=None)
+            status, response = await self.get('http://localhost:8080/vospace/protocols', params=None)
             self.assertEqual(200, status, msg=response)
 
         self.loop.run_until_complete(run())

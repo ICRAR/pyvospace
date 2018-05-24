@@ -106,6 +106,35 @@ class Protocol(object):
         return self.uri == other.uri
 
 
+class Protocols(object):
+    def __init__(self, accepts, provides):
+        assert isinstance(accepts, list)
+        for view in accepts:
+            assert isinstance(view, Protocol)
+        self.accepts = accepts
+        assert isinstance(accepts, list)
+        for view in accepts:
+            assert isinstance(view, Protocol)
+        self.provides = provides
+
+    def tostring(self):
+        root = self.toxml()
+        return ET.tostring(root).decode("utf-8")
+
+    def toxml(self):
+        root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}protocols", nsmap = Node.NS)
+        if self.accepts:
+            accepts_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}accepts")
+            for prop in self.accepts:
+                protocol_element = ET.SubElement(accepts_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}protocol")
+                protocol_element.set('uri', prop.uri)
+        if self.provides:
+            provides_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}provides")
+            for prop in self.provides:
+                protocol_element = ET.SubElement(provides_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}protocol")
+                protocol_element.set('uri', prop.uri)
+        return root
+
 
 class HTTPPut(Protocol):
     def __init__(self, endpoint=None):
@@ -814,9 +843,7 @@ class UWSJob(object):
         self._results = None
         self.results = results
         self.error = error
-        #if transfer:
-        #    assert isinstance(transfer, Transfer)
-        #self.transfer = transfer
+        self.transfer = None
 
     @property
     def results(self):
