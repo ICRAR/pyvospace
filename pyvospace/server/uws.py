@@ -1,39 +1,12 @@
 import datetime
 import asyncio
 import functools
-import copy
 
 from contextlib import suppress
-from collections import namedtuple
-import lxml.etree as ET
 
 from pyvospace.core.model import *
 from pyvospace.core.exception import *
 from .database import NodeDatabase
-
-UWS_Phase = namedtuple('NodeType', 'Pending '
-                                   'Queued '
-                                   'Executing '
-                                   'Completed '
-                                   'Error '
-                                   'Aborted '
-                                   'Unknown '
-                                   'Held '
-                                   'Suspended '
-                                   'Archived')
-
-UWSPhase = UWS_Phase(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
-
-PhaseLookup = {0: 'PENDING',
-               1: 'QUEUED',
-               2: 'EXECUTING',
-               3: 'COMPLETED',
-               4: 'ERROR',
-               5: 'ABORTED',
-               6: 'UNKNOWN',
-               7: 'HELD',
-               8: 'SUSPENDED',
-               9: 'ARCHIVED'}
 
 
 class UWSJobPool(object):
@@ -100,11 +73,11 @@ class UWSJobPool(object):
         results = None
         if result['results']:
             results = UWSResult.fromstring(result['results'])
-        transfer = None
-        if result['transfer']:
-            transfer = Transfer.fromstring(result['transfer'])
+        #transfer = None
+        #if result['transfer']:
+        #    transfer = Transfer.fromstring(result['transfer'])
         return UWSJob(result['id'], result['phase'], result['destruction'],
-                      job_info, results, result['error'], transfer)
+                      job_info, results, result['error'])
 
     async def get(self, job_id):
         async with self.db_pool.acquire() as conn:
@@ -163,126 +136,99 @@ class UWSJobPool(object):
         return result
 
 
+class StorageUWSJob(UWSJob):
+    def __init__(self, job_id, phase, destruction, job_info, transfer):
+        super().__init__(job_id, phase, destruction, job_info, None, None)
+        self.transfer = transfer
+
+    '''async def _set_node_busy(self):
+        async with self._pool.db_pool.acquire() as conn:
+            async with conn.transaction():
+                results = await self._get_executing_target(conn)
+                if results['busy']:
+                    raise NodeBusyError(f"{self.job_info.target.path} is busy.")
+                await conn.fetchrow('update nodes set busy=true where path=$1 and space_id=$2',
+                                    self._pool.node_db.path_to_ltree(results['path']),
+                                    self._pool.space_id)
+
+    async def _set_node_not_busy(self):
+        async with self._pool.db_pool.acquire() as conn:
+            async with conn.transaction():
+                results = await self._get_target(conn)
+                await conn.fetchrow('update nodes set busy=false where path=$1 and space_id=$2',
+                                    self._pool.node_db.path_to_ltree(results['path']),
+                                    self._pool.space_id)
+
+    class TargetNodeTransaction(object):
+        def __init__(self, storage_job):
+            self._storage_job = storage_job
+            self._conn = None
+            self._trans = None
+
+        async def __aenter__(self):
+            try:
+                self._conn = await self._storage_job._pool.db_pool.acquire()
+                self._trans = self._conn.transaction()
+                await self._trans.start()
+                await self._storage_job._get_executing_target(self._conn)
+                return self
+            except Exception:
+                if self._trans:
+                    self._trans.rollback()
+                if self._conn:
+                    await self._storage_job._pool.db_pool.release(self._conn)
+                raise
+
+        async def __aexit__(self, exc_type, exc, tb):
+            await self._trans.commit()
+            await self._storage_job._pool.db_pool.release(self._conn)
+
+    def target_node_transaction(self):
+        return StorageUWSJob.TargetNodeTransaction(self)'''
+
+    '''async def _get_target(self, conn):
+        result = await conn.fetchrow("select * from nodes left join uws_jobs on "
+                                     "nodes.space_id = uws_jobs.space_id and nodes.path = uws_jobs.target "
+                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
+                                     "for update of nodes",
+                                     self.job_id, self._pool.space_id)
+        if not result:
+            raise NodeDoesNotExistError(f"{self.job_info.target.path} not found.")
+
+        return result'''
+
+
 class StorageUWSJobPool(UWSJobPool):
     def __init__(self, space_id, db_pool):
         super().__init__(space_id, db_pool)
+
+    def _resultset_to_job(self, result):
+        job_info = Transfer.fromstring(result['job_info'])
+        transfer = Transfer.fromstring(result['transfer'])
+        return StorageUWSJob(result['id'], result['phase'], result['destruction'], job_info, transfer)
+
+    async def _get_executing_target(self, job_id, conn, lock='update'):
+        result = await conn.fetchrow("select nodes.* from nodes left join uws_jobs on "
+                                     "nodes.space_id = uws_jobs.space_id and nodes.path = uws_jobs.target "
+                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
+                                     f"and uws_jobs.phase=2 for {lock} of nodes nowait",
+                                     job_id, self.space_id)
+        if not result:
+            raise NodeDoesNotExistError('')
+        return result
 
     async def execute(self, job_id, func, *args):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 result = await self._get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
+                # Can only start an EXECUTING Job if its a protocol transfer
+                if result['phase'] != UWSPhase.Executing:
+                    raise InvalidJobStateError('Invalid Job State')
                 job = self._resultset_to_job(result)
                 if not isinstance(job.job_info, ProtocolTransfer):
                     raise InvalidJobStateError('Invalid Job Type')
-                # Can only start an EXECUTING Job if its a protocol transfer
-                if job.phase != UWSPhase.Executing:
-                    raise InvalidJobStateError('Invalid Job State')
                 fut = self.executor.execute(job, func, *args)
         return await fut
-
-
-class UWSResult(object):
-    def __init__(self, id, attrs):
-        self.id = id
-        self.attrs = attrs
-
-    def toxml(self, root):
-        result = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}result')
-        result.set('id', self.id)
-        for key, value in self.attrs.items():
-            result.set(key, value)
-
-    @classmethod
-    def fromstring(cls, xml):
-        result_set = []
-        if not xml:
-            return result_set
-
-        root = ET.fromstring(xml)
-        for result in root.xpath('/uws:results/uws:result', namespaces=UWSJob.NS):
-            id = result.attrib.get('id', None)
-            assert id
-            del result.attrib['id']
-            result_set.append(UWSResult(id, result.attrib))
-        return result_set
-
-
-class UWSJob(object):
-
-    NS = {'uws': 'http://www.ivoa.net/xml/UWS/v1.0',
-          'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-          'xlink': 'http://www.w3.org/1999/xlink'}
-
-    def __init__(self, job_id, phase, destruction, job_info, results=None, error=None, transfer=None):
-        self.job_id = str(job_id)
-        self.phase = phase
-        self.destruction = destruction
-        self.job_info = job_info
-        self._results = None
-        self.results = results
-        self.error = error
-        self.transfer = transfer
-
-    @property
-    def results(self):
-        return self._results
-
-    @results.setter
-    def results(self, value):
-        if value:
-            assert isinstance(value, list) is True
-            for result in value:
-                assert isinstance(result, UWSResult) is True
-                self._results = copy.deepcopy(value)
-
-    def toxml(self):
-        root = ET.Element("{http://www.ivoa.net/xml/UWS/v1.0}job", nsmap=UWSJob.NS)
-        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}jobId').text = self.job_id
-        owner_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}ownerId')
-        owner_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
-        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}phase').text = PhaseLookup[self.phase]
-        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}quote').text = None
-        starttime_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}startTime')
-        starttime_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
-        endtime_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}endTime')
-        endtime_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
-        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}executionDuration').text = str(0)
-        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}destruction').text = str(self.destruction)
-        if self.results:
-            results = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}results')
-            for result in results:
-                result.toxml(results)
-        if self.error:
-            error_summary = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}errorSummary')
-            ET.SubElement(error_summary, '{http://www.ivoa.net/xml/UWS/v1.0}message').text = self.error
-        return root
-
-    def results_tostring(self):
-        if not self.results:
-            return None
-        results_elem = ET.Element('{http://www.ivoa.net/xml/UWS/v1.0}results', nsmap=UWSJob.NS)
-        for result in self.results:
-            result.toxml(results_elem)
-        return ET.tostring(results_elem).decode("utf-8")
-
-    def tostring(self):
-        root = self.toxml()
-        return ET.tostring(root).decode("utf-8")
-
-    @classmethod
-    def fromstring(cls, xml):
-        root = ET.fromstring(xml)
-        root_elem = root.xpath('/uws:job/uws:jobId', namespace=UWSJob.NS)
-        assert root_elem
-        assert root_elem.text
-        phase_elem = root.xpath('/uws:job/uws:phase', namespace=UWSJob.NS)
-        assert phase_elem
-        assert phase_elem.text
-        destruction_elem = root.xpath('/uws:job/uws:destruction', namespace=UWSJob.NS)
-        assert destruction_elem
-        assert destruction_elem.text
-        for result in root.xpath('/uws:job/uws:results/uws:result', namespace=UWSJob.NS):
-            pass
 
 
 class UWSJobExecutor(object):

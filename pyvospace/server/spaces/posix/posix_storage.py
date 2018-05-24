@@ -1,14 +1,15 @@
 import io
+import os
 import asyncio
 import aiofiles
-import os
 import configparser
 import json
+import uuid
 
 from aiohttp import web
 
-from pyvospace.server.node import NodeType
-from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file
+from pyvospace.server.view import NodeType
+from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move
 from pyvospace.core.exception import *
 from pyvospace.server.storage import SpaceStorage
 
@@ -85,18 +86,20 @@ class PosixStorageServer(web.Application):
         if job.transfer.target.node_type == NodeType.ContainerNode:
             return web.Response(status=400, text='Unable to upload data to a container.')
 
-        path_tree = job.transfer.target.path
-        file_name = f'{self.root_dir}/{path_tree}'
+        path_tree = job.job_info.target.path
+        real_file_name = f'{self.root_dir}/{path_tree}'
+        stage_file_name = f'{self.staging_dir}/{uuid.uuid1()}'
 
         try:
-            async with aiofiles.open(file_name, 'wb') as f:
+            async with aiofiles.open(stage_file_name, 'wb') as f:
                 while True:
                     buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
                     if not buffer:
                         break
                     await f.write(buffer)
-        except asyncio.CancelledError:
-            await remove(file_name)
-            raise
 
-        return web.Response(status=200)
+            await asyncio.shield(move(stage_file_name, real_file_name))
+            return web.Response(status=200)
+        except (asyncio.CancelledError, Exception):
+            await remove(stage_file_name)
+            raise
