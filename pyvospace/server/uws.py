@@ -14,7 +14,6 @@ class UWSJobPool(object):
         self.db_pool = db_pool
         self.space_id = space_id
         self.executor = UWSJobExecutor(space_id)
-        self.node_db = NodeDatabase(space_id, db_pool)
 
     async def close(self):
         await self.executor.close()

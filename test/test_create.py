@@ -11,6 +11,7 @@ class TestCreate(TestBase):
 
     def tearDown(self):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/test1'))
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         super().tearDown()
 
     def test_get_protocol(self):
@@ -41,7 +42,7 @@ class TestCreate(TestBase):
             params = {'detail': 'max'}
             node = await self.get_node('test1', params)
 
-            prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle")]
+            prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle", False)]
             orig_node = ContainerNode('/test1', properties=prop)
             self.assertEqual(node, orig_node)
 
@@ -49,15 +50,10 @@ class TestCreate(TestBase):
 
     def test_create_node_fail(self):
         async def run():
-            session = await self.login('test', 'test')
             # XML Parse Error
             status, response = await self.put('http://localhost:8080/vospace/nodes/',
                                               data='<test><test>')
             self.assertEqual(500, status, msg=response)
-
-            # Empty Path
-            #node = Node('')
-            #await self.create_node(node, expected_status=400)
 
             # URI name in node does not match URL path
             node = Node('data1')
@@ -83,30 +79,27 @@ class TestCreate(TestBase):
                                               data=xml)
             self.assertEqual(400, status, msg=response)
 
-            await session.close()
-
         self.loop.run_until_complete(run())
 
     def test_create_node(self):
         async def run():
-            # Invalid Path
-            #node1 = ContainerNode('')
-            #status, response = await self.put('http://localhost:8080/vospace/nodes/',
-            #                                  data=node1.tostring())
-            #self.assertEqual(400, status, msg=response)
-
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Test", True),
                           Property('ivo://ivoa.net/vospace/core#description', "Hello", True)]
             node = ContainerNode('test1', properties=properties)
-            status, response = await self.put('http://localhost:8080/vospace/nodes/test1',
-                                              data=node.tostring())
-            self.assertEqual(201, status, msg=response)
+            await self.create_node(node)
 
             node1 = ContainerNode('/test1/test2')
             await self.create_node(node1)
 
             node2 = Node('/test1/data')
             await self.create_node(node2)
+
+            node3 = DataNode('/datanode')
+            await self.create_node(node3)
+
+            data_node = await self.get_node('/datanode', params={'detail': 'max'})
+            self.assertGreater(len(data_node.provides), 0)
+            self.assertGreater(len(data_node.accepts), 0)
 
             # Duplicate Node
             await self.create_node(node1, expected_status=409)

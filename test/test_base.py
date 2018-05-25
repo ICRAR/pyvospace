@@ -23,7 +23,7 @@ class TestBase(unittest.TestCase):
         logging.basicConfig(stream=sys.stderr)
         logging.getLogger('test').setLevel(logging.DEBUG)
         self.log = logging.getLogger('test')
-
+        self.session = None
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(None)
 
@@ -39,33 +39,9 @@ class TestBase(unittest.TestCase):
                                'name': 'posix',
                                'uri': 'icrar.org',
                                'dsn': 'postgres://test:test@localhost:5432/vos',
-                               'accepts_views': json.dumps(
-                                   {
-                                       'vos:Node': ['ivo://ivoa.net/vospace/core#anyview'],
-                                       'vos:DataNode': ['ivo://ivoa.net/vospace/core#anyview'],
-                                       'vos:UnstructuredDataNode': ['ivo://ivoa.net/vospace/core#anyview'],
-                                       'vos:StructuredDataNode': ['ivo://ivoa.net/vospace/core#anyview'],
-                                       'vos:ContainerNode': [],
-                                       'vos:LinkNode': []
-                                   }),
-                               'provides_views': json.dumps(
-                                   {
-                                       'vos:Node': ['ivo://ivoa.net/vospace/core#defaultview'],
-                                       'vos:DataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
-                                       'vos:UnstructuredDataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
-                                       'vos:StructuredDataNode': ['ivo://ivoa.net/vospace/core#defaultview'],
-                                       'vos:ContainerNode': [],
-                                       'vos:LinkNode': []
-                                   }),
-                               'accepts_protocols':json.dumps([]),
-                               'provides_protocols':
-                                   json.dumps(
-                                       ['ivo://ivoa.net/vospace/core#httpput',
-                                        'ivo://ivoa.net/vospace/core#httpget']
-                                   ),
-                               'readonly_properties': json.dumps([]),
-                               'parameters': '{}'
-                               }
+                               'parameters': '{}',
+                               'secret_key': 'ZlmNyXdQgRhhrC2Wwy-gLZj7Wv6ZtoKH',
+                               'domain': 'localhost'}
 
             config['Storage'] = {'name': 'posix',
                                  'host': 'localhost',
@@ -82,8 +58,14 @@ class TestBase(unittest.TestCase):
         site = web.TCPSite(self.runner, 'localhost', 8080,
                            reuse_address=True, reuse_port=True)
         self.loop.run_until_complete(site.start())
+        self.session = self.loop.run_until_complete(self._login('test', 'test'))
+
 
     def tearDown(self):
+        if self.session:
+            self.loop.run_until_complete(self._logout())
+            self.loop.run_until_complete(self.session.close())
+
         self.loop.run_until_complete(self.runner.shutdown())
         self.loop.run_until_complete(self.runner.cleanup())
         self.loop.close()
@@ -102,31 +84,37 @@ class TestBase(unittest.TestCase):
                 yield chunk
                 chunk = await f.read(64 * 1024)
 
-    async def login(self, username, password):
+    async def _login(self, username, password):
         session = aiohttp.ClientSession(auth=aiohttp.BasicAuth(username, password))
         async with session.post(f'http://localhost:8080/login') as resp:
-            print(resp.status, await resp.text())
+            response = await resp.text()
+            self.assertEqual(resp.status, 200, msg=response)
         return session
 
+    async def _logout(self):
+        async with self.session.post(f'http://localhost:8080/logout') as resp:
+            response = await resp.text()
+            self.assertEqual(resp.status, 200, msg=response)
+
     async def post(self, url, **kwargs):
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, **kwargs) as resp:
-                return resp.status, await resp.text()
+        #async with aiohttp.ClientSession() as session:
+        async with self.session.post(url, **kwargs) as resp:
+            return resp.status, await resp.text()
 
     async def delete(self, url):
-        async with aiohttp.ClientSession() as session:
-            async with session.delete(url) as resp:
-                return resp.status, await resp.text()
+        #async with aiohttp.ClientSession() as session:
+        async with self.session.delete(url) as resp:
+            return resp.status, await resp.text()
 
     async def put(self, url, **kwargs):
-        async with aiohttp.ClientSession() as session:
-            async with session.put(url, **kwargs) as resp:
-                return resp.status, await resp.text()
+        #async with aiohttp.ClientSession() as session:
+        async with self.session.put(url, **kwargs) as resp:
+            return resp.status, await resp.text()
 
     async def get(self, url, **kwargs):
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, **kwargs) as resp:
-                return resp.status, await resp.text()
+        #async with aiohttp.ClientSession() as session:
+        async with self.session.get(url, **kwargs) as resp:
+            return resp.status, await resp.text()
 
     async def create_node(self, node, expected_status=201):
         status, response = await self.put(f'http://localhost:8080/vospace/nodes/{node.path}',
@@ -201,11 +189,16 @@ class TestBase(unittest.TestCase):
         self.assertTrue(error_contains in job.error, msg=job.error)
 
     async def push_to_space(self, url, file_path, expected_status=200):
-        status, response = await self.put(url, data=self.file_sender(file_name=file_path))
-        self.assertEqual(status, expected_status, msg=response)
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, data=self.file_sender(file_name=file_path)) as resp:
+                response = await resp.text()
+                self.assertEqual(resp.status, expected_status, msg=response)
 
     async def push_to_space_defer_error(self, url, file_path):
-        return await self.put(url, data=self.file_sender(file_name=file_path))
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, data=self.file_sender(file_name=file_path)) as resp:
+                response = await resp.text()
+                return resp.status, response
 
     async def pull_from_space(self, url, output_path, expected_status=(200,)):
         async with aiohttp.ClientSession() as session:

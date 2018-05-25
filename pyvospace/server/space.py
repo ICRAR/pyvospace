@@ -6,20 +6,28 @@ import asyncio
 from aiohttp import web
 from contextlib import suppress
 from abc import ABCMeta, abstractmethod
+from aiohttp_security import permits
+from aiohttp_security.api import AUTZ_KEY
 
 from pyvospace.core.exception import *
 from pyvospace.core.model import *
 
-from .view import create_node_request, delete_node_request, \
-    get_node_request, set_node_properties_request
-from .uws import UWSJobPool, UWSPhase, PhaseLookup
-from .transfer import modify_transfer_job_phase, perform_transfer_job
+from .view import *
+from .uws import UWSJobPool
 from .database import NodeDatabase
 
 
 class AbstractSpace(metaclass=ABCMeta):
     @abstractmethod
     def get_protocols(self) -> Protocols:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_accept_views(self, node: Node):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_provide_views(self, node: Node):
         raise NotImplementedError()
 
     @abstractmethod
@@ -57,12 +65,12 @@ class SpaceServer(web.Application):
         self.router.add_post('/vospace/nodes/{name:.*}', self._set_node_properties)
         self.router.add_delete('/vospace/nodes/{name:.*}', self._delete_node)
         self.router.add_post('/vospace/transfers', self._create_transfer)
-        self.router.add_post('/vospace/synctrans', self._sync_transfer_node)
-        self.router.add_get('/vospace/transfers/{job_id}', self._get_complete_transfer_job)
-        self.router.add_post('/vospace/transfers/{job_id}/phase', self._change_transfer_job_phase)
-        self.router.add_get('/vospace/transfers/{job_id}/phase', self._get_transfer_job_phase)
-        self.router.add_get('/vospace/transfers/{job_id}/error', self._get_complete_transfer_job)
-        self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails', self._transfer_details)
+        self.router.add_post('/vospace/synctrans', self._sync_transfer)
+        self.router.add_get('/vospace/transfers/{job_id}', self._get_job)
+        self.router.add_post('/vospace/transfers/{job_id}/phase', self._modify_job_phase)
+        self.router.add_get('/vospace/transfers/{job_id}/phase', self._get_job_phase)
+        self.router.add_get('/vospace/transfers/{job_id}/error', self._get_job)
+        self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails', self._get_transfer_details)
 
         self.on_shutdown.append(self.shutdown)
 
@@ -73,31 +81,19 @@ class SpaceServer(web.Application):
         self['space_name'] = self.config['Space']['name']
         self['uri'] = self.config['Space']['uri']
         self['parameters'] = json.loads(self.config['Space']['parameters'])
-        self['accepts_views'] = json.loads(self.config['Space']['accepts_views'])
-        self['provides_views'] = json.loads(self.config['Space']['provides_views'])
-        self['accepts_protocols'] = json.loads(self.config['Space']['accepts_protocols'])
-        self['provides_protocols'] = json.loads(self.config['Space']['provides_protocols'])
-        self['readonly_properties'] = json.loads(self.config['Space']['readonly_properties'])
         db_pool = await asyncpg.create_pool(dsn=self.config['Space']['dsn'])
-
         space_id = await self._register_space(db_pool,
                                               self['space_name'],
                                               self['space_host'],
                                               self['space_port'],
-                                              json.dumps(self['accepts_views']),
-                                              json.dumps(self['provides_views']),
-                                              json.dumps(self['accepts_protocols']),
-                                              json.dumps(self['provides_protocols']),
-                                              json.dumps(self['readonly_properties']),
                                               json.dumps(self['parameters']))
 
         self['db_pool'] = db_pool
         self['space_id'] = space_id
         self['executor'] = UWSJobPool(space_id, db_pool)
-        self['db'] = NodeDatabase(space_id, db_pool)
+        self['db'] = NodeDatabase(space_id, db_pool, self)
 
-    async def _register_space(self, db_pool, name, host, port, accepts_views, provides_views,
-                              accepts_protocols, provides_protocols, readonly_properties, parameters):
+    async def _register_space(self, db_pool, name, host, port, parameters):
         async with db_pool.acquire() as conn:
             async with conn.transaction():
                 result = await conn.fetchrow("select * from space where host=$1 and port=$2 for update",
@@ -109,20 +105,21 @@ class SpaceServer(web.Application):
                     if result['name'] != name:
                         raise VOSpaceError(400, 'Can not start space over an existing '
                                                 'space on the same host and port.')
-
-                result = await conn.fetchrow("insert into space (host, port, name, accepts_views, provides_views, "
-                                             "accepts_protocols, provides_protocols, readonly_properties, parameters) "
-                                             "values ($1, $2, $3, $4, $5, $6, $7, $8, $9) on conflict (host, port) "
-                                             "do update set accepts_views=$4, provides_views=$5, accepts_protocols=$6, "
-                                             "provides_protocols=$7, readonly_properties=$8, parameters=$9 "
-                                             "returning id",
-                                             host, port, name, accepts_views, provides_views,
-                                             accepts_protocols, provides_protocols, readonly_properties, parameters)
+                result = await conn.fetchrow("insert into space (host, port, name, parameters) "
+                                             "values ($1, $2, $3, $4) on conflict (host, port) "
+                                             "do update set parameters=$4 returning id",
+                                             host, port, name, parameters)
                 return int(result['id'])
 
     async def shutdown(self):
         await self['executor'].close()
         await self['db_pool'].close()
+
+    async def permits(self, identity, permission, context):
+        autz_policy = self.get(AUTZ_KEY)
+        if autz_policy is None:
+            return True
+        return await autz_policy.permits(identity, permission, context)
 
     async def _get_protocols(self, request):
         try:
@@ -177,17 +174,12 @@ class SpaceServer(web.Application):
         except Exception as e:
             return web.Response(status=500)
 
-    async def _sync_transfer_node(self, request):
+    async def _sync_transfer(self, request):
         try:
-            job_xml = await request.text()
-            transfer = Transfer.fromstring(job_xml)
             with suppress(asyncio.CancelledError):
-                job = await asyncio.shield(self['executor'].create(transfer, UWSPhase.Executing))
-            with suppress(asyncio.CancelledError):
-                await asyncio.shield(perform_transfer_job(job, self, sync=True))
+                job = await asyncio.shield(sync_transfer_request(request))
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job.job_id}'
                                              f'/results/transferDetails')
-
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception as e:
@@ -195,10 +187,8 @@ class SpaceServer(web.Application):
 
     async def _create_transfer(self, request):
         try:
-            job_xml = await request.text()
-            transfer = Transfer.fromstring(job_xml)
             with suppress(asyncio.CancelledError):
-                job = await asyncio.shield(self['executor'].create(transfer, UWSPhase.Pending))
+                job = await asyncio.shield(create_transfer_request(request))
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job.job_id}')
 
         except VOSpaceError as f:
@@ -206,11 +196,19 @@ class SpaceServer(web.Application):
         except Exception as e:
             return web.Response(status=500)
 
-    async def _get_complete_transfer_job(self, request):
+    async def _get_job(self, request):
         try:
-            job_id = request.match_info.get('job_id', None)
-            job = await self['executor'].get(job_id)
-            xml = job.tostring()
+            job = await get_job_request(request)
+            return web.Response(status=200, content_type='text/xml', text=job.tostring())
+
+        except VOSpaceError as f:
+            return web.Response(status=f.code, text=f.error)
+        except Exception:
+            return web.Response(status=500)
+
+    async def _get_transfer_details(self, request):
+        try:
+            xml = await get_transfer_details_request(request)
             return web.Response(status=200, content_type='text/xml', text=xml)
 
         except VOSpaceError as f:
@@ -218,37 +216,20 @@ class SpaceServer(web.Application):
         except Exception:
             return web.Response(status=500)
 
-    async def _transfer_details(self, request):
+    async def _get_job_phase(self, request):
         try:
-            job_id = request.match_info.get('job_id', None)
-            job = await self['executor'].get_uws_job(job_id)
-            if job['phase'] < UWSPhase.Executing:
-                raise InvalidJobStateError('Job not EXECUTING')
-            if not job['transfer']:
-                raise VOSpaceError(400, 'No transferDetails for this job.')
-            return web.Response(status=200, content_type='text/xml', text=job['transfer'])
+            phase_text = await get_job_phase_request(request)
+            return web.Response(status=200, text=phase_text)
 
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception:
             return web.Response(status=500)
 
-    async def _get_transfer_job_phase(self, request):
+    async def _modify_job_phase(self, request):
         try:
-            job_id = request.match_info.get('job_id', None)
-            job = await self['executor'].get_uws_job_phase(job_id)
-            return web.Response(status=200, text=PhaseLookup[job['phase']])
-
-        except VOSpaceError as f:
-            return web.Response(status=f.code, text=f.error)
-        except Exception:
-            return web.Response(status=500)
-
-    async def _change_transfer_job_phase(self, request):
-        try:
-            job_id = request.match_info.get('job_id', None)
-            uws_cmd = await request.text()
-            await modify_transfer_job_phase(self, job_id, uws_cmd)
+            with suppress(asyncio.CancelledError):
+                job_id = await asyncio.shield(modify_job_request(request))
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
 
         except InvalidJobStateError:

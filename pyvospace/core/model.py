@@ -34,6 +34,7 @@ NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 
 class Property(object):
     def __init__(self, uri, value, read_only=True):
+        self._uri = None
         self.uri = uri
         self.value = value
         self.read_only = read_only
@@ -41,7 +42,27 @@ class Property(object):
     def __eq__(self, other):
         if not isinstance(other, Property):
             return False
-        return self.uri == other.uri and self.value == other.value
+        return self.uri == other.uri and \
+               self.value == other.value and \
+               self.read_only == other.read_only
+
+    @property
+    def uri(self):
+        return self._uri
+
+    @uri.setter
+    def uri(self, value):
+        Property.validate_property_uri(value)
+        self._uri = copy.deepcopy(value)
+
+    @classmethod
+    def validate_property_uri(cls, uri):
+        assert uri
+        parsed = urlparse(uri)
+        assert parsed.scheme == 'ivo'
+        assert parsed.path
+        assert parsed.path.startswith('/vospace')
+        assert parsed.fragment
 
     def tolist(self):
         return [self.uri, self.value, self.read_only]
@@ -50,7 +71,7 @@ class Property(object):
         return f"{self.uri}"
 
     def __repr__(self):
-        return f'{self.uri, self.value}'
+        return f'{self.uri, self.value, self.read_only}'
 
 
 class DeleteProperty(Property):
@@ -93,7 +114,7 @@ class Protocol(object):
     @endpoint.setter
     def endpoint(self, value):
         if value:
-            assert isinstance(value, Endpoint) is True
+            assert isinstance(value, Endpoint)
             self._endpoint = value
 
     @property
@@ -191,6 +212,10 @@ class Node(object):
         self._properties = []
         self.set_properties(properties, True)
         self.capabilities = capabilities
+        # clients do not have access to these attributes
+        self.owner = None
+        self.group_read = None
+        self.group_write = None
 
     def __str__(self):
         return self.path
@@ -288,15 +313,15 @@ class Node(object):
         self._properties = []
 
     def set_properties(self, property_list, sort=False):
-        assert isinstance(property_list, list) is True
+        assert isinstance(property_list, list)
         for prop in property_list:
-            assert isinstance(prop, Property) is True
+            assert isinstance(prop, Property)
         self._properties = copy.deepcopy(property_list)
         if sort:
             self.sort_properties()
 
     def add_property(self, value, sort=False):
-        assert isinstance(value, Property) is True
+        assert isinstance(value, Property)
         self._properties.append(value)
         if sort:
             self.sort_properties()
@@ -381,8 +406,10 @@ class DataNode(Node):
                          properties=properties,
                          capabilities=capabilities,
                          node_type=node_type)
-        self._accepts = accepts
-        self._provides = provides
+        self._accepts = []
+        self.accepts = accepts
+        self._provides = []
+        self.provides = provides
         self._busy = busy
 
     def __eq__(self, other):
@@ -394,9 +421,11 @@ class DataNode(Node):
     def node_type(self):
         return NodeType.DataNode
 
-    def _build_node(self, root):
+    def build_node(self, root):
         super().build_node(root)
-
+        #for i in root:
+        #    print(i)
+        #print('xpath', root.xpath('//vos:node/vos:accepts/vos:view', namespaces=Node.NS))
         for view in root.xpath('/vos:node/vos:accepts/vos:view', namespaces=Node.NS):
             view_uri = view.attrib.get('uri', None)
             if view_uri is None:
@@ -419,7 +448,7 @@ class DataNode(Node):
 
     @accepts.setter
     def accepts(self, value):
-        assert isinstance(value, list) is True
+        assert isinstance(value, list)
         for val in value:
             assert isinstance(val, View)
         self._accepts = copy.deepcopy(value)
@@ -434,7 +463,7 @@ class DataNode(Node):
 
     @provides.setter
     def provides(self, value):
-        assert isinstance(value, list) is True
+        assert isinstance(value, list)
         for val in value:
             assert isinstance(val, View)
         self._provides = copy.deepcopy(value)
@@ -446,6 +475,16 @@ class DataNode(Node):
     def tostring(self):
         root = super().toxml()
         root.set("busy", str(self.busy).lower())
+        if self.accepts:
+            accepts_elem = ET.SubElement(root, '{http://www.ivoa.net/xml/VOSpace/v2.1}accepts')
+            for view in self.accepts:
+                view_element = ET.SubElement(accepts_elem, '{http://www.ivoa.net/xml/VOSpace/v2.1}view')
+                view_element.set('uri', view.uri)
+        if self.provides:
+            accepts_elem = ET.SubElement(root, '{http://www.ivoa.net/xml/VOSpace/v2.1}provides')
+            for view in self.provides:
+                view_element = ET.SubElement(accepts_elem, '{http://www.ivoa.net/xml/VOSpace/v2.1}view')
+                view_element.set('uri', view.uri)
         return ET.tostring(root).decode("utf-8")
 
 
@@ -486,7 +525,7 @@ class ContainerNode(DataNode):
         self._nodes.sort(key=lambda x: x.path)
 
     def build_node(self, root):
-        super()._build_node(root)
+        super().build_node(root)
         for nodes in root.xpath('/vos:node/vos:nodes/vos:node', namespaces=Node.NS):
             node_uri = nodes.attrib.get('uri', None)
             node_type = nodes.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}type', None)
@@ -500,17 +539,17 @@ class ContainerNode(DataNode):
         self.sort_nodes()
 
     def set_nodes(self, node_list, sort=False):
-        assert isinstance(node_list, list) is True
+        assert isinstance(node_list, list)
         for node in node_list:
-            assert isinstance(node, Node) is True
-            assert node.path.startswith(self.path) is True
+            assert isinstance(node, Node)
+            assert node.path.startswith(self.path)
         self._nodes = copy.deepcopy(node_list)
         if sort:
             self.sort_nodes()
 
     def add_node(self, value, sort=False):
-        assert isinstance(value, Node) is True
-        assert value.path.startswith(self.path) is True
+        assert isinstance(value, Node)
+        assert value.path.startswith(self.path)
         self._nodes.append(value)
         if sort:
             self.sort_nodes()
@@ -600,7 +639,7 @@ class Transfer(object):
 
     @target.setter
     def target(self, value):
-        assert isinstance(value, Node) is True
+        assert isinstance(value, Node)
         self._target = value
 
     def build_node(self, root):
@@ -715,9 +754,9 @@ class ProtocolTransfer(Transfer):
         return self._protocols
 
     def set_protocols(self, protocol_list,):
-        assert isinstance(protocol_list, list) is True
+        assert isinstance(protocol_list, list)
         for protocol in protocol_list:
-            assert isinstance(protocol, Protocol) is True
+            assert isinstance(protocol, Protocol)
         self._protocols = copy.deepcopy(protocol_list)
 
     def tostring(self):
@@ -852,9 +891,9 @@ class UWSJob(object):
     @results.setter
     def results(self, value):
         if value:
-            assert isinstance(value, list) is True
+            assert isinstance(value, list)
             for result in value:
-                assert isinstance(result, UWSResult) is True
+                assert isinstance(result, UWSResult)
                 self._results = copy.deepcopy(value)
 
     def toxml(self):

@@ -5,13 +5,21 @@ import aiofiles
 import configparser
 import json
 import uuid
+import base64
 
 from aiohttp import web
+from aiohttp_security import setup as setup_security
+from aiohttp_security import SessionIdentityPolicy
+from aiohttp_session import setup as setup_session
+from aiohttp_session.cookie_storage import EncryptedCookieStorage
+from cryptography import fernet
 
 from pyvospace.server.view import NodeType
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move
 from pyvospace.core.exception import *
 from pyvospace.server.storage import SpaceStorage
+
+from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 
 
 class PosixStorageServer(web.Application):
@@ -27,6 +35,8 @@ class PosixStorageServer(web.Application):
         self.https = config.getboolean('Storage', 'https', fallback=False)
         self.port = config.getint('Storage', 'port')
         self.parameters = json.loads(config.get('Storage', 'parameters'))
+        self.secret_key = config['Space']['secret_key']
+        self.domain = config['Space']['domain']
 
         self.root_dir = self.parameters['root_dir']
         if not self.root_dir:
@@ -36,7 +46,6 @@ class PosixStorageServer(web.Application):
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
 
-        self.db_pool = None
         self.storage = None
         self.on_shutdown.append(self.shutdown)
 
@@ -46,19 +55,30 @@ class PosixStorageServer(web.Application):
     async def setup(self):
         self.storage = await SpaceStorage.get(self.cfg_file)
 
-        self.router.add_put('/vospace/{direction}/{job_id}', self.upload_request)
-        self.router.add_get('/vospace/{direction}/{job_id}', self.download_request)
-
         async with self.storage.db_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.fetchrow("insert into storage (name, host, port, parameters, https) "
                                     "values ($1, $2, $3, $4, $5) on conflict (name, host, port) "
                                     "do update set parameters=$4, https=$5",
-                                    self.name, self.host,
-                                    self.port, json.dumps(self.parameters), self.https)
+                                    self.name, self.host, self.port, json.dumps(self.parameters), self.https)
 
         await mkdir(self.root_dir)
         await mkdir(self.staging_dir)
+
+        setup_session(self,
+                      EncryptedCookieStorage(
+                          secret_key=self.secret_key.encode(),
+                          cookie_name='PYVOSPACE_COOKIE',
+                          domain=self.domain))
+
+        self.authentication = DBUserAuthentication(self.name, self.storage.db_pool)
+
+        setup_security(self,
+                       SessionIdentityPolicy(),
+                       DBUserNodeAuthorizationPolicy(self.name, self.storage.db_pool))
+
+        self.router.add_put('/vospace/{direction}/{job_id}', self.upload_request)
+        self.router.add_get('/vospace/{direction}/{job_id}', self.download_request)
 
     @classmethod
     async def create(cls, cfg_file, *args, **kwargs):

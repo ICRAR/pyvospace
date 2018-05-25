@@ -1,7 +1,36 @@
+import json
+
 from aiohttp import helpers, web
 from aiohttp_security.abc import AbstractAuthorizationPolicy
 from aiohttp_security import remember, forget, authorized_userid, permits
 from passlib.hash import pbkdf2_sha256
+
+from pyvospace.core.model import View
+
+PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
+                 'ivo://ivoa.net/vospace/core#creator',
+                 #'ivo://ivoa.net/vospace/core#subject',
+                 #'ivo://ivoa.net/vospace/core#description',
+                 #'ivo://ivoa.net/vospace/core#publisher',
+                 #'ivo://ivoa.net/vospace/core#contributor',
+                 #'ivo://ivoa.net/vospace/core#date',
+                 'ivo://ivoa.net/vospace/core#type',
+                 'ivo://ivoa.net/vospace/core#format',
+                 'ivo://ivoa.net/vospace/core#identifier',
+                 'ivo://ivoa.net/vospace/core#source',
+                 'ivo://ivoa.net/vospace/core#language',
+                 'ivo://ivoa.net/vospace/core#relation',
+                 'ivo://ivoa.net/vospace/core#coverage',
+                 'ivo://ivoa.net/vospace/core#rights',
+                 'ivo://ivoa.net/vospace/core#availableSpace',
+                 'ivo://ivoa.net/vospace/core#groupread',
+                 'ivo://ivoa.net/vospace/core#groupwrite',
+                 'ivo://ivoa.net/vospace/core#publicread',
+                 'ivo://ivoa.net/vospace/core#quota',
+                 'ivo://ivoa.net/vospace/core#length',
+                 'ivo://ivoa.net/vospace/core#mtime',
+                 'ivo://ivoa.net/vospace/core#ctime',
+                 'ivo://ivoa.net/vospace/core#btime']
 
 
 class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
@@ -11,47 +40,83 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
         self.space_name = space_name
         self.db_pool = db_pool
 
-    async def authorized_userid(self, identity):
-        async with self.db_pool.acquire() as conn:
-            results = await conn.fetchrow("select username from users "
-                                          "where username=$1 and space_name=$2",
-                                          identity, self.space_name)
-        if results:
-            return results['username']
-        return None
-
     def _any_value_in_lists(self, a, b):
         return any(i in a for i in b)
 
-    async def permits(self, identity, permission, context=None):
+    def _any_property_in_protected(self, a):
+        return any(i.uri in PROTECTED_URI for i in a)
+
+    async def authorized_userid(self, identity):
         async with self.db_pool.acquire() as conn:
-            user_groups = await conn.fetchrow("select groupread, groupwrite from users "
-                                              "where username=$1 and space_name=$2",
-                                              identity, self.space_name)
-            if not user_groups:
-                raise web.HTTPForbidden('user not found')
+            results = await conn.fetchrow("select * from users "
+                                          "where username=$1 and space_name=$2",
+                                          identity, self.space_name)
+        if not results:
+            return None
+        return results['username']
 
-        if context['owner'] == identity:
-            return True
+    async def permits(self, identity, permission, context):
+        async with self.db_pool.acquire() as conn:
+            user = await conn.fetchrow("select * from users "
+                                       "where username=$1 and space_name=$2",
+                                       identity, self.space_name)
+            if not user:
+                raise web.HTTPForbidden(f"{identity} not found.")
 
-        if permission in ('setNode', 'createNode', 'pushToVoSpace', 'moveNode', 'copyNode'):
-            return self._any_value_in_lists(user_groups['groupwrite'], context['groupwrite'])
+        if permission == 'createNode':
+            parent = context[0]
+            node = context[1]
+            modify_properties = self._any_property_in_protected(node.properties)
+            # User trying to create a protected property
+            if modify_properties is True:
+                return False
+            # allow root node creation
+            if parent is None:
+                return True
+            if parent is not None:
+                # check if the parent container is owned by the user
+                if parent.owner == identity:
+                    return True
+                if not parent.group_write:
+                    return False
+                return self._any_value_in_lists(parent.group_write, user['groupwrite'])
 
-        elif permission in ('getNode', 'pullFromVoSpace'):
-            return self._any_value_in_lists(user_groups['groupread'], context['groupread'])
+        elif permission == 'setNode':
+            node = context
+            modify_properties = self._any_property_in_protected(context.properties)
+            # User trying to update a protected property
+            if modify_properties is True:
+                return False
+            if node.owner == identity:
+                return True
+            return self._any_value_in_lists(node.group_write, user['groupwrite'])
 
-        else:
-            raise web.HTTPForbidden('unkown permission')
+        elif permission == 'getNode':
+            node = context
+            if node.owner == identity:
+                return True
+            return self._any_value_in_lists(node.group_write, user['groupwrite']) or \
+                   self._any_value_in_lists(node.group_read, user['groupread'])
+
+        elif permission in ('moveNode', 'copyNode'):
+            src = context[0]
+            dest = context[1]
+            if src.owner == identity and dest.owner == identity:
+                return True
+            if self._any_value_in_lists(src.group_write, user['groupwrite']) and \
+                    self._any_value_in_lists(dest.group_write, user['groupwrite']):
+                return True
+            return False
+
+        return False
 
 
 class DBUserAuthentication(object):
-
     def __init__(self, space_name, db_pool):
         self.db_pool = db_pool
         self.space_name = space_name
 
     async def get_user(self, identity):
-
         async with self.db_pool.acquire() as conn:
             return await conn.fetchrow("select * from users where username=$1 and space_name=$2",
                                        identity, self.space_name)
@@ -71,21 +136,17 @@ class DBUserAuthentication(object):
             auth = helpers.BasicAuth.decode(request.headers['Authorization'])
         except:
             return web.HTTPForbidden()
-
         try:
             user = await self.check_credentials(auth.login, auth.password)
             if not user:
                 return web.HTTPForbidden()
 
-            response = web.Response()
+            response = web.Response(status=200)
             await remember(request, response, user)
             return response
-
         except web.HTTPForbidden:
             raise
         except Exception:
-            import traceback
-            traceback.print_exc()
             raise web.HTTPInternalServerError()
 
     async def logout(self, request):
@@ -93,6 +154,5 @@ class DBUserAuthentication(object):
             response = web.Response()
             await forget(request, response)
             return response
-
-        except Exception as e:
+        except Exception:
             raise web.HTTPInternalServerError()
