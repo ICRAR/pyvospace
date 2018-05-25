@@ -25,8 +25,8 @@ class TestPushPull(TestBase):
         super().setUp()
 
         self.loop.run_until_complete(self._setup())
-
         posix_server = self.loop.run_until_complete(PosixStorageServer.create(self.config_filename))
+
         self.posix_runner = web.AppRunner(posix_server)
         self.loop.run_until_complete(self.posix_runner.setup())
         self.posix_site = web.TCPSite(self.posix_runner, 'localhost', 8081)

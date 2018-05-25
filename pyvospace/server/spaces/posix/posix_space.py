@@ -18,6 +18,25 @@ from .utils import move, copy, mkdir, remove, rmtree, exists
 from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 
 
+ACCEPTS_VIEWS = {
+    'vos:Node': [View('ivo://ivoa.net/vospace/core#anyview')],
+    'vos:DataNode': [View('ivo://ivoa.net/vospace/core#anyview')],
+    'vos:UnstructuredDataNode': [View('ivo://ivoa.net/vospace/core#anyview')],
+    'vos:StructuredDataNode': [View('ivo://ivoa.net/vospace/core#anyview')],
+    'vos:ContainerNode': [],
+    'vos:LinkNode': []
+}
+
+PROVIDES_VIEWS = {
+    'vos:Node': [View('ivo://ivoa.net/vospace/core#defaultview')],
+    'vos:DataNode': [View('ivo://ivoa.net/vospace/core#defaultview')],
+    'vos:UnstructuredDataNode': [View('ivo://ivoa.net/vospace/core#defaultview')],
+    'vos:StructuredDataNode': [View('ivo://ivoa.net/vospace/core#defaultview')],
+    'vos:ContainerNode': [],
+    'vos:LinkNode': []
+}
+
+
 class PosixSpace(AbstractSpace):
     def __init__(self, cfg_file):
         super().__init__()
@@ -46,6 +65,12 @@ class PosixSpace(AbstractSpace):
 
     def get_protocols(self) -> Protocols:
         return Protocols(accepts=[], provides=[HTTPGet(), HTTPGet()])
+
+    def get_accept_views(self, node: Node):
+        return ACCEPTS_VIEWS[NodeTextLookup[node.node_type]]
+
+    def get_provide_views(self, node: Node):
+        return PROVIDES_VIEWS[NodeTextLookup[node.node_type]]
 
     async def move_storage_node(self, src, dest):
         s_path = f"{self.root_dir}/{src.path}"
@@ -134,6 +159,10 @@ class PosixSpaceServer(SpaceServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
         self.cfg_file = cfg_file
+        self.config = configparser.ConfigParser()
+        self.config.read(cfg_file)
+        self.secret_key = self.config['Space']['secret_key']
+        self.domain = self.config['Space']['domain']
         self.space = None
         self.authentication = None
 
@@ -142,15 +171,11 @@ class PosixSpaceServer(SpaceServer):
         await self.space.setup()
         await super().setup(self.space)
 
-        # secret_key must be 32 url-safe base64-encoded bytes
-        fernet_key = fernet.Fernet.generate_key()
-        secret_key = base64.urlsafe_b64decode(fernet_key)
-
         setup_session(self,
                       EncryptedCookieStorage(
-                          secret_key=secret_key,
+                          secret_key=self.secret_key.encode(),
                           cookie_name='PYVOSPACE_COOKIE',
-                          domain='localhost'))
+                          domain=self.domain))
 
         self.authentication = DBUserAuthentication(self['space_name'], self['db_pool'])
 
@@ -159,7 +184,7 @@ class PosixSpaceServer(SpaceServer):
                        DBUserNodeAuthorizationPolicy(self['space_name'], self['db_pool']))
 
         self.router.add_route('POST', '/login', self.authentication.login, name='login')
-        self.router.add_route('GET', '/logout', self.authentication.logout, name='logout')
+        self.router.add_route('POST', '/logout', self.authentication.logout, name='logout')
 
     async def shutdown(self):
         await super().shutdown()
