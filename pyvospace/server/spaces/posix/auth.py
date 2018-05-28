@@ -111,6 +111,12 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
         elif permission == 'createTransfer':
             return True
 
+        elif permission == 'deleteNode':
+            node = context
+            if node.owner == identity:
+                return True
+            return self._any_value_in_lists(node.group_write, user['groupwrite'])
+
         return False
 
 

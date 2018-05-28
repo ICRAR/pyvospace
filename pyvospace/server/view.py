@@ -51,7 +51,7 @@ async def delete_node_request(app, request):
     path = request.path.replace('/vospace/nodes', '')
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            node = await request.app['db'].delete(path, conn)
+            node = await request.app['db'].delete(path, conn, identity)
     with suppress(OSError):
         await app['abstract_space'].delete_storage_node(node)
 

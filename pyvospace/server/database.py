@@ -204,19 +204,18 @@ class NodeDatabase(object):
         node.set_properties(NodeDatabase._resultset_to_properties(node_properties)+pass_through_properties)
         return node
 
-    async def delete(self, path, conn):
+    async def delete(self, path, conn, identity):
         path_tree = NodeDatabase.path_to_ltree(path)
-        results = await conn.fetch("delete from nodes where path <@ $1 and space_id=$2 returning *",
+        results = await conn.fetch("with delete_rows as "
+                                   "(delete from nodes where path <@ $1 and space_id=$2 returning *) "
+                                   "select * from delete_rows order by delete_rows.path asc;",
                                   path_tree, self.space_id)
         if not results:
             raise NodeDoesNotExistError(f"{path} not found.")
-
-        node_result = None
-        for result in results:
-            if result['path'] == path_tree:
-                node_result = result
-        assert node_result['path'] == path_tree
-        return NodeDatabase._resultset_to_node([node_result], [])
+        node = NodeDatabase._resultset_to_node([results[0]], [])
+        if not await self.app.permits(identity, 'deleteNode', context=node):
+            raise PermissionDenied('deleteNode denied.')
+        return node
 
     async def delete_properties(self, path, conn):
         path_tree = NodeDatabase.path_to_ltree(path)
