@@ -10,30 +10,27 @@ from pyvospace.core.exception import *
 
 
 class SpaceStorage(object):
-    def __init__(self, config, db_pool, space_id):
-        self.config = config
-        self.space_id = space_id
-        self.db_pool = db_pool
-        self.executor = StorageUWSJobPool(space_id, db_pool)
+    def __init__(self, cfg_file, *args, **kwargs):
+        super().__init__(cfg_file, *args, **kwargs)
+        self.config = configparser.ConfigParser()
+        self.config.read(cfg_file)
 
-    @classmethod
-    async def get(cls, cfg_file):
-        config = configparser.ConfigParser()
-        config.read(cfg_file)
+        self.name = self.config.get('Space', 'name')
+        self.space_id = None
+        self.db_pool = None
+        self.executor = None
 
-        name = config.get('Space', 'name')
-        db_pool = await asyncpg.create_pool(dsn=config.get('Space', 'dsn'))
-
-        async with db_pool.acquire() as conn:
+    async def setup(self):
+        self.db_pool = await asyncpg.create_pool(dsn=self.config.get('Space', 'dsn'))
+        async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 space_result = await conn.fetchrow("select * from space "
-                                                   "where name=$1 for update", name)
+                                                   "where name=$1 for update", self.name)
                 if not space_result:
-                    raise VOSpaceError(404, f'Space not found. {name}')
+                    raise VOSpaceError(404, f'Space not found. {self.name}')
+        self.executor = StorageUWSJobPool(space_result['id'], self.db_pool)
 
-        return SpaceStorage(config, db_pool, int(space_result['id']))
-
-    async def close(self):
+    async def shutdown(self):
         await self.executor.close()
         await self.db_pool.close()
 

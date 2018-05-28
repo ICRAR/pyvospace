@@ -71,10 +71,10 @@ class SpaceServer(web.Application):
         self.router.add_get('/vospace/transfers/{job_id}/phase', self._get_job_phase)
         self.router.add_get('/vospace/transfers/{job_id}/error', self._get_job)
         self.router.add_get('/vospace/transfers/{job_id}/results/transferDetails', self._get_transfer_details)
-
         self.on_shutdown.append(self.shutdown)
 
     async def setup(self, abstract_space):
+        assert isinstance(abstract_space, AbstractSpace)
         self['abstract_space'] = abstract_space
         self['space_host'] = self.config['Space']['host']
         self['space_port'] = int(self.config['Space']['port'])

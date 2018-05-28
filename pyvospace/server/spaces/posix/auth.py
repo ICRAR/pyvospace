@@ -108,6 +108,9 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
                 return True
             return False
 
+        elif permission == 'createTransfer':
+            return True
+
         return False
 
 

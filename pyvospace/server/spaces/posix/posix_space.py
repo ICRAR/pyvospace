@@ -37,11 +37,12 @@ PROVIDES_VIEWS = {
 }
 
 
-class PosixSpace(AbstractSpace):
-    def __init__(self, cfg_file):
-        super().__init__()
-        self.config = configparser.ConfigParser()
-        self.config.read(cfg_file)
+class PosixSpaceServer(SpaceServer, AbstractSpace):
+    def __init__(self, cfg_file, *args, **kwargs):
+        super().__init__(cfg_file, *args, **kwargs)
+
+        self.secret_key = self.config['Space']['secret_key']
+        self.domain = self.config['Space']['domain']
         self.name = self.config['Storage']['name']
         self.storage_parameters = json.loads(self.config['Storage']['parameters'])
 
@@ -53,15 +54,36 @@ class PosixSpace(AbstractSpace):
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
 
-        self.db_pool = None
+        self.authentication = None
 
-    async def setup(self):
-        self.db_pool = await asyncpg.create_pool(dsn=self.config['Space']['dsn'])
+    async def setup_space(self):
+        await super().setup(self)
+
         await mkdir(self.root_dir)
         await mkdir(self.staging_dir)
 
+        setup_session(self,
+                      EncryptedCookieStorage(
+                          secret_key=self.secret_key.encode(),
+                          cookie_name='PYVOSPACE_COOKIE',
+                          domain=self.domain))
+
+        self.authentication = DBUserAuthentication(self['space_name'], self['db_pool'])
+        setup_security(self,
+                       SessionIdentityPolicy(),
+                       DBUserNodeAuthorizationPolicy(self['space_name'], self['db_pool']))
+
+        self.router.add_route('POST', '/login', self.authentication.login, name='login')
+        self.router.add_route('POST', '/logout', self.authentication.logout, name='logout')
+
     async def shutdown(self):
-        await self.db_pool.close()
+        await super().shutdown()
+
+    @classmethod
+    async def create(cls, cfg_file, *args, **kwargs):
+        app = PosixSpaceServer(cfg_file, *args, **kwargs)
+        await app.setup_space()
+        return app
 
     def get_protocols(self) -> Protocols:
         return Protocols(accepts=[], provides=[HTTPGet(), HTTPGet()])
@@ -110,7 +132,7 @@ class PosixSpace(AbstractSpace):
             if any(i in [HTTPPut(), HTTPSPut()] for i in protocols) is False:
                 raise VOSpaceError(400, "Protocol Not Supported.")
 
-            async with self.db_pool.acquire() as conn:
+            async with self['db_pool'].acquire() as conn:
                 async with conn.transaction():
                     results = await conn.fetch("select * from storage where name=$1", self.name)
 
@@ -132,7 +154,7 @@ class PosixSpace(AbstractSpace):
             if any(i in [HTTPGet(), HTTPSGet()] for i in protocols) is False:
                 raise VOSpaceError(400, "Protocol Not Supported.")
 
-            async with self.db_pool.acquire() as conn:
+            async with self['db_pool'].acquire() as conn:
                 async with conn.transaction():
                     results = await conn.fetch("select * from storage where name=$1", self.name)
 
@@ -152,46 +174,5 @@ class PosixSpace(AbstractSpace):
 
         if not new_protocols:
             raise VOSpaceError(400, "Protocol Not Supported. No storage found")
+
         job.transfer.set_protocols(new_protocols)
-
-
-class PosixSpaceServer(SpaceServer):
-    def __init__(self, cfg_file, *args, **kwargs):
-        super().__init__(cfg_file, *args, **kwargs)
-        self.cfg_file = cfg_file
-        self.config = configparser.ConfigParser()
-        self.config.read(cfg_file)
-        self.secret_key = self.config['Space']['secret_key']
-        self.domain = self.config['Space']['domain']
-        self.space = None
-        self.authentication = None
-
-    async def setup(self):
-        self.space = PosixSpace(self.cfg_file)
-        await self.space.setup()
-        await super().setup(self.space)
-
-        setup_session(self,
-                      EncryptedCookieStorage(
-                          secret_key=self.secret_key.encode(),
-                          cookie_name='PYVOSPACE_COOKIE',
-                          domain=self.domain))
-
-        self.authentication = DBUserAuthentication(self['space_name'], self['db_pool'])
-
-        setup_security(self,
-                       SessionIdentityPolicy(),
-                       DBUserNodeAuthorizationPolicy(self['space_name'], self['db_pool']))
-
-        self.router.add_route('POST', '/login', self.authentication.login, name='login')
-        self.router.add_route('POST', '/logout', self.authentication.logout, name='logout')
-
-    async def shutdown(self):
-        await super().shutdown()
-        await self.space.shutdown()
-
-    @classmethod
-    async def create(cls, cfg_file, *args, **kwargs):
-        app = PosixSpaceServer(cfg_file, *args, **kwargs)
-        await app.setup()
-        return app

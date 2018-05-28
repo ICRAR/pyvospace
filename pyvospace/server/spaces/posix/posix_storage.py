@@ -22,21 +22,24 @@ from pyvospace.server.storage import SpaceStorage
 from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 
 
-class PosixStorageServer(web.Application):
+class _PosixStorageServer(web.Application):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.config = configparser.ConfigParser()
+        self.config.read(cfg_file)
 
-        config = configparser.ConfigParser()
-        config.read(cfg_file)
 
-        self.cfg_file = cfg_file
-        self.name = config.get('Storage', 'name')
-        self.host = config.get('Storage', 'host')
-        self.https = config.getboolean('Storage', 'https', fallback=False)
-        self.port = config.getint('Storage', 'port')
-        self.parameters = json.loads(config.get('Storage', 'parameters'))
-        self.secret_key = config['Space']['secret_key']
-        self.domain = config['Space']['domain']
+class PosixStorageServer(SpaceStorage, _PosixStorageServer):
+    def __init__(self, cfg_file, *args, **kwargs):
+        super().__init__(cfg_file, *args, **kwargs)
+
+        self.name = self.config.get('Storage', 'name')
+        self.host = self.config.get('Storage', 'host')
+        self.https = self.config.getboolean('Storage', 'https', fallback=False)
+        self.port = self.config.getint('Storage', 'port')
+        self.parameters = json.loads(self.config.get('Storage', 'parameters'))
+        self.secret_key = self.config['Space']['secret_key']
+        self.domain = self.config['Space']['domain']
 
         self.root_dir = self.parameters['root_dir']
         if not self.root_dir:
@@ -46,16 +49,15 @@ class PosixStorageServer(web.Application):
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
 
-        self.storage = None
         self.on_shutdown.append(self.shutdown)
 
     async def shutdown(self):
-        await self.storage.close()
+        await super(PosixStorageServer, self).shutdown()
 
     async def setup(self):
-        self.storage = await SpaceStorage.get(self.cfg_file)
+        await super(PosixStorageServer, self).setup()
 
-        async with self.storage.db_pool.acquire() as conn:
+        async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.fetchrow("insert into storage (name, host, port, parameters, https) "
                                     "values ($1, $2, $3, $4, $5) on conflict (name, host, port) "
@@ -71,11 +73,11 @@ class PosixStorageServer(web.Application):
                           cookie_name='PYVOSPACE_COOKIE',
                           domain=self.domain))
 
-        self.authentication = DBUserAuthentication(self.name, self.storage.db_pool)
+        self.authentication = DBUserAuthentication(self.name, self.db_pool)
 
         setup_security(self,
                        SessionIdentityPolicy(),
-                       DBUserNodeAuthorizationPolicy(self.name, self.storage.db_pool))
+                       DBUserNodeAuthorizationPolicy(self.name, self.db_pool))
 
         self.router.add_put('/vospace/{direction}/{job_id}', self.upload_request)
         self.router.add_get('/vospace/{direction}/{job_id}', self.download_request)
@@ -88,11 +90,11 @@ class PosixStorageServer(web.Application):
 
     async def upload_request(self, request):
         job_id = request.match_info.get('job_id', None)
-        return await self.storage.execute(request, job_id, self.upload)
+        return await self.execute(request, job_id, self.upload)
 
     async def download_request(self, request):
         job_id = request.match_info.get('job_id', None)
-        return await self.storage.execute(request, job_id, self.download)
+        return await self.execute(request, job_id, self.download)
 
     async def download(self, job, request):
         root_dir = self.root_dir

@@ -21,9 +21,7 @@ def prettify(elem):
 class TestPushPull(TestBase):
 
     def setUp(self):
-
         super().setUp()
-
         self.loop.run_until_complete(self._setup())
         posix_server = self.loop.run_until_complete(PosixStorageServer.create(self.config_filename))
 

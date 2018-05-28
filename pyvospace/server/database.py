@@ -106,9 +106,8 @@ class NodeDatabase(object):
                                       results[0]['path'], self.space_id)
 
         node = self._resultset_to_node(results, properties)
-        if identity is not None:
-            if not await self.app.permits(identity, 'getNode', context=node):
-                raise PermissionDenied('getNode denied.')
+        if not await self.app.permits(identity, 'getNode', context=node):
+            raise PermissionDenied('getNode denied.')
         return node
 
     async def insert(self, node, conn, identity):
@@ -150,15 +149,14 @@ class NodeDatabase(object):
                                 "VALUES ($1, $2, $3, $4, $5, $6)",
                                 node.node_type, node_name, path_tree, identity, self.space_id, target)
 
-            properties = node.properties_tolist()
-            if properties:
-                for prop in properties:
-                    prop.append(path_tree)
-                    prop.append(self.space_id)
+            node_properties = []
+            for prop in node.properties:
+                if prop.persist:
+                    node_properties.append(prop.tolist()+[path_tree, self.space_id])
 
+            if node_properties:
                 await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
-                                       "VALUES ($1, $2, $3, $4, $5)",
-                                       properties)
+                                       "VALUES ($1, $2, $3, $4, $5)", node_properties)
             return parent_row, child_row
         except asyncpg.exceptions.UniqueViolationError as f:
             raise DuplicateNodeError(f"{node_name} already exists.")
@@ -178,25 +176,33 @@ class NodeDatabase(object):
         if not await self.app.permits(identity, 'setNode', context=node):
             raise PermissionDenied('setNode denied.')
 
+        pass_through_properties = []
         node_props_delete = []
         node_props_insert = []
         for prop in node.properties:
             if isinstance(prop, DeleteProperty):
                 node_props_delete.append(prop.uri)
             else:
-                node_props_insert.append([prop.uri, prop.value, prop.read_only, node_path_tree, self.space_id])
+                if prop.persist:
+                    node_props_insert.append([prop.uri, prop.value, False, node_path_tree, self.space_id])
+                else:
+                    pass_through_properties.append(prop)
 
-        # if a property already exists then update it, only if read_only = False
+        # if a property already exists then update it
         await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
                                "VALUES ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
-                               "do update set value=$2 where properties.read_only=False "
-                               "and properties.value!=$2",
+                               "do update set value=$2 where properties.value!=$2",
                                node_props_insert)
 
-        # only delete properties where read_only=False
-        a = await conn.execute("DELETE FROM properties WHERE uri=any($1::text[]) "
-                               "AND node_path=$2 and space_id=$3 and read_only=False",
-                               node_props_delete, node_path_tree, self.space_id)
+        await conn.execute("DELETE FROM properties WHERE uri=any($1::text[]) "
+                           "AND node_path=$2 and space_id=$3",
+                           node_props_delete, node_path_tree, self.space_id)
+
+        node_properties = await conn.fetch("select * from properties "
+                                           "where node_path=$1 and space_id=$2",
+                                           node_path_tree, self.space_id)
+        node.set_properties(NodeDatabase._resultset_to_properties(node_properties)+pass_through_properties)
+        return node
 
     async def delete(self, path, conn):
         path_tree = NodeDatabase.path_to_ltree(path)

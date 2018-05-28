@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 from aiohttp import web
 
-from pyvospace.server.spaces.posix import PosixSpaceServer, PosixSpace
+from pyvospace.server.spaces.posix import PosixSpaceServer
 from pyvospace.core.model import *
 
 
