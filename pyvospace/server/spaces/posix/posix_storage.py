@@ -17,12 +17,12 @@ from cryptography import fernet
 from pyvospace.server.view import NodeType
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move
 from pyvospace.core.exception import *
-from pyvospace.server.storage import SpaceStorage, AbstractPosixStorageServer
+from pyvospace.server.storage import SpaceStorage, AbstractStorageServer
 
 from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 
 
-class PosixStorageServer(SpaceStorage, AbstractPosixStorageServer):
+class PosixStorageServer(SpaceStorage, AbstractStorageServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
 
