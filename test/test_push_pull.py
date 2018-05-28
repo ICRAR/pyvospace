@@ -11,13 +11,6 @@ from pyvospace.server.spaces.posix.posix_storage import PosixStorageServer
 from test.test_base import TestBase
 
 
-def prettify(elem):
-    """Return a pretty-printed XML string.
-    """
-    reparsed = minidom.parseString(elem)
-    return reparsed.toprettyxml(indent="\t")
-
-
 class TestPushPull(TestBase):
 
     def setUp(self):
@@ -36,6 +29,7 @@ class TestPushPull(TestBase):
     def tearDown(self):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode'))
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode1'))
         self.loop.run_until_complete(self.posix_runner.shutdown())
         self.loop.run_until_complete(self.posix_runner.cleanup())
 
@@ -49,13 +43,35 @@ class TestPushPull(TestBase):
                                                data=push.tostring())
             self.assertEqual(200, status, msg=response)
 
-            root = ET.fromstring(response)
-            put_prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            put_end = put_prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            transfer = Transfer.fromstring(response)
+            put_end = transfer.protocols[0].endpoint.url
 
             await self.delete('http://localhost:8080/vospace/nodes/syncdatanode')
-            await self.push_to_space(put_end.text, '/tmp/datafile.dat', expected_status=404)
-            #await self.push_to_space(put_end.text, '/tmp/datafile.dat', expected_status=200)
+            await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=404)
+
+        self.loop.run_until_complete(run())
+
+    def test_push_to_space_sync(self):
+        async def run():
+            node = Node('/syncdatanode1')
+            push = PushToSpace(node, [HTTPPut()],
+                               params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
+            status, response = await self.post('http://localhost:8080/vospace/synctrans',
+                                               data=push.tostring())
+            self.assertEqual(200, status, msg=response)
+
+            transfer = Transfer.fromstring(response)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=200)
+
+            push = PullFromSpace(node, [HTTPGet()])
+            status, response = await self.post('http://localhost:8080/vospace/synctrans',
+                                               data=push.tostring())
+            self.assertEqual(200, status, msg=response)
+
+            transfer = Transfer.fromstring(response)
+            pull_end = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(pull_end, '/tmp/download/')
 
         self.loop.run_until_complete(run())
 

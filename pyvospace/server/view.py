@@ -13,6 +13,8 @@ from .database import NodeDatabase
 
 async def get_node_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     path = request.path.replace('/vospace/nodes', '')
     detail = request.query.get('detail', 'max')
     if detail:
@@ -48,6 +50,8 @@ async def get_node_request(request):
 
 async def delete_node_request(app, request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     path = request.path.replace('/vospace/nodes', '')
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
@@ -58,6 +62,8 @@ async def delete_node_request(app, request):
 
 async def create_node_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     xml_request = await request.text()
     url_path = request.path.replace('/vospace/nodes', '')
     node = Node.fromstring(xml_request)
@@ -74,6 +80,8 @@ async def create_node_request(request):
 
 async def set_node_properties_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     xml_request = await request.text()
     path = request.path.replace('/vospace/nodes', '')
     node = Node.fromstring(xml_request)
@@ -88,6 +96,8 @@ async def set_node_properties_request(request):
 
 async def create_transfer_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     job_xml = await request.text()
     transfer = Transfer.fromstring(job_xml)
     if not await request.app.permits(identity, 'createTransfer', context=transfer):
@@ -98,6 +108,8 @@ async def create_transfer_request(request):
 
 async def sync_transfer_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     job_xml = await request.text()
     transfer = Transfer.fromstring(job_xml)
     if not await request.app.permits(identity, 'createTransfer', context=transfer):
@@ -109,6 +121,8 @@ async def sync_transfer_request(request):
 
 async def get_job_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     job_id = request.match_info.get('job_id', None)
     job = await request.app['executor'].get(job_id)
     if identity != job.owner:
@@ -118,6 +132,8 @@ async def get_job_request(request):
 
 async def get_transfer_details_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     job_id = request.match_info.get('job_id', None)
     job = await request.app['executor'].get_uws_job(job_id)
     if identity != job['owner']:
@@ -131,6 +147,8 @@ async def get_transfer_details_request(request):
 
 async def get_job_phase_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     job_id = request.match_info.get('job_id', None)
     job = await request.app['executor'].get_uws_job_phase(job_id)
     if identity != job['owner']:
@@ -140,6 +158,8 @@ async def get_job_phase_request(request):
 
 async def modify_job_request(request):
     identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
     job_id = request.match_info.get('job_id', None)
     uws_cmd = await request.text()
     if not uws_cmd:
