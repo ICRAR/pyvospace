@@ -82,8 +82,7 @@ async def set_node_properties_request(request):
 
     async with request.app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            await request.app['db'].update_properties(node, conn, identity)
-            node = await request.app['db'].directory(path, conn, identity=None)
+            node = await request.app['db'].update_properties(node, conn, identity)
     return node
 
 
@@ -91,7 +90,9 @@ async def create_transfer_request(request):
     identity = await authorized_userid(request)
     job_xml = await request.text()
     transfer = Transfer.fromstring(job_xml)
-    job = await request.app['executor'].create(transfer, UWSPhase.Pending)
+    if not await request.app.permits(identity, 'createTransfer', context=transfer):
+        raise PermissionDenied('creating transfer job denied.')
+    job = await request.app['executor'].create(transfer, identity, UWSPhase.Pending)
     return job
 
 
@@ -99,7 +100,9 @@ async def sync_transfer_request(request):
     identity = await authorized_userid(request)
     job_xml = await request.text()
     transfer = Transfer.fromstring(job_xml)
-    job = await request.app['executor'].create(transfer, UWSPhase.Executing)
+    if not await request.app.permits(identity, 'createTransfer', context=transfer):
+        raise PermissionDenied('creating transfer job denied.')
+    job = await request.app['executor'].create(transfer, identity, UWSPhase.Executing)
     await perform_transfer_job(job, request.app, identity, sync=True)
     return job
 
@@ -107,13 +110,18 @@ async def sync_transfer_request(request):
 async def get_job_request(request):
     identity = await authorized_userid(request)
     job_id = request.match_info.get('job_id', None)
-    return await request.app['executor'].get(job_id)
+    job = await request.app['executor'].get(job_id)
+    if identity != job.owner:
+        raise PermissionDenied(f'{identity} is not the owner of the job.')
+    return job
 
 
 async def get_transfer_details_request(request):
     identity = await authorized_userid(request)
     job_id = request.match_info.get('job_id', None)
     job = await request.app['executor'].get_uws_job(job_id)
+    if identity != job['owner']:
+        raise PermissionDenied(f'{identity} is not the owner of the job.')
     if job['phase'] < UWSPhase.Executing:
         raise InvalidJobStateError('Job not EXECUTING')
     if not job['transfer']:
@@ -125,6 +133,8 @@ async def get_job_phase_request(request):
     identity = await authorized_userid(request)
     job_id = request.match_info.get('job_id', None)
     job = await request.app['executor'].get_uws_job_phase(job_id)
+    if identity != job['owner']:
+        raise PermissionDenied(f'{identity} is not the owner of the job.')
     return PhaseLookup[job['phase']]
 
 
@@ -137,7 +147,7 @@ async def modify_job_request(request):
 
     phase = uws_cmd.upper()
     if phase == "PHASE=RUN":
-        await request.app['executor'].execute(job_id, perform_transfer_job,
+        await request.app['executor'].execute(job_id, identity, perform_transfer_job,
                                               request.app, identity, False)
 
     elif phase == "PHASE=ABORT":

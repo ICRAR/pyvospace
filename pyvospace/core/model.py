@@ -33,11 +33,12 @@ NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 
 
 class Property(object):
-    def __init__(self, uri, value, read_only=True):
-        self._uri = None
+    def __init__(self, uri, value, read_only=True, persist=True):
         self.uri = uri
         self.value = value
         self.read_only = read_only
+        # Persist property in store, not avaliable to client
+        self.persist = persist
 
     def __eq__(self, other):
         if not isinstance(other, Property):
@@ -45,6 +46,15 @@ class Property(object):
         return self.uri == other.uri and \
                self.value == other.value and \
                self.read_only == other.read_only
+
+    @property
+    def persist(self):
+        return self._persist
+
+    @persist.setter
+    def persist(self, value):
+        assert isinstance(value, bool)
+        self._persist = value
 
     @property
     def uri(self):
@@ -326,9 +336,6 @@ class Node(object):
         if sort:
             self.sort_properties()
 
-    def properties_tolist(self):
-        return [prop.tolist() for prop in self._properties]
-
     def to_uri(self):
         return f"vos://{Node.SPACE}!vospace/{self.path}"
 
@@ -423,9 +430,6 @@ class DataNode(Node):
 
     def build_node(self, root):
         super().build_node(root)
-        #for i in root:
-        #    print(i)
-        #print('xpath', root.xpath('//vos:node/vos:accepts/vos:view', namespaces=Node.NS))
         for view in root.xpath('/vos:node/vos:accepts/vos:view', namespaces=Node.NS):
             view_uri = view.attrib.get('uri', None)
             if view_uri is None:
@@ -625,7 +629,6 @@ class StructuredDataNode(DataNode):
 
 class Transfer(object):
     def __init__(self, target, direction):
-        self._target = None
         self.target = target
         self._direction = direction
 
@@ -633,14 +636,14 @@ class Transfer(object):
     def target(self):
         return self._target
 
-    @property
-    def direction(self):
-        return self._direction
-
     @target.setter
     def target(self, value):
         assert isinstance(value, Node)
         self._target = value
+
+    @property
+    def direction(self):
+        return self._direction
 
     def build_node(self, root):
         return NotImplementedError()
@@ -883,6 +886,7 @@ class UWSJob(object):
         self.results = results
         self.error = error
         self.transfer = None
+        self.owner = None
 
     @property
     def results(self):

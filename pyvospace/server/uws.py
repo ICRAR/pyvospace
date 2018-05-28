@@ -21,7 +21,7 @@ class UWSJobPool(object):
     async def get_uws_job_phase(self, job_id):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
-                result = await conn.fetchrow("select phase from uws_jobs "
+                result = await conn.fetchrow("select phase, owner from uws_jobs "
                                              "where id=$1 and space_id=$2",
                                              job_id, self.space_id)
                 if not result:
@@ -75,28 +75,32 @@ class UWSJobPool(object):
         #transfer = None
         #if result['transfer']:
         #    transfer = Transfer.fromstring(result['transfer'])
-        return UWSJob(result['id'], result['phase'], result['destruction'],
-                      job_info, results, result['error'])
+        job = UWSJob(result['id'], result['phase'], result['destruction'],
+                     job_info, results, result['error'])
+        job.owner = result['owner']
+        return job
 
     async def get(self, job_id):
         async with self.db_pool.acquire() as conn:
             result = await self._get_uws_job_conn(conn=conn, job_id=job_id)
         return self._resultset_to_job(result)
 
-    async def create(self, job_info, phase=UWSPhase.Pending):
+    async def create(self, job_info, identity, phase=UWSPhase.Pending):
         job_info_string = job_info.tostring()
         destruction = datetime.datetime.utcnow() + datetime.timedelta(seconds=3000)
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
-                result = await conn.fetchrow("insert into uws_jobs (phase, destruction, job_info, space_id) "
-                                             "values ($1, $2, $3, $4) returning *",
-                                             phase, destruction, job_info_string, self.space_id)
+                result = await conn.fetchrow("insert into uws_jobs (phase, destruction, job_info, owner, space_id) "
+                                             "values ($1, $2, $3, $4, $5) returning *",
+                                             phase, destruction, job_info_string, identity, self.space_id)
         return self._resultset_to_job(result)
 
-    async def execute(self, job_id, func, *args):
+    async def execute(self, job_id, identity, func, *args):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 result = await self._get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
+                if identity != result['owner']:
+                    raise PermissionDenied(f'{identity} is not the owner of the job.')
                 # Can only start a PENDING Job
                 if result['phase'] != UWSPhase.Pending:
                     raise InvalidJobStateError('Invalid Job State')
@@ -139,62 +143,6 @@ class StorageUWSJob(UWSJob):
     def __init__(self, job_id, phase, destruction, job_info, transfer):
         super().__init__(job_id, phase, destruction, job_info, None, None)
         self.transfer = transfer
-
-    '''async def _set_node_busy(self):
-        async with self._pool.db_pool.acquire() as conn:
-            async with conn.transaction():
-                results = await self._get_executing_target(conn)
-                if results['busy']:
-                    raise NodeBusyError(f"{self.job_info.target.path} is busy.")
-                await conn.fetchrow('update nodes set busy=true where path=$1 and space_id=$2',
-                                    self._pool.node_db.path_to_ltree(results['path']),
-                                    self._pool.space_id)
-
-    async def _set_node_not_busy(self):
-        async with self._pool.db_pool.acquire() as conn:
-            async with conn.transaction():
-                results = await self._get_target(conn)
-                await conn.fetchrow('update nodes set busy=false where path=$1 and space_id=$2',
-                                    self._pool.node_db.path_to_ltree(results['path']),
-                                    self._pool.space_id)
-
-    class TargetNodeTransaction(object):
-        def __init__(self, storage_job):
-            self._storage_job = storage_job
-            self._conn = None
-            self._trans = None
-
-        async def __aenter__(self):
-            try:
-                self._conn = await self._storage_job._pool.db_pool.acquire()
-                self._trans = self._conn.transaction()
-                await self._trans.start()
-                await self._storage_job._get_executing_target(self._conn)
-                return self
-            except Exception:
-                if self._trans:
-                    self._trans.rollback()
-                if self._conn:
-                    await self._storage_job._pool.db_pool.release(self._conn)
-                raise
-
-        async def __aexit__(self, exc_type, exc, tb):
-            await self._trans.commit()
-            await self._storage_job._pool.db_pool.release(self._conn)
-
-    def target_node_transaction(self):
-        return StorageUWSJob.TargetNodeTransaction(self)'''
-
-    '''async def _get_target(self, conn):
-        result = await conn.fetchrow("select * from nodes left join uws_jobs on "
-                                     "nodes.space_id = uws_jobs.space_id and nodes.path = uws_jobs.target "
-                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
-                                     "for update of nodes",
-                                     self.job_id, self._pool.space_id)
-        if not result:
-            raise NodeDoesNotExistError(f"{self.job_info.target.path} not found.")
-
-        return result'''
 
 
 class StorageUWSJobPool(UWSJobPool):
