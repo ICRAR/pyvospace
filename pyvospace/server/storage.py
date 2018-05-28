@@ -4,9 +4,24 @@ import configparser
 
 from aiohttp import web
 from contextlib import suppress
+from aiohttp_security import authorized_userid, permits
+from aiohttp_security.api import AUTZ_KEY
 
 from .uws import *
 from pyvospace.core.exception import *
+
+
+class AbstractPosixStorageServer(web.Application):
+    def __init__(self, cfg_file, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config = configparser.ConfigParser()
+        self.config.read(cfg_file)
+
+    async def permits(self, identity, permission, context):
+        autz_policy = self.get(AUTZ_KEY)
+        if autz_policy is None:
+            return True
+        return await autz_policy.permits(identity, permission, context)
 
 
 class SpaceStorage(object):
@@ -35,6 +50,10 @@ class SpaceStorage(object):
         await self.db_pool.close()
 
     async def _execute(self, job, func, request):
+        identity = await authorized_userid(request)
+        if identity is None:
+            raise PermissionDenied(f'Credentials not found.')
+
         lock = 'share'
         if isinstance(job.job_info, PushToSpace):
             lock = 'update'
@@ -44,6 +63,8 @@ class SpaceStorage(object):
                     node_result = await self.executor._get_executing_target(job.job_id, conn, lock)
                     target_node = NodeDatabase._resultset_to_node([node_result], [])
                     job.transfer.target = target_node
+                    if not await request.app.permits(identity, 'dataTransfer', context=job):
+                        raise PermissionDenied('data transfer denied.')
                     return await func(job, request)
         except asyncpg.exceptions.LockNotAvailableError:
             raise NodeBusyError('')

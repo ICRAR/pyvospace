@@ -88,6 +88,10 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
     def get_protocols(self) -> Protocols:
         return Protocols(accepts=[], provides=[HTTPGet(), HTTPGet()])
 
+    def get_views(self) -> Views:
+        return Views(accepts=[View('ivo://ivoa.net/vospace/core#anyview')],
+                     provides=[View('ivo://ivoa.net/vospace/core#defaultview')])
+
     def get_accept_views(self, node: Node):
         return ACCEPTS_VIEWS[NodeTextLookup[node.node_type]]
 

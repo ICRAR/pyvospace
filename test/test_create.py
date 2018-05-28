@@ -21,6 +21,13 @@ class TestCreate(TestBase):
 
         self.loop.run_until_complete(run())
 
+    def test_get_views(self):
+        async def run():
+            status, response = await self.get('http://localhost:8080/vospace/views', params=None)
+            self.assertEqual(200, status, msg=response)
+
+        self.loop.run_until_complete(run())
+
     def test_set_properties(self):
         async def run():
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello1", False),

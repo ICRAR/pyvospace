@@ -23,6 +23,10 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
+    def get_views(self) -> Views:
+        raise NotImplementedError()
+
+    @abstractmethod
     def get_accept_views(self, node: Node):
         raise NotImplementedError()
 
@@ -60,6 +64,7 @@ class SpaceServer(web.Application):
         self.config = config
 
         self.router.add_get('/vospace/protocols', self._get_protocols)
+        self.router.add_get('/vospace/views', self._get_views)
         self.router.add_get('/vospace/nodes/{name:.*}', self._get_node)
         self.router.add_put('/vospace/nodes/{name:.*}', self._create_node)
         self.router.add_post('/vospace/nodes/{name:.*}', self._set_node_properties)
@@ -124,6 +129,16 @@ class SpaceServer(web.Application):
     async def _get_protocols(self, request):
         try:
             protocols = self['abstract_space'].get_protocols()
+            return web.Response(status=200, content_type='text/xml', text=protocols.tostring())
+
+        except VOSpaceError as e:
+            return web.Response(status=e.code, text=e.error)
+        except Exception as g:
+            return web.Response(status=500, text=str(g))
+
+    async def _get_views(self, request):
+        try:
+            protocols = self['abstract_space'].get_views()
             return web.Response(status=200, content_type='text/xml', text=protocols.tostring())
 
         except VOSpaceError as e:

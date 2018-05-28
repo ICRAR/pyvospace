@@ -5,7 +5,9 @@ from aiohttp_security.abc import AbstractAuthorizationPolicy
 from aiohttp_security import remember, forget, authorized_userid, permits
 from passlib.hash import pbkdf2_sha256
 
-from pyvospace.core.model import View
+from pyvospace.core.model import View, PushToSpace
+from pyvospace.core.exception import PermissionDenied
+
 
 PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
                  'ivo://ivoa.net/vospace/core#creator',
@@ -116,6 +118,16 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
             if node.owner == identity:
                 return True
             return self._any_value_in_lists(node.group_write, user['groupwrite'])
+
+        elif permission == 'dataTransfer':
+            job = context
+            if job.transfer.target.owner == identity:
+                return True
+            if isinstance(job.transfer, PushToSpace):
+                return self._any_value_in_lists(job.transfer.target.group_write, user['groupwrite'])
+            else:
+                return self._any_value_in_lists(job.transfer.target.group_read, user['groupread']) or \
+                       self._any_value_in_lists(job.transfer.target.group_write, user['groupwrite'])
 
         return False
 

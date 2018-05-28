@@ -17,19 +17,12 @@ from cryptography import fernet
 from pyvospace.server.view import NodeType
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move
 from pyvospace.core.exception import *
-from pyvospace.server.storage import SpaceStorage
+from pyvospace.server.storage import SpaceStorage, AbstractPosixStorageServer
 
 from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 
 
-class _PosixStorageServer(web.Application):
-    def __init__(self, cfg_file, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.config = configparser.ConfigParser()
-        self.config.read(cfg_file)
-
-
-class PosixStorageServer(SpaceStorage, _PosixStorageServer):
+class PosixStorageServer(SpaceStorage, AbstractPosixStorageServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
 
@@ -52,10 +45,10 @@ class PosixStorageServer(SpaceStorage, _PosixStorageServer):
         self.on_shutdown.append(self.shutdown)
 
     async def shutdown(self):
-        await super(PosixStorageServer, self).shutdown()
+        await super().shutdown()
 
     async def setup(self):
-        await super(PosixStorageServer, self).setup()
+        await super().setup()
 
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
