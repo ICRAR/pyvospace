@@ -11,7 +11,7 @@ from .uws import *
 from pyvospace.core.exception import *
 
 
-class AbstractPosixStorageServer(web.Application):
+class AbstractStorageServer(web.Application):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = configparser.ConfigParser()
