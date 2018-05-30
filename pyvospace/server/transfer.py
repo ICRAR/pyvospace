@@ -3,6 +3,7 @@ import asyncpg
 from .uws import *
 from pyvospace.core.exception import *
 from pyvospace.core.model import *
+from pyvospace.server import fuzz
 
 
 async def perform_transfer_job(job, app, identity, sync):
@@ -12,6 +13,8 @@ async def perform_transfer_job(job, app, identity, sync):
     except VOSpaceError as v:
         with suppress(asyncio.CancelledError):
             await asyncio.shield(app['executor'].set_error(job.job_id, v.error))
+        if sync:
+            raise
 
 
 async def _perform_transfer_job(job, app, identity, sync):
@@ -66,6 +69,7 @@ async def _perform_transfer_job(job, app, identity, sync):
                                     {'{http://www.w3.org/1999/xlink}href':
                                          f"vos://{app['uri']}!vospace/{job.job_info.target.path}"})]
 
+            await fuzz()
             job.phase = UWSPhase.Executing
             await app['executor']._update_uws_job(job)
         else:

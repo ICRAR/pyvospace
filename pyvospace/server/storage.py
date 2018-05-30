@@ -3,7 +3,6 @@ import asyncpg
 import configparser
 
 from aiohttp import web
-from contextlib import suppress
 from aiohttp_security import authorized_userid, permits
 from aiohttp_security.api import AUTZ_KEY
 
@@ -11,22 +10,9 @@ from .uws import *
 from pyvospace.core.exception import *
 
 
-class AbstractStorageServer(web.Application):
+class SpaceStorageServer(web.Application):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.config = configparser.ConfigParser()
-        self.config.read(cfg_file)
-
-    async def permits(self, identity, permission, context):
-        autz_policy = self.get(AUTZ_KEY)
-        if autz_policy is None:
-            return True
-        return await autz_policy.permits(identity, permission, context)
-
-
-class SpaceStorage(object):
-    def __init__(self, cfg_file, *args, **kwargs):
-        super().__init__(cfg_file, *args, **kwargs)
         self.config = configparser.ConfigParser()
         self.config.read(cfg_file)
 
@@ -44,6 +30,12 @@ class SpaceStorage(object):
                 if not space_result:
                     raise VOSpaceError(404, f'Space not found. {self.name}')
         self.executor = StorageUWSJobPool(space_result['id'], self.db_pool)
+
+    async def permits(self, identity, permission, context):
+        autz_policy = self.get(AUTZ_KEY)
+        if autz_policy is None:
+            return True
+        return await autz_policy.permits(identity, permission, context)
 
     async def shutdown(self):
         await self.executor.close()

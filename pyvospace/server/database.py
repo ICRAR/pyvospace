@@ -145,9 +145,10 @@ class NodeDatabase(object):
             if not await self.app.permits(identity, 'createNode', context=(parent_node, node)):
                 raise PermissionDenied('createNode denied.')
 
-            await conn.fetchrow("INSERT INTO nodes (type, name, path, owner, space_id, link) "
-                                "VALUES ($1, $2, $3, $4, $5, $6)",
-                                node.node_type, node_name, path_tree, identity, self.space_id, target)
+            await conn.fetchrow("INSERT INTO nodes (type, name, path, owner, groupread, groupwrite, space_id, link) "
+                                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                                node.node_type, node_name, path_tree, identity,
+                                node.group_read, node.group_write, self.space_id, target)
 
             node_properties = []
             for prop in node.properties:
@@ -188,6 +189,9 @@ class NodeDatabase(object):
                 else:
                     pass_through_properties.append(prop)
 
+        await conn.execute("update nodes set groupread=$1, groupwrite=$2 where path=$3 and space_id=$4",
+                           node.group_read, node.group_write, node_path_tree, self.space_id)
+
         # if a property already exists then update it
         await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
                                "VALUES ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
@@ -209,7 +213,7 @@ class NodeDatabase(object):
         results = await conn.fetch("with delete_rows as "
                                    "(delete from nodes where path <@ $1 and space_id=$2 returning *) "
                                    "select * from delete_rows order by delete_rows.path asc;",
-                                  path_tree, self.space_id)
+                                   path_tree, self.space_id)
         if not results:
             raise NodeDoesNotExistError(f"{path} not found.")
         node = NodeDatabase._resultset_to_node([results[0]], [])

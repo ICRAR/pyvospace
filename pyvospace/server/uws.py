@@ -207,8 +207,8 @@ class UWSJobExecutor(object):
         key = (job.job_id, self.space_id)
         del self.job_tasks[key]
 
-    async def abort(self, job):
-        key = (job.job_id, self.space_id)
+    async def abort(self, job_id):
+        key = (job_id, self.space_id)
         job_tuple = self.job_tasks.get(key, None)
         if job_tuple:
             job_tuple[0].cancel()
