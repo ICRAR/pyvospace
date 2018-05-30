@@ -139,6 +139,16 @@ class TestBase(unittest.TestCase):
         self.assertEqual(200, status, msg=response)
         return UWSJob.fromstring(response)
 
+    async def sync_transfer_node(self, transfer, expected_status=200):
+        status, response = await self.post('http://localhost:8080/vospace/synctrans', data=transfer.tostring())
+        self.assertEqual(expected_status, status, msg=response)
+        if status == 200:
+            return Transfer.fromstring(response)
+        return response
+
+    async def delete_node(self, node):
+        return await self.delete(f'http://localhost:8080/vospace/nodes/{node.path}')
+
     def get_job_id(self, response):
         root = ET.fromstring(response)
         job_id = root.find('{http://www.ivoa.net/xml/UWS/v1.0}jobId')
