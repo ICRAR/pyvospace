@@ -307,8 +307,8 @@ class Node(object):
         self.capabilities = capabilities
         # clients do not have access to these attributes
         self.owner = None
-        self.group_read = None
-        self.group_write = None
+        self._group_read = []
+        self._group_write = []
 
     def __str__(self):
         return self.path
@@ -322,6 +322,28 @@ class Node(object):
         return self.path == other.path and \
                self.node_type_text == other.node_type_text and \
                self._properties == other._properties
+
+    @property
+    def group_read(self):
+        return self._group_read
+
+    @group_read.setter
+    def group_read(self, value):
+        assert isinstance(value, list)
+        for val in value:
+            assert isinstance(val, str)
+        self._group_read = copy.deepcopy(value)
+
+    @property
+    def group_write(self):
+        return self._group_write
+
+    @group_write.setter
+    def group_write(self, value):
+        assert isinstance(value, list)
+        for val in value:
+            assert isinstance(val, str)
+        self._group_write = copy.deepcopy(value)
 
     @classmethod
     def uri_to_path(cls, uri):
