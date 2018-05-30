@@ -2,11 +2,10 @@ import unittest
 import asyncio
 import xml.etree.ElementTree as ET
 
-import xml.dom.minidom as minidom
-
 from aiohttp import web
 
 from pyvospace.core.model import *
+from pyvospace.server import set_fuzz
 from pyvospace.server.spaces.posix.posix_storage import PosixStorageServer
 from test.test_base import TestBase
 
@@ -32,22 +31,25 @@ class TestPushPull(TestBase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode1'))
         self.loop.run_until_complete(self.posix_runner.shutdown())
         self.loop.run_until_complete(self.posix_runner.cleanup())
-
         super().tearDown()
 
-    def test_push_to_space_sync_node_error(self):
+    def test_push_to_space_sync_node_delete(self):
         async def run():
             node = Node('/syncdatanode')
             push = PushToSpace(node, [HTTPPut()])
-            status, response = await self.post('http://localhost:8080/vospace/synctrans',
-                                               data=push.tostring())
-            self.assertEqual(200, status, msg=response)
+            set_fuzz(True)
 
-            transfer = Transfer.fromstring(response)
-            put_end = transfer.protocols[0].endpoint.url
+            async def defer_delete(node):
+                await asyncio.sleep(0.5)
+                await self.delete_node(node)
 
-            await self.delete('http://localhost:8080/vospace/nodes/syncdatanode')
-            await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=404)
+            tasks = [
+                asyncio.ensure_future(self.sync_transfer_node(push, 404)),
+                asyncio.ensure_future(defer_delete(node))
+            ]
+
+            await asyncio.gather(*tasks)
+            set_fuzz(False)
 
         self.loop.run_until_complete(run())
 
@@ -56,20 +58,12 @@ class TestPushPull(TestBase):
             node = Node('/syncdatanode1')
             push = PushToSpace(node, [HTTPPut()],
                                params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
-            status, response = await self.post('http://localhost:8080/vospace/synctrans',
-                                               data=push.tostring())
-            self.assertEqual(200, status, msg=response)
-
-            transfer = Transfer.fromstring(response)
+            transfer = await self.sync_transfer_node(push)
             put_end = transfer.protocols[0].endpoint.url
             await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=200)
 
             push = PullFromSpace(node, [HTTPGet()])
-            status, response = await self.post('http://localhost:8080/vospace/synctrans',
-                                               data=push.tostring())
-            self.assertEqual(200, status, msg=response)
-
-            transfer = Transfer.fromstring(response)
+            transfer = await self.sync_transfer_node(push)
             pull_end = transfer.protocols[0].endpoint.url
             await self.pull_from_space(pull_end, '/tmp/download/')
 
@@ -79,16 +73,11 @@ class TestPushPull(TestBase):
         async def run():
             node = Node('/syncdatanode')
             push = PushToSpace(node, [HTTPPut()])
-            status, response = await self.post('http://localhost:8080/vospace/synctrans',
-                                               data=push.tostring())
-            self.assertEqual(200, status, msg=response)
-
-            root = ET.fromstring(response)
-            put_prot = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            put_end = put_prot.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
+            transfer = await self.sync_transfer_node(push)
+            put_end = transfer.protocols[0].endpoint.url
 
             try:
-                await asyncio.wait_for(self.push_to_space(put_end.text,
+                await asyncio.wait_for(self.push_to_space(put_end,
                                                           '/tmp/datafile.dat',
                                                           expected_status=200), 0.1)
             except Exception as e:
@@ -96,14 +85,9 @@ class TestPushPull(TestBase):
 
             node = Node('/syncdatanode')
             push = PullFromSpace(node, [HTTPGet()])
-            status, response = await self.post('http://localhost:8080/vospace/synctrans',
-                                               data=push.tostring())
-            self.assertEqual(200, status, msg=response)
-            root = ET.fromstring(response)
-            prot_get = root.find('{http://www.ivoa.net/xml/VOSpace/v2.1}protocol')
-            end_get = prot_get.find('{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint')
-
-            await self.pull_from_space(end_get.text, '/tmp/download/', expected_status=(500, 400))
+            transfer = await self.sync_transfer_node(push)
+            end_get = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(end_get, '/tmp/download/', expected_status=(500, 400))
 
         self.loop.run_until_complete(run())
 
