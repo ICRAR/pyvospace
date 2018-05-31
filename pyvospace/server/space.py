@@ -9,17 +9,21 @@ from abc import ABCMeta, abstractmethod
 from aiohttp_security.api import AUTZ_KEY
 
 from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
-from pyvospace.core.model import Protocols, Views, Node, UWSJob
+from pyvospace.core.model import Properties, Protocols, Views, Node, UWSJob
 
 from .view import get_node_request, delete_node_request, create_node_request, \
     set_node_properties_request, create_transfer_request, sync_transfer_request, \
-    get_job_request, get_transfer_details_request, get_job_phase_request, modify_job_request
+    get_job_request, get_transfer_details_request, get_job_phase_request, modify_job_request, get_properties_request
 from .uws import UWSJobPool
 from .database import NodeDatabase
 from .auth import SpacePermission
 
 
 class AbstractSpace(metaclass=ABCMeta):
+    @abstractmethod
+    def get_properties(self) -> Properties:
+        raise NotImplementedError()
+
     @abstractmethod
     def get_protocols(self) -> Protocols:
         raise NotImplementedError()
@@ -65,6 +69,7 @@ class SpaceServer(web.Application, SpacePermission):
         config.read(cfg_file)
         self.config = config
 
+        self.router.add_get('/vospace/properties', self._get_properties)
         self.router.add_get('/vospace/protocols', self._get_protocols)
         self.router.add_get('/vospace/views', self._get_views)
         self.router.add_get('/vospace/nodes/{name:.*}', self._get_node)
@@ -127,6 +132,18 @@ class SpaceServer(web.Application, SpacePermission):
         if autz_policy is None:
             return True
         return await autz_policy.permits(identity, permission, context)
+
+    async def _get_properties(self, request):
+        try:
+            properties = await get_properties_request(request)
+            return web.Response(status=200, content_type='text/xml', text=properties.tostring())
+
+        except VOSpaceError as e:
+            return web.Response(status=e.code, text=e.error)
+        except Exception as g:
+            import traceback
+            traceback.print_exc()
+            return web.Response(status=500, text=str(g))
 
     async def _get_protocols(self, request):
         try:

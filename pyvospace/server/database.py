@@ -3,7 +3,7 @@ import asyncpg
 from pyvospace.core.exception import VOSpaceError, InvalidURI, NodeDoesNotExistError, PermissionDenied, \
     ContainerDoesNotExistError, DuplicateNodeError
 from pyvospace.core.model import Node, DataNode, UnstructuredDataNode, StructuredDataNode, LinkNode, ContainerNode, \
-    NodeType, Property, DeleteProperty
+    NodeType, Property, DeleteProperty, NodeTextLookup
 
 
 class NodeDatabase(object):
@@ -227,3 +227,9 @@ class NodeDatabase(object):
         path_tree = NodeDatabase.path_to_ltree(path)
         await conn.execute("delete from properties where node_path=$1 and space_id=$2",
                            path_tree, self.space_id)
+
+    async def get_contains_properties(self):
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                return await conn.fetch("select distinct(uri), value, read_only from properties where space_id=$1",
+                                        self.space_id)
