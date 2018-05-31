@@ -9,7 +9,7 @@ from cryptography import fernet
 
 from pyvospace.server.space import SpaceServer, AbstractSpace
 from pyvospace.core.model import Views, View, Endpoint, PullFromSpace, PushToSpace, Protocols, \
-    HTTPGet, HTTPPut, HTTPSGet, HTTPSPut, Node, NodeTextLookup, NodeType
+    HTTPGet, HTTPPut, HTTPSGet, HTTPSPut, Node, NodeTextLookup, NodeType, Properties, Property
 from pyvospace.core.exception import VOSpaceError
 
 from .utils import move, copy, mkdir, remove, rmtree, exists
@@ -82,6 +82,17 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
         app = PosixSpaceServer(cfg_file, *args, **kwargs)
         await app.setup_space()
         return app
+
+    def get_properties(self) -> Properties:
+        accepts = [Property('ivo://ivoa.net/vospace/core#title', None),
+                   Property('ivo://ivoa.net/vospace/core#creator', None),
+                   Property('ivo://ivoa.net/vospace/core#subject', None),
+                   Property('ivo://ivoa.net/vospace/core#description', None),
+                   Property('ivo://ivoa.net/vospace/core#publisher', None),
+                   Property('ivo://ivoa.net/vospace/core#contributor', None),
+                   Property('ivo://ivoa.net/vospace/core#date', None)]
+        provides = []
+        return Properties(accepts, provides)
 
     def get_protocols(self) -> Protocols:
         return Protocols(accepts=[], provides=[HTTPGet(), HTTPPut()])

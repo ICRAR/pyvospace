@@ -28,6 +28,18 @@ class TestCreate(TestBase):
 
         self.loop.run_until_complete(run())
 
+    def test_get_properties(self):
+        async def run():
+            properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello1", False),
+                          Property('ivo://ivoa.net/vospace/core#description', "Hello2", False)]
+            node1 = ContainerNode('/test1', properties=properties)
+            await self.create_node(node1)
+
+            status, response = await self.get('http://localhost:8080/vospace/properties', params=None)
+            self.assertEqual(200, status, msg=response)
+
+        self.loop.run_until_complete(run())
+
     def test_set_properties(self):
         async def run():
             properties = [Property('ivo://ivoa.net/vospace/core#title', "Hello1", False),

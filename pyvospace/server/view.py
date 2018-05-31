@@ -5,6 +5,18 @@ from pyvospace.core.exception import VOSpaceError, PermissionDenied, InvalidURI,
 from pyvospace.core.model import UWSPhase, UWSPhaseLookup, Node, DataNode, ContainerNode, Transfer
 
 from .transfer import perform_transfer_job
+from .database import NodeDatabase
+
+
+async def get_properties_request(request):
+    identity = await authorized_userid(request)
+    if identity is None:
+        raise PermissionDenied(f'Credentials not found.')
+    properties = request.app['abstract_space'].get_properties()
+    assert properties
+    results = await request.app['db'].get_contains_properties()
+    properties.contains = NodeDatabase._resultset_to_properties(results)
+    return properties
 
 
 async def get_node_request(request):

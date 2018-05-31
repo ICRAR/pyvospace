@@ -220,6 +220,42 @@ class Protocols(object):
         return root
 
 
+class Properties(object):
+    def __init__(self, accepts, provides):
+        assert isinstance(accepts, list)
+        for prop in accepts:
+            assert isinstance(prop, Property)
+        self.accepts = accepts
+        assert isinstance(accepts, list)
+        for prop in accepts:
+            assert isinstance(prop, Property)
+        self.provides = provides
+        self.contains = []
+
+    def tostring(self):
+        root = self.toxml()
+        return ET.tostring(root).decode("utf-8")
+
+    def toxml(self):
+        root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}properties", nsmap = Node.NS)
+        if self.accepts:
+            accepts_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}accepts")
+            for prop in self.accepts:
+                prop_element = ET.SubElement(accepts_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}property")
+                prop_element.set('uri', prop.uri)
+        if self.provides:
+            provides_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}provides")
+            for prop in self.provides:
+                prop_element = ET.SubElement(provides_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}property")
+                prop_element.set('uri', prop.uri)
+        if self.contains:
+            contains_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}contains")
+            for prop in self.contains:
+                prop_element = ET.SubElement(contains_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}property")
+                prop_element.set('uri', prop.uri)
+        return root
+
+
 class HTTPPut(Protocol):
     def __init__(self, endpoint=None):
         super().__init__('ivo://ivoa.net/vospace/core#httpput', endpoint)
