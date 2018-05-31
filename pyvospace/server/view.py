@@ -1,14 +1,10 @@
-import asyncio
-
 from contextlib import suppress
 from aiohttp_security import authorized_userid, permits
 
-from pyvospace.core.exception import *
-from pyvospace.core.model import *
+from pyvospace.core.exception import VOSpaceError, PermissionDenied, InvalidURI, InvalidJobStateError
+from pyvospace.core.model import UWSPhase, UWSPhaseLookup, Node, DataNode, ContainerNode, Transfer
 
-from .uws import PhaseLookup, UWSPhase
 from .transfer import perform_transfer_job
-from .database import NodeDatabase
 
 
 async def get_node_request(request):
@@ -153,7 +149,7 @@ async def get_job_phase_request(request):
     job = await request.app['executor'].get_uws_job_phase(job_id)
     if identity != job['owner']:
         raise PermissionDenied(f'{identity} is not the owner of the job.')
-    return PhaseLookup[job['phase']]
+    return UWSPhaseLookup[job['phase']]
 
 
 async def modify_job_request(request):
@@ -169,31 +165,8 @@ async def modify_job_request(request):
     if phase == "PHASE=RUN":
         await request.app['executor'].execute(job_id, identity, perform_transfer_job,
                                               request.app, identity, False)
-
     elif phase == "PHASE=ABORT":
-        pass
-        '''async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                job = await get_uws_job_conn(conn=conn, space_id=space_id,
-                                             job_id=job_id, for_update=True)
-
-                if job['phase'] in (UWSPhase.Completed, UWSPhase.Error):
-                    raise InvalidJobStateError("Invalid Request. "
-                                               "Can't cancel a job that is COMPLETED or in ERROR.")
-                # if its a move or copy operation
-                if job['direction'] not in ('pushToVoSpace', 'pullFromVoSpace'):
-                    # if the move or copy is being performed then do not abort
-                    # we dont want to abort because undoing a file copy/move is
-                    # difficult to do if the transaction fails
-                    if job['phase'] >= UWSPhase.Executing:
-                        raise InvalidJobStateError("Invalid Request. "
-                                                   "Can't abort a move/copy that is EXECUTING.")
-
-                with suppress(asyncio.CancelledError):
-                    await asyncio.shield(set_uws_phase_to_abort(conn, space_id, job_id))
-
-        with suppress(asyncio.CancelledError):
-            await asyncio.shield(exec.abort(UWSKey(space_id, job_id)))'''
+        await request.app['executor'].abort(job_id, identity)
     else:
         raise VOSpaceError(400, f"Invalid Request. Unknown UWS phase input {uws_cmd}")
 

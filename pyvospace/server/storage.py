@@ -6,11 +6,15 @@ from aiohttp import web
 from aiohttp_security import authorized_userid, permits
 from aiohttp_security.api import AUTZ_KEY
 
-from .uws import *
-from pyvospace.core.exception import *
+from pyvospace.core.model import PushToSpace
+from pyvospace.core.exception import VOSpaceError, PermissionDenied, NodeBusyError, InvalidJobError, \
+    InvalidJobStateError, NodeDoesNotExistError
+from .auth import SpacePermission
+from .uws import StorageUWSJobPool
+from .database import NodeDatabase
 
 
-class SpaceStorageServer(web.Application):
+class SpaceStorageServer(web.Application, SpacePermission):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = configparser.ConfigParser()
@@ -29,7 +33,9 @@ class SpaceStorageServer(web.Application):
                                                    "where name=$1 for update", self.name)
                 if not space_result:
                     raise VOSpaceError(404, f'Space not found. {self.name}')
-        self.executor = StorageUWSJobPool(space_result['id'], self.db_pool)
+        self.executor = StorageUWSJobPool(space_result['id'], self.db_pool,
+                                          self.config.get('Space', 'dsn'), self)
+        await self.executor.setup()
 
     async def permits(self, identity, permission, context):
         autz_policy = self.get(AUTZ_KEY)
@@ -55,22 +61,28 @@ class SpaceStorageServer(web.Application):
                     node_result = await self.executor._get_executing_target(job.job_id, conn, lock)
                     target_node = NodeDatabase._resultset_to_node([node_result], [])
                     job.transfer.target = target_node
+
                     if not await request.app.permits(identity, 'dataTransfer', context=job):
                         raise PermissionDenied('data transfer denied.')
+
                     return await func(job, request)
         except asyncpg.exceptions.LockNotAvailableError:
             raise NodeBusyError('')
 
     async def execute(self, request, job_id, func):
         try:
-            response = await self.executor.execute(job_id, self._execute, func, request)
+            identity = await authorized_userid(request)
+            if identity is None:
+                raise PermissionDenied(f'Credentials not found.')
+
+            response = await self.executor.execute(job_id, identity, self._execute, func, request)
             await asyncio.shield(self.executor.set_completed(job_id))
             return response
 
         except asyncio.CancelledError:
             return web.Response(status=400, text="Cancelled")
 
-        except (NodeBusyError, InvalidJobError, InvalidJobStateError) as v:
+        except (NodeBusyError, InvalidJobError, InvalidJobStateError, PermissionDenied) as v:
             return web.Response(status=v.code, text=v.error)
 
         except (NodeDoesNotExistError, VOSpaceError) as e:

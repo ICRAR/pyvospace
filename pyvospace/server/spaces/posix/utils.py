@@ -1,4 +1,5 @@
 import os
+import io
 import asyncio
 import aiohttp
 import aiofiles
@@ -6,6 +7,8 @@ import shutil
 
 from aiofiles.os import stat
 from aiohttp import web
+
+from pyvospace.server import fuzz
 
 
 def copytree(src, dst, symlinks=False, ignore=None):
@@ -60,7 +63,7 @@ async def copy(src, dest):
 
 async def isfile(path):
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, os.path.isfile, path)
+    return await loop.run_in_executor(None, os.path.isfile, path)
 
 
 async def rmtree(path):
@@ -70,26 +73,33 @@ async def rmtree(path):
 
 async def exists(path):
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, os.path.exists, path)
+    return await loop.run_in_executor(None, os.path.exists, path)
 
 
 async def send_file(request, file_name, file_path):
     response = web.StreamResponse()
-    file_size = (await stat(file_path)).st_size
+    try:
+        file_size = (await stat(file_path)).st_size
 
-    response.headers[aiohttp.hdrs.CONTENT_TYPE] = "application/octet-stream"
-    response.headers[aiohttp.hdrs.CONTENT_LENGTH] = str(file_size)
-    response.headers[aiohttp.hdrs.CONTENT_DISPOSITION] = f"attachment; filename=\"{file_name}\""
+        response.headers[aiohttp.hdrs.CONTENT_TYPE] = "application/octet-stream"
+        response.headers[aiohttp.hdrs.CONTENT_LENGTH] = str(file_size)
+        response.headers[aiohttp.hdrs.CONTENT_DISPOSITION] = f"attachment; filename=\"{file_name}\""
 
-    await response.prepare(request)
-    async with aiofiles.open(file_path, mode='rb') as input_file:
-        # cannot use sendfile() over an SSL connection
-        # defer back to user space copy and send
-        # will run this in Gunicorn et al to get maximum utilisation
-        while True:
-            buff = await input_file.read(65536)
-            if not buff:
-                break
-            await response.write(buff)
-    await response.write_eof()
-    return response
+        await response.prepare(request)
+        async with aiofiles.open(file_path, mode='rb') as input_file:
+            # cannot use sendfile() over an SSL connection
+            # defer back to user space copy and send
+            # will run this in Gunicorn et al to get maximum utilisation
+            while True:
+                buff = await input_file.read(io.DEFAULT_BUFFER_SIZE)
+                if not buff:
+                    break
+
+                await fuzz()
+                await response.write(buff)
+        await asyncio.shield(response.write_eof())
+        return response
+    except Exception:
+        await asyncio.shield(response.write_eof())
+        response.force_close()
+        raise

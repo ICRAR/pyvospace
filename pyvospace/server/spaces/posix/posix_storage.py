@@ -2,10 +2,8 @@ import io
 import os
 import asyncio
 import aiofiles
-import configparser
 import json
 import uuid
-import base64
 
 from aiohttp import web
 from aiohttp_security import setup as setup_security
@@ -14,12 +12,11 @@ from aiohttp_session import setup as setup_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from cryptography import fernet
 
-from pyvospace.server.view import NodeType
+from pyvospace.core.model import NodeType
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move
-from pyvospace.core.exception import *
 from pyvospace.server.storage import SpaceStorageServer
-
-from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
+from pyvospace.server import fuzz
+from .auth import DBUserNodeAuthorizationPolicy
 
 
 class PosixStorageServer(SpaceStorageServer):
@@ -66,8 +63,6 @@ class PosixStorageServer(SpaceStorageServer):
                           cookie_name='PYVOSPACE_COOKIE',
                           domain=self.domain))
 
-        self.authentication = DBUserAuthentication(self.name, self.db_pool)
-
         setup_security(self,
                        SessionIdentityPolicy(),
                        DBUserNodeAuthorizationPolicy(self.name, self.db_pool))
@@ -93,7 +88,11 @@ class PosixStorageServer(SpaceStorageServer):
         root_dir = self.root_dir
         path_tree = job.transfer.target.path
         file_path = f'{root_dir}/{path_tree}'
-        return await send_file(request, os.path.splitext(path_tree)[0], file_path)
+        try:
+            response = await send_file(request, os.path.splitext(path_tree)[0], file_path)
+        except (asyncio.CancelledError, Exception):
+            raise
+        return response
 
     async def upload(self, job, request):
         reader = request.content
@@ -111,6 +110,7 @@ class PosixStorageServer(SpaceStorageServer):
                     buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
                     if not buffer:
                         break
+                    await fuzz()
                     await f.write(buffer)
 
             await asyncio.shield(move(stage_file_name, real_file_name))

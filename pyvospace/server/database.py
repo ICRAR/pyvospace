@@ -1,14 +1,16 @@
 import asyncpg
 
-from pyvospace.core.exception import *
-from pyvospace.core.model import *
+from pyvospace.core.exception import VOSpaceError, InvalidURI, NodeDoesNotExistError, PermissionDenied, \
+    ContainerDoesNotExistError, DuplicateNodeError
+from pyvospace.core.model import Node, DataNode, UnstructuredDataNode, StructuredDataNode, LinkNode, ContainerNode, \
+    NodeType, Property, DeleteProperty
 
 
 class NodeDatabase(object):
-    def __init__(self, space_id, db_pool, app):
+    def __init__(self, space_id, db_pool, permission):
         self.space_id = space_id
         self.db_pool = db_pool
-        self.app = app
+        self.permission = permission
 
     @classmethod
     def path_to_ltree(cls, path):
@@ -106,7 +108,7 @@ class NodeDatabase(object):
                                       results[0]['path'], self.space_id)
 
         node = self._resultset_to_node(results, properties)
-        if not await self.app.permits(identity, 'getNode', context=node):
+        if not await self.permission.permits(identity, 'getNode', context=node):
             raise PermissionDenied('getNode denied.')
         return node
 
@@ -142,7 +144,7 @@ class NodeDatabase(object):
                     raise ContainerDoesNotExistError(f"{parent_row['name']} is not a container.")
 
             parent_node = NodeDatabase._resultset_to_node([parent_row], [])
-            if not await self.app.permits(identity, 'createNode', context=(parent_node, node)):
+            if not await self.permission.permits(identity, 'createNode', context=(parent_node, node)):
                 raise PermissionDenied('createNode denied.')
 
             await conn.fetchrow("INSERT INTO nodes (type, name, path, owner, groupread, groupwrite, space_id, link) "
@@ -174,7 +176,7 @@ class NodeDatabase(object):
         node.owner = results['owner']
         node.group_read = results['groupread']
         node.group_write = results['groupwrite']
-        if not await self.app.permits(identity, 'setNode', context=node):
+        if not await self.permission.permits(identity, 'setNode', context=node):
             raise PermissionDenied('setNode denied.')
 
         pass_through_properties = []
@@ -217,7 +219,7 @@ class NodeDatabase(object):
         if not results:
             raise NodeDoesNotExistError(f"{path} not found.")
         node = NodeDatabase._resultset_to_node([results[0]], [])
-        if not await self.app.permits(identity, 'deleteNode', context=node):
+        if not await self.permission.permits(identity, 'deleteNode', context=node):
             raise PermissionDenied('deleteNode denied.')
         return node
 

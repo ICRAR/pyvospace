@@ -956,16 +956,16 @@ UWS_Phase = namedtuple('NodeType', 'Pending '
 
 UWSPhase = UWS_Phase(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
 
-PhaseLookup = {0: 'PENDING',
-               1: 'QUEUED',
-               2: 'EXECUTING',
-               3: 'COMPLETED',
-               4: 'ERROR',
-               5: 'ABORTED',
-               6: 'UNKNOWN',
-               7: 'HELD',
-               8: 'SUSPENDED',
-               9: 'ARCHIVED'}
+UWSPhaseLookup = {0: 'PENDING',
+                  1: 'QUEUED',
+                  2: 'EXECUTING',
+                  3: 'COMPLETED',
+                  4: 'ERROR',
+                  5: 'ABORTED',
+                  6: 'UNKNOWN',
+                  7: 'HELD',
+                  8: 'SUSPENDED',
+                  9: 'ARCHIVED'}
 
 
 class UWSResult(object):
@@ -1032,7 +1032,7 @@ class UWSJob(object):
         ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}jobId').text = self.job_id
         owner_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}ownerId')
         owner_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
-        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}phase').text = PhaseLookup[self.phase]
+        ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}phase').text = UWSPhaseLookup[self.phase]
         ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}quote').text = None
         starttime_element = ET.SubElement(root, '{http://www.ivoa.net/xml/UWS/v1.0}startTime')
         starttime_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')

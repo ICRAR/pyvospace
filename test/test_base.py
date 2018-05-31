@@ -218,14 +218,17 @@ class TestBase(unittest.TestCase):
                     hdr_length = int(resp.headers[aiohttp.hdrs.CONTENT_LENGTH])
                     path = f"{output_path}/{resp.content_disposition.filename}"
                     downloaded = 0
-                    async with aiofiles.open(path, mode='wb') as out_file:
-                        while True:
-                            buff = await resp.content.read(65536)
-                            downloaded += len(buff)
-                            if not buff:
-                                break
-                            await out_file.write(buff)
-                    self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
+                    try:
+                        async with aiofiles.open(path, mode='wb') as out_file:
+                            while True:
+                                buff = await resp.content.read(65536)
+                                if not buff:
+                                    break
+                                downloaded += len(buff)
+                                await out_file.write(buff)
+                        self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
+                    except Exception as e:
+                        raise IOError(str(e))
 
     async def pull_from_space_defer_error(self, url, output_path):
         async with aiohttp.ClientSession(cookie_jar=self.session.cookie_jar) as session:
@@ -234,12 +237,15 @@ class TestBase(unittest.TestCase):
                     hdr_length = int(resp.headers[aiohttp.hdrs.CONTENT_LENGTH])
                     path = f"{output_path}/{resp.content_disposition.filename}"
                     downloaded = 0
-                    async with aiofiles.open(path, mode='wb') as out_file:
-                        while True:
-                            buff = await resp.content.read(65536)
-                            downloaded += len(buff)
-                            if not buff:
-                                break
-                            await out_file.write(buff)
-                    self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
-                return resp.status
+                    try:
+                        async with aiofiles.open(path, mode='wb') as out_file:
+                            while True:
+                                buff = await resp.content.read(65536)
+                                if not buff:
+                                    break
+                                downloaded += len(buff)
+                                await out_file.write(buff)
+                        self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
+                        return resp.status
+                    except Exception as e:
+                        raise IOError(str(e))
