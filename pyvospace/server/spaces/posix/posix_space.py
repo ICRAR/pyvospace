@@ -1,7 +1,4 @@
 import json
-import configparser
-import base64
-import asyncpg
 
 from contextlib import suppress
 from aiohttp_security import setup as setup_security
@@ -10,9 +7,10 @@ from aiohttp_session import setup as setup_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from cryptography import fernet
 
-from pyvospace.server.space import SpaceServer
-from pyvospace.server.space import AbstractSpace
-from pyvospace.core.model import *
+from pyvospace.server.space import SpaceServer, AbstractSpace
+from pyvospace.core.model import Views, View, Endpoint, PullFromSpace, PushToSpace, Protocols, \
+    HTTPGet, HTTPPut, HTTPSGet, HTTPSPut, Node, NodeTextLookup, NodeType
+from pyvospace.core.exception import VOSpaceError
 
 from .utils import move, copy, mkdir, remove, rmtree, exists
 from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
@@ -86,7 +84,7 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
         return app
 
     def get_protocols(self) -> Protocols:
-        return Protocols(accepts=[], provides=[HTTPGet(), HTTPGet()])
+        return Protocols(accepts=[], provides=[HTTPGet(), HTTPPut()])
 
     def get_views(self) -> Views:
         return Views(accepts=[View('ivo://ivoa.net/vospace/core#anyview')],

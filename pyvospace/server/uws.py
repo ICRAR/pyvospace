@@ -1,19 +1,24 @@
 import datetime
 import asyncio
 import functools
+import asyncpg
+import json
 
 from contextlib import suppress
 
-from pyvospace.core.model import *
-from pyvospace.core.exception import *
+from pyvospace.core.model import UWSPhase, UWSJob, UWSResult, Transfer, \
+    ProtocolTransfer, PushToSpace, PullFromSpace
+from pyvospace.core.exception import VOSpaceError, JobDoesNotExistError, InvalidJobError, \
+    InvalidJobStateError, PermissionDenied, NodeDoesNotExistError, ClosingError
 from .database import NodeDatabase
 
 
 class UWSJobPool(object):
-    def __init__(self, space_id, db_pool):
+    def __init__(self, space_id, db_pool, permission):
         self.db_pool = db_pool
         self.space_id = space_id
         self.executor = UWSJobExecutor(space_id)
+        self.permission = permission
 
     async def close(self):
         await self.executor.close()
@@ -72,9 +77,6 @@ class UWSJobPool(object):
         results = None
         if result['results']:
             results = UWSResult.fromstring(result['results'])
-        #transfer = None
-        #if result['transfer']:
-        #    transfer = Transfer.fromstring(result['transfer'])
         job = UWSJob(result['id'], result['phase'], result['destruction'],
                      job_info, results, result['error'])
         job.owner = result['owner']
@@ -99,14 +101,38 @@ class UWSJobPool(object):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 result = await self._get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
-                if identity != result['owner']:
-                    raise PermissionDenied(f'{identity} is not the owner of the job.')
                 # Can only start a PENDING Job
                 if result['phase'] != UWSPhase.Pending:
                     raise InvalidJobStateError('Invalid Job State')
+
                 job = self._resultset_to_job(result)
+                if not await self.permission.permits(identity, 'runJob', context=job):
+                    raise PermissionDenied('runJob denied.')
+
                 fut = self.executor.execute(job, func, *args)
         return await fut
+
+    async def abort(self, job_id, identity):
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                result = await self._get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
+                if result['phase'] in (UWSPhase.Completed, UWSPhase.Error):
+                    raise InvalidJobStateError("Can't cancel a job that is COMPLETED or in ERROR.")
+
+                job = self._resultset_to_job(result)
+                if isinstance(job, PushToSpace) or isinstance(job, PullFromSpace):
+                    # aborting a file copy or move can produce weird results so ignore it
+                    if job.phase >= UWSPhase.Executing:
+                        raise InvalidJobStateError("Can't abort a move/copy that is EXECUTING.")
+
+                if not await self.permission.permits(identity, 'abortJob', context=job):
+                    raise PermissionDenied('abortJob denied.')
+
+                with suppress(asyncio.CancelledError):
+                    await asyncio.shield(self.set_aborted(job_id, conn))
+
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(self.executor.abort(job_id))
 
     async def set_executing(self, job_id):
         async with self.db_pool.acquire() as conn:
@@ -132,9 +158,9 @@ class UWSJobPool(object):
                                            job_id, error, UWSPhase.Error,
                                            UWSPhase.Aborted, self.space_id)
 
-    async def abort(self, job_id, conn):
+    async def set_aborted(self, job_id, conn):
         result = await conn.fetchrow("update uws_jobs set phase=$2 "
-                                     "where id=$1 and space_id=$4 returning id",
+                                     "where id=$1 and space_id=$3 returning id",
                                      job_id, UWSPhase.Aborted, self.space_id)
         return result
 
@@ -146,13 +172,38 @@ class StorageUWSJob(UWSJob):
 
 
 class StorageUWSJobPool(UWSJobPool):
-    def __init__(self, space_id, db_pool):
-        super().__init__(space_id, db_pool)
+    def __init__(self, space_id, db_pool, dsn, permission):
+        super().__init__(space_id, db_pool, permission)
+        self.listener = None
+        self.dsn = dsn
+
+    async def setup(self):
+        self.listener = await asyncpg.connect(dsn=self.dsn)
+        await self.listener.add_listener('uws_jobs', self._jobs_callback)
+
+    async def close(self):
+        await self.listener.close()
+        await super().close()
+
+    def _jobs_callback(self, connection, pid, channel, payload):
+        job = json.loads(payload)
+        # check the job belongs to this space
+        if int(job['row']['space_id']) != self.space_id:
+            return
+        if job['action'] != 'UPDATE':
+            return
+        phase = job['row']['phase']
+        job_id = job['row']['id']
+        if phase == UWSPhase.Aborted:
+            loop = asyncio.get_event_loop()
+            asyncio.run_coroutine_threadsafe(self.executor.abort(job_id), loop)
 
     def _resultset_to_job(self, result):
         job_info = Transfer.fromstring(result['job_info'])
         transfer = Transfer.fromstring(result['transfer'])
-        return StorageUWSJob(result['id'], result['phase'], result['destruction'], job_info, transfer)
+        job = StorageUWSJob(result['id'], result['phase'], result['destruction'], job_info, transfer)
+        job.owner = result['owner']
+        return job
 
     async def _get_executing_target(self, job_id, conn, lock='update'):
         result = await conn.fetchrow("select nodes.* from nodes left join uws_jobs on "
@@ -164,16 +215,21 @@ class StorageUWSJobPool(UWSJobPool):
             raise NodeDoesNotExistError('')
         return result
 
-    async def execute(self, job_id, func, *args):
+    async def execute(self, job_id, identity, func, *args):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 result = await self._get_uws_job_conn(conn=conn, job_id=job_id, for_update=True)
                 # Can only start an EXECUTING Job if its a protocol transfer
                 if result['phase'] != UWSPhase.Executing:
                     raise InvalidJobStateError('Invalid Job State')
+
                 job = self._resultset_to_job(result)
                 if not isinstance(job.job_info, ProtocolTransfer):
                     raise InvalidJobStateError('Invalid Job Type')
+
+                if not await self.permission.permits(identity, 'runJob', context=job):
+                    raise PermissionDenied('runJob denied.')
+
                 fut = self.executor.execute(job, func, *args)
         return await fut
 

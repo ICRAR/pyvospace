@@ -1,20 +1,22 @@
-import asyncpg
-import configparser
 import json
 import asyncio
+import asyncpg
+import configparser
 
 from aiohttp import web
 from contextlib import suppress
 from abc import ABCMeta, abstractmethod
-from aiohttp_security import permits
 from aiohttp_security.api import AUTZ_KEY
 
-from pyvospace.core.exception import *
-from pyvospace.core.model import *
+from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
+from pyvospace.core.model import Protocols, Views, Node, UWSJob
 
-from .view import *
+from .view import get_node_request, delete_node_request, create_node_request, \
+    set_node_properties_request, create_transfer_request, sync_transfer_request, \
+    get_job_request, get_transfer_details_request, get_job_phase_request, modify_job_request
 from .uws import UWSJobPool
 from .database import NodeDatabase
+from .auth import SpacePermission
 
 
 class AbstractSpace(metaclass=ABCMeta):
@@ -55,7 +57,7 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
 
-class SpaceServer(web.Application):
+class SpaceServer(web.Application, SpacePermission):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -95,7 +97,7 @@ class SpaceServer(web.Application):
 
         self['db_pool'] = db_pool
         self['space_id'] = space_id
-        self['executor'] = UWSJobPool(space_id, db_pool)
+        self['executor'] = UWSJobPool(space_id, db_pool, self)
         self['db'] = NodeDatabase(space_id, db_pool, self)
 
     async def _register_space(self, db_pool, name, host, port, parameters):
@@ -252,4 +254,6 @@ class SpaceServer(web.Application):
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception:
+            import traceback
+            traceback.print_exc()
             return web.Response(status=500)

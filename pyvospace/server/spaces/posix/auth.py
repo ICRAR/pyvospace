@@ -1,12 +1,9 @@
-import json
-
 from aiohttp import helpers, web
 from aiohttp_security.abc import AbstractAuthorizationPolicy
 from aiohttp_security import remember, forget, authorized_userid, permits
 from passlib.hash import pbkdf2_sha256
 
-from pyvospace.core.model import View, PushToSpace
-from pyvospace.core.exception import PermissionDenied
+from pyvospace.core.model import PushToSpace
 
 
 PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
@@ -64,6 +61,9 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
                                        identity, self.space_name)
             if not user:
                 raise web.HTTPForbidden(f"{identity} not found.")
+
+        if user['admin'] is True:
+            return True
 
         if permission == 'createNode':
             parent = context[0]
@@ -128,6 +128,11 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
             else:
                 return self._any_value_in_lists(job.transfer.target.group_read, user['groupread']) or \
                        self._any_value_in_lists(job.transfer.target.group_write, user['groupwrite'])
+
+        elif permission in ('runJob', 'abortJob'):
+            job = context
+            if job.owner == identity:
+                return True
 
         return False
 
