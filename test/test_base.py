@@ -10,8 +10,10 @@ import logging
 import unittest
 import configparser
 import xml.etree.ElementTree as ET
+import requests
 
 from aiohttp import web
+from urllib.parse import urlencode
 
 from pyvospace.server.spaces.posix import PosixSpaceServer
 from pyvospace.core.model import *
@@ -146,6 +148,18 @@ class TestBase(unittest.TestCase):
             return Transfer.fromstring(response)
         return response
 
+    async def sync_transfer_node_parameterised(self, transfer, expected_status=200):
+        status, response = await self.post('http://localhost:8080/vospace/synctrans',
+                                           params=transfer.tomap())
+        self.assertEqual(expected_status, status, msg=response)
+        if status == 200:
+            return Transfer.fromstring(response)
+        return response
+
+    async def sync_pull_from_space_parameterised(self, transfer, output_path, expected_status=(200,)):
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.download_file_product, transfer, output_path)
+
     async def delete_node(self, node):
         return await self.delete(f'http://localhost:8080/vospace/nodes/{node.path}')
 
@@ -249,3 +263,25 @@ class TestBase(unittest.TestCase):
                         return resp.status
                     except Exception as e:
                         raise IOError(str(e))
+
+    def download_file_product(self, transfer, output_path):
+        t = self.session.cookie_jar.filter_cookies('http://localhost:8080/')
+        cookies = {}
+        for _, value in t.items():
+            cookies[value.key] = value.value
+        with requests.post(url='http://localhost:8080/vospace/synctrans',
+                           params=urlencode(transfer.tomap()),
+                           cookies=cookies,
+                           stream=True,
+                           verify=False) as r:
+            r.raise_for_status()
+            path = f"{output_path}/test"
+            with open(path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+
+            file_size = os.path.getsize(path)
+            content_length = int(r.headers['content-length'])
+            if file_size != content_length:
+                raise IOError('size mismatch')

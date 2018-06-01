@@ -140,11 +140,19 @@ class TestCopyMove(TestBase):
             # Invalid Jobid
             await self.change_job_state(1234, 'PHASE=RUN', expected_status=400)
 
-            # Node doesn't exist
+            # Source node doesn't exist
             mv = Move(Node('/data11'), node2)
             job = await self.transfer_node(mv)
             await self.change_job_state(job.job_id, 'PHASE=RUN')
             await self.poll_job(job.job_id, expected_status='ERROR')
+            await self.get_error_summary(job.job_id, "Node Not Found")
+
+            # Destination node doesn't exist
+            mv = Move(Node('/data0'), Node('/doesnotexist'))
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
+            await self.get_error_summary(job.job_id, "Node Not Found")
 
             # move node1 -> node2
             mv = Move(node1, node2)

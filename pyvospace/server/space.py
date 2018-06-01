@@ -141,8 +141,6 @@ class SpaceServer(web.Application, SpacePermission):
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except Exception as g:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500, text=str(g))
 
     async def _get_protocols(self, request):
@@ -206,18 +204,19 @@ class SpaceServer(web.Application, SpacePermission):
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception as e:
-            return web.Response(status=500)
+            return web.Response(status=500, text=str(e))
 
     async def _sync_transfer(self, request):
         try:
             with suppress(asyncio.CancelledError):
-                job = await asyncio.shield(sync_transfer_request(request))
-            return web.HTTPSeeOther(location=f'/vospace/transfers/{job.job_id}'
-                                             f'/results/transferDetails')
+                job, endpoint = await asyncio.shield(sync_transfer_request(request))
+                if endpoint is None:
+                    endpoint = f'/vospace/transfers/{job.job_id}/results/transferDetails'
+                return web.HTTPSeeOther(location=endpoint)
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception as e:
-            return web.Response(status=500)
+            return web.Response(status=500, text=str(e))
 
     async def _create_transfer(self, request):
         try:
@@ -271,6 +270,4 @@ class SpaceServer(web.Application, SpacePermission):
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception:
-            import traceback
-            traceback.print_exc()
             return web.Response(status=500)

@@ -32,6 +32,16 @@ NodeTextLookup = {0: 'vos:Node',
 NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 
 
+def validate_property_uri(uri):
+    assert uri, 'uri empty'
+    parsed = urlparse(uri)
+    assert parsed.scheme == 'ivo', 'uri does not start with ivo'
+    assert parsed.path, 'path empty'
+    assert parsed.path.startswith('/vospace'), 'path does not start with /vospace'
+    assert parsed.fragment, 'fragment empty'
+    return parsed
+
+
 class Parameter(object):
     def __init__(self, uri, value):
         self.uri = uri
@@ -54,19 +64,9 @@ class Parameter(object):
 
     @uri.setter
     def uri(self, value):
-        parsed = Property.validate_property_uri(value)
+        parsed = validate_property_uri(value)
         self._name = parsed.fragment
         self._uri = copy.deepcopy(value)
-
-    @classmethod
-    def validate_property_uri(cls, uri):
-        assert uri
-        parsed = urlparse(uri)
-        assert parsed.scheme == 'ivo'
-        assert parsed.path
-        assert parsed.path.startswith('/vospace')
-        assert parsed.fragment
-        return parsed
 
     def tolist(self):
         return [self.uri, self.value]
@@ -113,19 +113,9 @@ class Property(object):
 
     @uri.setter
     def uri(self, value):
-        parsed = Property.validate_property_uri(value)
+        parsed = validate_property_uri(value)
         self._name = parsed.fragment
         self._uri = copy.deepcopy(value)
-
-    @classmethod
-    def validate_property_uri(cls, uri):
-        assert uri
-        parsed = urlparse(uri)
-        assert parsed.scheme == 'ivo'
-        assert parsed.path
-        assert parsed.path.startswith('/vospace')
-        assert parsed.fragment
-        return parsed
 
     def tolist(self):
         return [self.uri, self.value, self.read_only]
@@ -163,12 +153,39 @@ class Endpoint(object):
 
 class Protocol(object):
     def __init__(self, uri, endpoint=None):
-        self._uri = uri
+        self.uri = uri
         self._endpoint = None
         self.endpoint = endpoint
 
     def __str__(self):
-        return self.uri
+        return self._uri
+
+    @property
+    def uri(self):
+        return self._uri
+
+    @property
+    def name(self):
+        return self._name
+
+    @uri.setter
+    def uri(self, value):
+        parsed = validate_property_uri(value)
+        self._name = parsed.fragment
+        self._uri = copy.deepcopy(value)
+
+    @classmethod
+    def create_protocol(cls, uri):
+        if uri == 'ivo://ivoa.net/vospace/core#httpput':
+            return HTTPPut()
+        elif uri == 'ivo://ivoa.net/vospace/core#httpget':
+            return HTTPGet()
+        elif uri == 'ivo://ivoa.net/vospace/core#httpsput':
+            return HTTPSPut()
+        elif uri == 'ivo://ivoa.net/vospace/core#httpsget':
+            return HTTPSGet()
+        else:
+            return Protocol(uri)
 
     @property
     def endpoint(self):
@@ -179,10 +196,6 @@ class Protocol(object):
         if value:
             assert isinstance(value, Endpoint)
             self._endpoint = value
-
-    @property
-    def uri(self):
-        return self._uri
 
     def __eq__(self, other):
         if not isinstance(other, Protocol):
@@ -308,11 +321,21 @@ class Views(object):
 
 class View(object):
     def __init__(self, uri):
-        self._uri = uri
+        self.uri = uri
 
     @property
     def uri(self):
         return self._uri
+
+    @uri.setter
+    def uri(self, value):
+        parsed = validate_property_uri(value)
+        self._name = parsed.fragment
+        self._uri = copy.deepcopy(value)
+
+    @property
+    def name(self):
+        return self._name
 
     def __eq__(self, other):
         if not isinstance(other, View):
@@ -797,12 +820,15 @@ class Transfer(object):
         direction.text = str(self.direction)
         return root
 
+    def tomap(self):
+        return {}
+
     def tostring(self):
         root = self.toxml()
         return ET.tostring(root).decode("utf-8")
 
     @classmethod
-    def create_node(cls, target, direction, keep_bytes):
+    def create_transfer(cls, target, direction, keep_bytes):
         if direction == 'pushToVoSpace':
             return PushToSpace(Node(target))
         elif direction == 'pullFromVoSpace':
@@ -832,7 +858,7 @@ class Transfer(object):
                 keep_bytes = True
             else:
                 raise InvalidURI('keepBytes invalid')
-        node = Transfer.create_node(target[0].text, direction[0].text, keep_bytes)
+        node = Transfer.create_transfer(target[0].text, direction[0].text, keep_bytes)
         node.build_node(root)
         return node
 
@@ -887,13 +913,20 @@ class ProtocolTransfer(Transfer):
         super().__init__(target=target, direction=direction)
         self._protocols = []
         self.set_protocols(protocols)
-        self._view = view
+        self._view = None
+        self.view = view
         self._parameters = []
         self.set_parameters(params)
 
     @property
     def view(self):
         return self._view
+
+    @view.setter
+    def view(self, value):
+        if value:
+            assert isinstance(value, View)
+            self._view = value
 
     @property
     def protocols(self):
@@ -914,6 +947,17 @@ class ProtocolTransfer(Transfer):
         for param in params:
             assert isinstance(param, Parameter)
         self._parameters = copy.deepcopy(params)
+
+    def tomap(self):
+        params = {"TARGET": str(self.target),
+                  "DIRECTION": str(self.direction),
+                  "PROTOCOL": str(self.protocols[0])}
+        if self.view:
+            params["VIEW"] = str(self.view)
+        if isinstance(self, PullFromSpace):
+            if self.redirect:
+                params["REQUEST"] = "redirect"
+        return params
 
     def tostring(self):
         root = super().toxml()
@@ -953,7 +997,7 @@ class ProtocolTransfer(Transfer):
             elif uri == 'ivo://ivoa.net/vospace/core#httpsget':
                 self._protocols.append(HTTPSGet(endpoint))
             else:
-                raise InvalidURI("unknown protocol")
+                self._protocols.append(Protocol(endpoint))
         params = root.xpath('/vos:transfer/vos:param', namespaces=Node.NS)
         for param in params:
             uri = param.attrib.get('uri', None)
@@ -970,12 +1014,13 @@ class PushToSpace(ProtocolTransfer):
 
 
 class PullFromSpace(ProtocolTransfer):
-    def __init__(self, target, protocols=[], view=None, params=[]):
+    def __init__(self, target, protocols=[], view=None, params=[], redirect=True):
         super().__init__(target=target,
                          direction='pullFromVoSpace',
                          protocols=protocols,
                          view=view,
                          params=params)
+        self.redirect = redirect
 
 
 ##### UWS JOBS ######
@@ -1020,7 +1065,7 @@ class UWSResult(object):
         result_set = []
         for result in root.xpath('/uws:results/uws:result', namespaces=UWSJob.NS):
             id = result.attrib.get('id', None)
-            assert id
+            assert id, 'id is empty'
             del result.attrib['id']
             result_set.append(UWSResult(id, result.attrib))
         return result_set
