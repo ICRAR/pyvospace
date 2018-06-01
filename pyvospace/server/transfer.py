@@ -4,17 +4,17 @@ import asyncpg
 
 from contextlib import suppress
 
-from pyvospace.core.exception import VOSpaceError, NodeDoesNotExistError, PermissionDenied
+from pyvospace.core.exception import VOSpaceError, NodeDoesNotExistError, PermissionDenied, InvalidArgument
 from pyvospace.core.model import UWSPhase, UWSResult, NodeTransfer, ProtocolTransfer, PushToSpace, \
     NodeType, DataNode
 from pyvospace.server import fuzz
 from .database import NodeDatabase
 
 
-async def perform_transfer_job(job, app, identity, sync):
+async def perform_transfer_job(job, app, identity, sync, redirect=False):
     try:
         with suppress(asyncio.CancelledError):
-            await asyncio.shield(_perform_transfer_job(job, app, identity, sync))
+            return await asyncio.shield(_perform_transfer_job(job, app, identity, sync, redirect))
     except VOSpaceError as v:
         with suppress(asyncio.CancelledError):
             await asyncio.shield(app['executor'].set_error(job.job_id, v.error))
@@ -22,7 +22,7 @@ async def perform_transfer_job(job, app, identity, sync):
             raise
 
 
-async def _perform_transfer_job(job, app, identity, sync):
+async def _perform_transfer_job(job, app, identity, sync, redirect):
     db_pool = app['db_pool']
     try:
         if isinstance(job.job_info, ProtocolTransfer):
@@ -74,9 +74,15 @@ async def _perform_transfer_job(job, app, identity, sync):
                                     {'{http://www.w3.org/1999/xlink}href':
                                          f"vos://{app['uri']}!vospace/{job.job_info.target.path}"})]
 
+            endpoint = None
+            if redirect:
+                assert len(job.transfer.protocols) > 0, "Protocol endpoint not found."
+                endpoint = str(job.transfer.protocols[0].endpoint.url)
+
             await fuzz()
             job.phase = UWSPhase.Executing
             await app['executor']._update_uws_job(job)
+            return endpoint
         else:
             if sync is True:
                 raise VOSpaceError(403, "Permission Denied. Move/Copy denied.")
@@ -95,8 +101,11 @@ async def _perform_transfer_job(job, app, identity, sync):
             with suppress(asyncio.CancelledError):
                 await asyncio.shield(app['executor'].set_completed(job.job_id))
 
-    except VOSpaceError as f:
+    except VOSpaceError:
         raise
+
+    except AssertionError as g:
+        raise InvalidArgument(str(g))
 
     except asyncpg.exceptions.UniqueViolationError:
         raise VOSpaceError(409, f"Duplicate Node. {job.job_info.target.path} already exists.")

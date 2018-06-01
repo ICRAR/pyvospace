@@ -58,6 +58,7 @@ class TestPushPull(TestBase):
             node = Node('/syncdatanode1')
             push = PushToSpace(node, [HTTPPut()],
                                params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
+
             transfer = await self.sync_transfer_node(push)
             put_end = transfer.protocols[0].endpoint.url
             await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=200)
@@ -66,6 +67,19 @@ class TestPushPull(TestBase):
             transfer = await self.sync_transfer_node(push)
             pull_end = transfer.protocols[0].endpoint.url
             await self.pull_from_space(pull_end, '/tmp/download/')
+
+        self.loop.run_until_complete(run())
+
+    def test_push_to_space_sync_parameterised(self):
+        async def run():
+            node = Node('/syncdatanode1')
+            push = PushToSpace(node, [HTTPPut()])
+            transfer = await self.sync_transfer_node_parameterised(push)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=200)
+
+            pull = PullFromSpace(node, [HTTPGet()])
+            await self.sync_pull_from_space_parameterised(pull, '/tmp/download/')
 
         self.loop.run_until_complete(run())
 

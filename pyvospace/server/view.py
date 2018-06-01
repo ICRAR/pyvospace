@@ -1,8 +1,10 @@
 from contextlib import suppress
 from aiohttp_security import authorized_userid, permits
 
-from pyvospace.core.exception import VOSpaceError, PermissionDenied, InvalidURI, InvalidJobStateError
-from pyvospace.core.model import UWSPhase, UWSPhaseLookup, Node, DataNode, ContainerNode, Transfer
+from pyvospace.core.exception import VOSpaceError, PermissionDenied, InvalidURI, \
+    InvalidJobStateError, InvalidArgument
+from pyvospace.core.model import UWSPhase, UWSPhaseLookup, Node, DataNode, ContainerNode, \
+    Transfer, Protocol, View, PullFromSpace
 
 from .transfer import perform_transfer_job
 from .database import NodeDatabase
@@ -48,11 +50,9 @@ async def get_node_request(request):
         if detail == 'max':
             node.accepts = request.app['abstract_space'].get_accept_views(node)
             node.provides = request.app['abstract_space'].get_provide_views(node)
-
     if isinstance(node, ContainerNode):
         if limit:
             node.set_nodes(node.nodes[:limit])
-
     return node
 
 
@@ -118,13 +118,35 @@ async def sync_transfer_request(request):
     identity = await authorized_userid(request)
     if identity is None:
         raise PermissionDenied(f'Credentials not found.')
-    job_xml = await request.text()
-    transfer = Transfer.fromstring(job_xml)
+    redirect_endpoint = False
+    if request.query:
+        try:
+            target = request.query.get('TARGET')
+            direction = request.query.get('DIRECTION')
+            protocol_uri = request.query.get('PROTOCOL')
+            view_uri = request.query.get('VIEW')
+            transfer = Transfer.create_transfer(target, direction, False)
+            protocol = Protocol.create_protocol(protocol_uri)
+            transfer.set_protocols([protocol])
+            if view_uri:
+                transfer.view = View(view_uri)
+            if isinstance(transfer, PullFromSpace):
+                redirect_request = request.query.get('REQUEST')
+                assert redirect_request == 'redirect', 'REQUEST must be set to request'
+                redirect_endpoint = True
+        except AssertionError as g:
+            raise InvalidArgument(str(g))
+    else:
+        job_xml = await request.text()
+        if not job_xml:
+            raise InvalidURI("Empty transfer request.")
+        transfer = Transfer.fromstring(job_xml)
+
     if not await request.app.permits(identity, 'createTransfer', context=transfer):
         raise PermissionDenied('creating transfer job denied.')
     job = await request.app['executor'].create(transfer, identity, UWSPhase.Executing)
-    await perform_transfer_job(job, request.app, identity, sync=True)
-    return job
+    endpoint = await perform_transfer_job(job, request.app, identity, sync=True, redirect=redirect_endpoint)
+    return job, endpoint
 
 
 async def get_job_request(request):
@@ -176,7 +198,7 @@ async def modify_job_request(request):
     phase = uws_cmd.upper()
     if phase == "PHASE=RUN":
         await request.app['executor'].execute(job_id, identity, perform_transfer_job,
-                                              request.app, identity, False)
+                                              request.app, identity, False, False)
     elif phase == "PHASE=ABORT":
         await request.app['executor'].abort(job_id, identity)
     else:
