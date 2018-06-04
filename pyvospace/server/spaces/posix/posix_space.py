@@ -6,9 +6,10 @@ from aiohttp_security import SessionIdentityPolicy
 from aiohttp_session import setup as setup_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from cryptography import fernet
+from typing import List
 
 from pyvospace.server.space import SpaceServer, AbstractSpace
-from pyvospace.core.model import Views, View, Endpoint, PullFromSpace, PushToSpace, Protocols, \
+from pyvospace.core.model import Views, View, Endpoint, PullFromSpace, PushToSpace, Protocols, Protocol, \
     HTTPGet, HTTPPut, HTTPSGet, HTTPSPut, Node, NodeTextLookup, NodeType, Properties, Property
 from pyvospace.core.exception import VOSpaceError
 
@@ -138,7 +139,7 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
             if await exists(m_path):
                 await remove(m_path)
 
-    async def set_protocol_transfer(self, job):
+    async def get_transfer_protocols(self, job) -> List[Protocol]:
         new_protocols = []
         protocols = job.job_info.protocols
         if isinstance(job.job_info, PushToSpace):
@@ -188,4 +189,4 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
         if not new_protocols:
             raise VOSpaceError(400, "Protocol Not Supported. No storage found")
 
-        job.transfer.set_protocols(new_protocols)
+        return new_protocols

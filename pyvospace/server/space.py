@@ -7,9 +7,10 @@ from aiohttp import web
 from contextlib import suppress
 from abc import ABCMeta, abstractmethod
 from aiohttp_security.api import AUTZ_KEY
+from typing import List
 
 from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
-from pyvospace.core.model import Properties, Protocols, Views, Node, UWSJob
+from pyvospace.core.model import Properties, Protocols, Protocol, Views, Node, UWSJob
 
 from .view import get_node_request, delete_node_request, create_node_request, \
     set_node_properties_request, create_transfer_request, sync_transfer_request, \
@@ -57,7 +58,7 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    async def set_protocol_transfer(self, job: UWSJob):
+    async def get_transfer_protocols(self, job: UWSJob) -> List[Protocol]:
         raise NotImplementedError()
 
 
