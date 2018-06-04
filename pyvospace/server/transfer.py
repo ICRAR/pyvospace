@@ -65,7 +65,8 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
 
                     job.job_info.target = node
                     job.transfer = copy.deepcopy(job.job_info)
-                    await app['abstract_space'].set_protocol_transfer(job)
+                    new_protocols = await app['abstract_space'].get_transfer_protocols(job)
+                    job.transfer.set_protocols(new_protocols)
 
             job.results = [UWSResult('transferDetails',
                                     {'{http://www.w3.org/1999/xlink}href':
