@@ -80,12 +80,13 @@ class SpaceStorageServer(web.Application, SpacePermission):
             return response
 
         except asyncio.CancelledError:
+            await asyncio.shield(self.executor.set_error(job_id, 'Cancelled'))
             return web.Response(status=400, text="Cancelled")
 
-        except (NodeBusyError, InvalidJobError, InvalidJobStateError, PermissionDenied) as v:
+        except (InvalidJobError, InvalidJobStateError) as v:
             return web.Response(status=v.code, text=v.error)
 
-        except (NodeDoesNotExistError, VOSpaceError) as e:
+        except (NodeDoesNotExistError, PermissionDenied, NodeBusyError, VOSpaceError) as e:
             await asyncio.shield(self.executor.set_error(job_id, e.error))
             return web.Response(status=e.code, text=e.error)
 

@@ -88,11 +88,8 @@ class PosixStorageServer(SpaceStorageServer):
         root_dir = self.root_dir
         path_tree = job.transfer.target.path
         file_path = f'{root_dir}/{path_tree}'
-        try:
-            response = await send_file(request, os.path.splitext(path_tree)[0], file_path)
-        except (asyncio.CancelledError, Exception):
-            raise
-        return response
+        return await send_file(request, os.path.splitext(path_tree)[0], file_path)
+
 
     async def upload(self, job, request):
         reader = request.content

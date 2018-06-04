@@ -53,6 +53,7 @@ class InvalidJobStateError(VOSpaceError):
 
 class NodeBusyError(VOSpaceError):
     def __init__(self, error):
+        error = f"Node Busy. {error}"
         super().__init__(400, error)
 
 
