@@ -85,21 +85,16 @@ async def send_file(request, file_name, file_path):
         response.headers[aiohttp.hdrs.CONTENT_LENGTH] = str(file_size)
         response.headers[aiohttp.hdrs.CONTENT_DISPOSITION] = f"attachment; filename=\"{file_name}\""
 
+        sent = 0
         await response.prepare(request)
         async with aiofiles.open(file_path, mode='rb') as input_file:
-            # cannot use sendfile() over an SSL connection
-            # defer back to user space copy and send
-            # will run this in Gunicorn et al to get maximum utilisation
-            while True:
+            while sent < file_size:
                 buff = await input_file.read(io.DEFAULT_BUFFER_SIZE)
                 if not buff:
                     break
-
                 await fuzz()
                 await response.write(buff)
-        await asyncio.shield(response.write_eof())
+                sent += len(buff)
         return response
-    except Exception:
+    finally:
         await asyncio.shield(response.write_eof())
-        response.force_close()
-        raise
