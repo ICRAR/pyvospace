@@ -10,7 +10,7 @@ from aiohttp_security.api import AUTZ_KEY
 from typing import List
 
 from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
-from pyvospace.core.model import Properties, Protocols, Protocol, Views, Node, UWSJob
+from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node, UWSJob
 
 from .view import get_node_request, delete_node_request, create_node_request, \
     set_node_properties_request, create_transfer_request, sync_transfer_request, \
@@ -34,11 +34,11 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
     @abstractmethod
-    def get_accept_views(self, node: Node):
+    def get_accept_views(self, node: Node) -> List[View]:
         raise NotImplementedError()
 
     @abstractmethod
-    def get_provide_views(self, node: Node):
+    def get_provide_views(self, node: Node) -> List[View]:
         raise NotImplementedError()
 
     @abstractmethod

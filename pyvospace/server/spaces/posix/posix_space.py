@@ -102,10 +102,10 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
         return Views(accepts=[View('ivo://ivoa.net/vospace/core#anyview')],
                      provides=[View('ivo://ivoa.net/vospace/core#defaultview')])
 
-    def get_accept_views(self, node: Node):
+    def get_accept_views(self, node: Node) -> List[View]:
         return ACCEPTS_VIEWS[NodeTextLookup[node.node_type]]
 
-    def get_provide_views(self, node: Node):
+    def get_provide_views(self, node: Node) -> List[View]:
         return PROVIDES_VIEWS[NodeTextLookup[node.node_type]]
 
     async def move_storage_node(self, src, dest):
