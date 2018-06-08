@@ -62,10 +62,14 @@ class UWSJobPool(object):
 
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
-                result = await conn.fetchrow("update uws_jobs set phase=$1, results=$2, "
+                result = await conn.fetchrow("with cte as "
+                                             "(select id, space_id, phase from uws_jobs "
+                                             "where id=$6 and space_id=$7 for update) "
+                                             "update uws_jobs set phase=$1, results=$2, "
                                              "transfer=$3, target=$4, target_space_id=$7 "
-                                             "where phase<=$5 and id=$6 and uws_jobs.space_id=$7 "
-                                             "returning id",
+                                             "from cte where cte.phase<=$5 and "
+                                             "uws_jobs.id=cte.id and uws_jobs.space_id=cte.space_id "
+                                             "returning cte.id",
                                              job.phase, results_string, transfer_string,
                                              target_tree, UWSPhase.Executing,
                                              job.job_id, self.space_id)
@@ -137,24 +141,36 @@ class UWSJobPool(object):
     async def set_executing(self, job_id):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
-                return await conn.fetchrow("update uws_jobs set phase=$2 "
-                                           "where id=$1 and phase=$3 and space_id=$4 returning id",
+                return await conn.fetchrow("with cte as (select id, space_id, phase from uws_jobs "
+                                           "where id=$1 and space_id=$4 for update)"
+                                           "update uws_jobs set phase=$2 "
+                                           "from cte where cte.phase=$3 and "
+                                           "uws_jobs.id=cte.id and uws_jobs.space_id=cte.space_id "
+                                           "returning cte.id",
                                            job_id, UWSPhase.Executing,
                                            UWSPhase.Pending, self.space_id)
 
     async def set_completed(self, job_id):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
-                return await conn.fetchrow("update uws_jobs set phase=$2 "
-                                           "where id=$1 and phase=$3 and space_id=$4 returning id",
+                return await conn.fetchrow("with cte as (select id, space_id, phase from uws_jobs "
+                                           "where id=$1 and space_id=$4 for update)"
+                                           "update uws_jobs set phase=$2 "
+                                           "from cte where cte.phase=$3 and "
+                                           "uws_jobs.id=cte.id and uws_jobs.space_id=cte.space_id "
+                                           "returning cte.id",
                                            job_id, UWSPhase.Completed,
                                            UWSPhase.Executing, self.space_id)
 
     async def set_error(self, job_id, error):
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
-                return await conn.fetchrow("update uws_jobs set phase=$3, error=$2 "
-                                           "where id=$1 and phase!=$4 and space_id=$5 returning id",
+                return await conn.fetchrow("with cte as (select id, space_id, phase from uws_jobs "
+                                           "where id=$1 and space_id=$5 for update)"
+                                           "update uws_jobs set phase=$3, error=$2 "
+                                           "from cte where cte.phase!=$4 and "
+                                           "uws_jobs.id=cte.id and uws_jobs.space_id=cte.space_id "
+                                           "returning cte.id",
                                            job_id, error, UWSPhase.Error,
                                            UWSPhase.Aborted, self.space_id)
 
@@ -206,13 +222,16 @@ class StorageUWSJobPool(UWSJobPool):
         return job
 
     async def _get_executing_target(self, job_id, conn, lock='update'):
-        result = await conn.fetchrow("select nodes.* from nodes left join uws_jobs on "
-                                     "nodes.space_id = uws_jobs.space_id and nodes.path = uws_jobs.target "
+        result = await conn.fetchrow("select uws_jobs.phase, nodes.* from nodes left join uws_jobs on "
+                                     "nodes.space_id=uws_jobs.space_id and nodes.path=uws_jobs.target "
                                      "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
-                                     f"and uws_jobs.phase=2 for {lock} of nodes nowait",
+                                     f"for {lock} of nodes nowait",
                                      job_id, self.space_id)
+
         if not result:
-            raise NodeDoesNotExistError('')
+            raise NodeDoesNotExistError('target node does not exist.')
+        if result['phase'] != UWSPhase.Executing:
+            raise InvalidJobStateError('Job not EXECUTING')
         return result
 
     async def execute(self, job_id, identity, func, *args):
