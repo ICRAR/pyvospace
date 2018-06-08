@@ -7,7 +7,7 @@ import json
 from contextlib import suppress
 
 from pyvospace.core.model import UWSPhase, UWSJob, UWSResult, Transfer, \
-    ProtocolTransfer, PushToSpace, PullFromSpace
+    ProtocolTransfer, Copy, Move
 from pyvospace.core.exception import VOSpaceError, JobDoesNotExistError, InvalidJobError, \
     InvalidJobStateError, PermissionDenied, NodeDoesNotExistError, ClosingError
 from .database import NodeDatabase
@@ -120,7 +120,7 @@ class UWSJobPool(object):
                     raise InvalidJobStateError("Can't cancel a job that is COMPLETED or in ERROR.")
 
                 job = self._resultset_to_job(result)
-                if isinstance(job, PushToSpace) or isinstance(job, PullFromSpace):
+                if isinstance(job, Copy) or isinstance(job, Move):
                     # aborting a file copy or move can produce weird results so ignore it
                     if job.phase >= UWSPhase.Executing:
                         raise InvalidJobStateError("Can't abort a move/copy that is EXECUTING.")
