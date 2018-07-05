@@ -7,9 +7,9 @@ import json
 from contextlib import suppress
 
 from pyvospace.core.model import UWSPhase, UWSJob, UWSResult, Transfer, \
-    ProtocolTransfer, Copy, Move
+    ProtocolTransfer, Copy, Move, PushToSpace, PullFromSpace
 from pyvospace.core.exception import VOSpaceError, JobDoesNotExistError, InvalidJobError, \
-    InvalidJobStateError, PermissionDenied, NodeDoesNotExistError, ClosingError
+    InvalidJobStateError, PermissionDenied, NodeDoesNotExistError, ClosingError, NodeBusyError
 from .database import NodeDatabase
 
 
@@ -52,7 +52,7 @@ class UWSJobPool(object):
                 raise VOSpaceError(404, f"Invalid Request. UWS job {job_id} does not exist.")
 
             return result
-        except ValueError as e:
+        except asyncpg.exceptions.DataError as e:
             raise InvalidJobError(f"Invalid JobId: {str(e)}")
 
     async def _update_uws_job(self, job):
@@ -188,8 +188,9 @@ class StorageUWSJob(UWSJob):
 
 
 class StorageUWSJobPool(UWSJobPool):
-    def __init__(self, space_id, db_pool, dsn, permission):
+    def __init__(self, space_id, storage_id, db_pool, dsn, permission):
         super().__init__(space_id, db_pool, permission)
+        self.storage_id = storage_id
         self.listener = None
         self.dsn = dsn
 
@@ -221,13 +222,11 @@ class StorageUWSJobPool(UWSJobPool):
         job.owner = result['owner']
         return job
 
-    async def _get_executing_target(self, job_id, conn, lock='update'):
+    async def _get_executing_target(self, job, conn):
         result = await conn.fetchrow("select uws_jobs.phase, nodes.* from nodes left join uws_jobs on "
                                      "nodes.space_id=uws_jobs.space_id and nodes.path=uws_jobs.target "
-                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 "
-                                     f"for {lock} of nodes nowait",
-                                     job_id, self.space_id)
-
+                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 for update of nodes",
+                                     job.job_id, self.space_id)
         if not result:
             raise NodeDoesNotExistError('target node does not exist.')
         if result['phase'] != UWSPhase.Executing:

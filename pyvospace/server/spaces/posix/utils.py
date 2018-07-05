@@ -91,7 +91,7 @@ async def send_file(request, file_name, file_path):
             while sent < file_size:
                 buff = await input_file.read(io.DEFAULT_BUFFER_SIZE)
                 if not buff:
-                    break
+                    raise IOError('file read error')
                 await fuzz()
                 await response.write(buff)
                 sent += len(buff)
