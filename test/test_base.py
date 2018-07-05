@@ -234,12 +234,12 @@ class TestBase(unittest.TestCase):
                     downloaded = 0
                     try:
                         async with aiofiles.open(path, mode='wb') as out_file:
-                            while True:
+                            while downloaded < hdr_length:
                                 buff = await resp.content.read(65536)
                                 if not buff:
                                     break
-                                downloaded += len(buff)
                                 await out_file.write(buff)
+                                downloaded += len(buff)
                         self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
                     except Exception as e:
                         raise IOError(str(e))
@@ -253,12 +253,12 @@ class TestBase(unittest.TestCase):
                     downloaded = 0
                     try:
                         async with aiofiles.open(path, mode='wb') as out_file:
-                            while True:
+                            while downloaded < hdr_length:
                                 buff = await resp.content.read(65536)
                                 if not buff:
                                     break
-                                downloaded += len(buff)
                                 await out_file.write(buff)
+                                downloaded += len(buff)
                         self.assertEqual(hdr_length, downloaded, f"Header: {hdr_length} != Recv: {downloaded}")
                         return resp.status
                     except Exception as e:

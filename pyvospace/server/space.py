@@ -18,6 +18,7 @@ from .view import get_node_request, delete_node_request, create_node_request, \
 from .uws import UWSJobPool
 from .database import NodeDatabase
 from .auth import SpacePermission
+from .heartbeat import StorageHeartbeatSink
 
 
 class AbstractSpace(metaclass=ABCMeta):
@@ -62,6 +63,25 @@ class AbstractSpace(metaclass=ABCMeta):
         raise NotImplementedError()
 
 
+async def register_space(db_pool, name, host, port, parameters):
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            result = await conn.fetchrow("select * from space where host=$1 and port=$2 for update",
+                                         host, port)
+            if result:
+                # if there is an existing plugin associated with this space
+                # and its not the one specified then raise an error
+                # Don't want to infringe on another space and its data
+                if result['name'] != name:
+                    raise VOSpaceError(400, 'Can not start space over an existing '
+                                            'space on the same host and port.')
+            result = await conn.fetchrow("insert into space (host, port, name, parameters) "
+                                         "values ($1, $2, $3, $4) on conflict (host, port) "
+                                         "do update set parameters=$4 returning id",
+                                         host, port, name, parameters)
+            return int(result['id'])
+
+
 class SpaceServer(web.Application, SpacePermission):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -69,6 +89,7 @@ class SpaceServer(web.Application, SpacePermission):
         config = configparser.ConfigParser()
         config.read(cfg_file)
         self.config = config
+        self.cfg_file = cfg_file
 
         self.router.add_get('/vospace/properties', self._get_properties)
         self.router.add_get('/vospace/protocols', self._get_protocols)
@@ -95,38 +116,27 @@ class SpaceServer(web.Application, SpacePermission):
         self['uri'] = self.config['Space']['uri']
         self['parameters'] = json.loads(self.config['Space']['parameters'])
         db_pool = await asyncpg.create_pool(dsn=self.config['Space']['dsn'])
-        space_id = await self._register_space(db_pool,
-                                              self['space_name'],
-                                              self['space_host'],
-                                              self['space_port'],
-                                              json.dumps(self['parameters']))
+        space_id = await register_space(db_pool,
+                                        self['space_name'],
+                                        self['space_host'],
+                                        self['space_port'],
+                                        json.dumps(self['parameters']))
 
         self['db_pool'] = db_pool
         self['space_id'] = space_id
         self['executor'] = UWSJobPool(space_id, db_pool, self)
         self['db'] = NodeDatabase(space_id, db_pool, self)
-
-    async def _register_space(self, db_pool, name, host, port, parameters):
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                result = await conn.fetchrow("select * from space where host=$1 and port=$2 for update",
-                                             host, port)
-                if result:
-                    # if there is an existing plugin associated with this space
-                    # and its not the one specified then raise an error
-                    # Don't want to infringe on another space and its data
-                    if result['name'] != name:
-                        raise VOSpaceError(400, 'Can not start space over an existing '
-                                                'space on the same host and port.')
-                result = await conn.fetchrow("insert into space (host, port, name, parameters) "
-                                             "values ($1, $2, $3, $4) on conflict (host, port) "
-                                             "do update set parameters=$4 returning id",
-                                             host, port, name, parameters)
-                return int(result['id'])
+        heartbeat = StorageHeartbeatSink(db_pool, self['space_name'])
+        self['heartbeat'] = heartbeat
+        await heartbeat.run()
 
     async def shutdown(self):
-        await self['executor'].close()
-        await self['db_pool'].close()
+        heartbeat = self.get('heartbeat')
+        if heartbeat:
+            await heartbeat.close()
+        pool = self.get('db_pool')
+        if pool:
+            await pool.close()
 
     async def permits(self, identity, permission, context):
         autz_policy = self.get(AUTZ_KEY)
@@ -270,5 +280,5 @@ class SpaceServer(web.Application, SpacePermission):
             return web.HTTPSeeOther(location=f'/vospace/transfers/{job_id}')
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
-        except Exception:
+        except Exception as e:
             return web.Response(status=500)

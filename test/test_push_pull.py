@@ -6,7 +6,7 @@ from aiohttp import web
 
 from pyvospace.core.model import *
 from pyvospace.server import set_fuzz
-from pyvospace.server.spaces.posix.posix_storage import PosixStorageServer
+from pyvospace.server.spaces.posix.storage.posix_storage import PosixStorageServer
 from test.test_base import TestBase
 
 

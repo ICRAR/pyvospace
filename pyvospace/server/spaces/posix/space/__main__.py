@@ -5,7 +5,7 @@ import configparser
 
 from aiohttp import web
 
-from .space import VOSpaceServer
+from .posix_space import PosixSpaceServer
 
 
 def main(args=None):
@@ -17,11 +17,16 @@ def main(args=None):
         cfg_file = args.cfg
     else:
         app_path = os.path.dirname(os.path.realpath(__file__))
-        cfg_file = f"{app_path}/cfg/vospace.ini"
+        cfg_file = f"{app_path}/cfg/space.ini"
+
+    config = configparser.ConfigParser()
+    config.read(cfg_file)
+    host = config['Space']['host']
+    port = config['Space']['port']
 
     loop = asyncio.get_event_loop()
-    app = loop.run_until_complete(VOSpaceServer.create(cfg_file))
-    web.run_app(app)
+    app = loop.run_until_complete(PosixSpaceServer.create(cfg_file))
+    web.run_app(app, host=host, port=port)
 
 
 if __name__ == "__main__":

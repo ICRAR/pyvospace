@@ -2,7 +2,6 @@ import io
 import os
 import asyncio
 import aiofiles
-import json
 import uuid
 
 from aiohttp import web
@@ -16,18 +15,13 @@ from pyvospace.core.model import NodeType
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move
 from pyvospace.server.storage import SpaceStorageServer
 from pyvospace.server import fuzz
-from .auth import DBUserNodeAuthorizationPolicy
+from pyvospace.server.spaces.posix.auth import DBUserNodeAuthorizationPolicy
 
 
 class PosixStorageServer(SpaceStorageServer):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(cfg_file, *args, **kwargs)
 
-        self.name = self.config.get('Storage', 'name')
-        self.host = self.config.get('Storage', 'host')
-        self.https = self.config.getboolean('Storage', 'https', fallback=False)
-        self.port = self.config.getint('Storage', 'port')
-        self.parameters = json.loads(self.config.get('Storage', 'parameters'))
         self.secret_key = self.config['Space']['secret_key']
         self.domain = self.config['Space']['domain']
 
@@ -46,13 +40,6 @@ class PosixStorageServer(SpaceStorageServer):
 
     async def setup(self):
         await super().setup()
-
-        async with self.db_pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.fetchrow("insert into storage (name, host, port, parameters, https) "
-                                    "values ($1, $2, $3, $4, $5) on conflict (name, host, port) "
-                                    "do update set parameters=$4, https=$5",
-                                    self.name, self.host, self.port, json.dumps(self.parameters), self.https)
 
         await mkdir(self.root_dir)
         await mkdir(self.staging_dir)
@@ -89,7 +76,6 @@ class PosixStorageServer(SpaceStorageServer):
         path_tree = job.transfer.target.path
         file_path = f'{root_dir}/{path_tree}'
         return await send_file(request, os.path.splitext(path_tree)[0], file_path)
-
 
     async def upload(self, job, request):
         reader = request.content

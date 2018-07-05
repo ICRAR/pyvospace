@@ -13,8 +13,8 @@ from pyvospace.core.model import Views, View, Endpoint, PullFromSpace, PushToSpa
     HTTPGet, HTTPPut, HTTPSGet, HTTPSPut, Node, NodeTextLookup, NodeType, Properties, Property
 from pyvospace.core.exception import VOSpaceError
 
-from .utils import move, copy, mkdir, remove, rmtree, exists
-from .auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
+from pyvospace.server.spaces.posix.utils import move, copy, mkdir, remove, rmtree, exists
+from pyvospace.server.spaces.posix.auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 
 
 ACCEPTS_VIEWS = {
