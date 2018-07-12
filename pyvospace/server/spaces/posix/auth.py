@@ -54,7 +54,7 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
             return None
         return results['username']
 
-    async def permits(self, identity, permission, context):
+    async def permits(self, identity, permission, context=None):
         async with self.db_pool.acquire() as conn:
             user = await conn.fetchrow("select * from users "
                                        "where username=$1 and space_name=$2",

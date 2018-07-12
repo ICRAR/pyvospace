@@ -1,4 +1,5 @@
 import os
+import uuid
 import copy
 import lxml.etree as ET
 
@@ -353,21 +354,17 @@ class Node(object):
 
     SPACE = 'icrar.org'
 
-    def __init__(self,
-                 path,
-                 properties=[],
-                 capabilities=[],
-                 node_type='vos:Node'):
-
+    def __init__(self, path, properties=None, capabilities=None, node_type='vos:Node',
+                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
         self._path = Node.uri_to_path(path)
         self.node_type_text = node_type
         self._properties = []
         self.set_properties(properties, True)
         self.capabilities = capabilities
-        # clients do not have access to these attributes
-        self.owner = None
-        self._group_read = []
-        self._group_write = []
+        self.owner = owner
+        self.group_read = group_read
+        self.group_write = group_write
+        self._object_id = object_id
 
     def __str__(self):
         return self.path
@@ -382,12 +379,46 @@ class Node(object):
                self.node_type_text == other.node_type_text and \
                self._properties == other._properties
 
+    @classmethod
+    def walk(cls, node):
+        yield node
+        if isinstance(node, ContainerNode):
+            for i in node.nodes:
+                if isinstance(i, ContainerNode):
+                    for j in Node.walk(i):
+                        yield j
+                else:
+                    yield i
+
+    def tolist(self):
+        return [self.node_type, os.path.basename(self.path), self.owner,
+                self.group_read, self.group_write, None, self.object_id]
+
+    @property
+    def object_id(self):
+        return self._object_id
+
+    @object_id.setter
+    def object_id(self, value):
+        self._object_id = value
+
+    @property
+    def owner(self):
+        return self._owner
+
+    @owner.setter
+    def owner(self, value):
+        self._owner = value
+
     @property
     def group_read(self):
         return self._group_read
 
     @group_read.setter
     def group_read(self, value):
+        if value is None:
+            self._group_read = []
+            return
         assert isinstance(value, list)
         for val in value:
             assert isinstance(val, str)
@@ -399,6 +430,9 @@ class Node(object):
 
     @group_write.setter
     def group_write(self, value):
+        if value is None:
+            self._group_write = []
+            return
         assert isinstance(value, list)
         for val in value:
             assert isinstance(val, str)
@@ -409,8 +443,6 @@ class Node(object):
         uri_parsed = urlparse(uri)
         if not uri_parsed.path:
             raise InvalidURI("URI does not exist.")
-        if '.' in uri_parsed.path:
-            raise InvalidURI("Invalid character: '.' in URI")
         return os.path.normpath(uri_parsed.path).lstrip('/')
 
     @property
@@ -487,6 +519,9 @@ class Node(object):
         self._properties = []
 
     def set_properties(self, property_list, sort=False):
+        if property_list is None:
+            self._properties = []
+            return
         assert isinstance(property_list, list)
         for prop in property_list:
             assert isinstance(prop, Property)
@@ -525,15 +560,10 @@ class Node(object):
 
 
 class LinkNode(Node):
-    def __init__(self,
-                 path,
-                 uri_target,
-                 properties=[],
-                 capabilities=[]):
-        super().__init__(path=path,
-                         properties=properties,
-                         capabilities=capabilities,
-                         node_type='vos:LinkNode')
+    def __init__(self, path, uri_target, properties=None, capabilities=None,
+                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
+        super().__init__(path=path, properties=properties, capabilities=capabilities, node_type='vos:LinkNode',
+                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
         self.node_uri_target = uri_target
 
     @property
@@ -551,6 +581,10 @@ class LinkNode(Node):
         return super().__eq__(other) and \
                self.node_uri_target == other.node_uri_target
 
+    def tolist(self):
+        return [self.node_type, os.path.basename(self.path), self.owner,
+                self.group_read, self.group_write, self.target, self.object_id]
+
     def build_node(self, root):
         super().build_node(root)
         target = root.find('vos:target', Node.NS)
@@ -565,18 +599,11 @@ class LinkNode(Node):
 
 
 class DataNode(Node):
-    def __init__(self,
-                 path,
-                 properties=[],
-                 capabilities=[],
-                 accepts=[],
-                 provides=[],
-                 busy=False,
-                 node_type='vos:DataNode'):
-        super().__init__(path=path,
-                         properties=properties,
-                         capabilities=capabilities,
-                         node_type=node_type)
+    def __init__(self, path, properties=None, capabilities=None,
+                 accepts=None, provides=None, busy=False, node_type='vos:DataNode',
+                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
+        super().__init__(path=path, properties=properties, capabilities=capabilities, node_type=node_type,
+                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
         self._accepts = []
         self.accepts = accepts
         self._provides = []
@@ -616,6 +643,9 @@ class DataNode(Node):
 
     @accepts.setter
     def accepts(self, value):
+        if value is None:
+            self._accepts = []
+            return
         assert isinstance(value, list)
         for val in value:
             assert isinstance(val, View)
@@ -631,6 +661,9 @@ class DataNode(Node):
 
     @provides.setter
     def provides(self, value):
+        if value is None:
+            self._provides = []
+            return
         assert isinstance(value, list)
         for val in value:
             assert isinstance(val, View)
@@ -657,22 +690,12 @@ class DataNode(Node):
 
 
 class ContainerNode(DataNode):
-    def __init__(self,
-                 path,
-                 nodes=[],
-                 properties=[],
-                 capabilities=[],
-                 accepts=[],
-                 provides=[],
-                 busy=False):
-        super().__init__(path=path,
-                         properties=properties,
-                         capabilities=capabilities,
-                         accepts=accepts,
-                         provides=provides,
-                         busy=busy,
-                         node_type='vos:ContainerNode')
-
+    def __init__(self, path, nodes=None, properties=None, capabilities=None,
+                 accepts=None, provides=None, busy=False, owner=None,
+                 group_read=None, group_write=None, object_id=uuid.uuid4()):
+        super().__init__(path=path, properties=properties, capabilities=capabilities,
+                         accepts=accepts, provides=provides, busy=busy, node_type='vos:ContainerNode',
+                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
         self._nodes = []
         self.set_nodes(nodes, True)
 
@@ -706,18 +729,24 @@ class ContainerNode(DataNode):
             self._nodes.append(node)
         self.sort_nodes()
 
+    def check_path(self, child):
+        assert isinstance(child, Node)
+        if self.path != os.path.dirname(child.path):
+            raise InvalidArgument(f"{self.path} is not a parent of {child.path}")
+
     def set_nodes(self, node_list, sort=False):
+        if node_list is None:
+            self._nodes = []
+            return
         assert isinstance(node_list, list)
         for node in node_list:
-            assert isinstance(node, Node)
-            assert node.path.startswith(self.path)
+            self.check_path(node)
         self._nodes = copy.deepcopy(node_list)
         if sort:
             self.sort_nodes()
 
     def add_node(self, value, sort=False):
-        assert isinstance(value, Node)
-        assert value.path.startswith(self.path)
+        self.check_path(value)
         self._nodes.append(value)
         if sort:
             self.sort_nodes()
@@ -733,20 +762,11 @@ class ContainerNode(DataNode):
 
 
 class UnstructuredDataNode(DataNode):
-    def __init__(self,
-                 path,
-                 properties=[],
-                 capabilities=[],
-                 accepts=[],
-                 provides=[],
-                 busy=False):
-        super().__init__(path=path,
-                         properties=properties,
-                         capabilities=capabilities,
-                         accepts=accepts,
-                         provides=provides,
-                         busy=busy,
-                         node_type='vos:UnstructuredDataNode')
+    def __init__(self, path, properties=None, capabilities=None, accepts=None, provides=None, busy=False,
+                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
+        super().__init__(path=path, properties=properties, capabilities=capabilities,
+                         accepts=accepts, provides=provides, busy=busy, node_type='vos:UnstructuredDataNode',
+                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
 
     def __eq__(self, other):
         if not isinstance(other, UnstructuredDataNode):
@@ -762,25 +782,16 @@ class UnstructuredDataNode(DataNode):
 
 
 class StructuredDataNode(DataNode):
-    def __init__(self,
-                 path,
-                 properties=[],
-                 capabilities=[],
-                 accepts=[],
-                 provides=[],
-                 busy=False):
-        super().__init__(path=path,
-                         properties=properties,
-                         capabilities=capabilities,
-                         accepts=accepts,
-                         provides=provides,
-                         busy=busy,
-                         node_type='vos:StructuredDataNode')
+    def __init__(self, path, properties=None, capabilities=None,
+                 accepts=None, provides=None, busy=False, owner=None,
+                 group_read=None, group_write=None, object_id=uuid.uuid4()):
+        super().__init__(path=path, properties=properties, capabilities=capabilities,
+                         accepts=accepts, provides=provides, busy=busy, node_type='vos:StructuredDataNode',
+                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
 
     def __eq__(self, other):
         if not isinstance(other, StructuredDataNode):
             return False
-
         return super().__eq__(other)
 
     @property
@@ -909,7 +920,7 @@ class Move(NodeTransfer):
 
 
 class ProtocolTransfer(Transfer):
-    def __init__(self, target, direction, protocols=[], view=None, params=[]):
+    def __init__(self, target, direction, protocols=None, view=None, params=None):
         super().__init__(target=target, direction=direction)
         self._protocols = []
         self.set_protocols(protocols)
@@ -933,6 +944,9 @@ class ProtocolTransfer(Transfer):
         return self._protocols
 
     def set_protocols(self, protocol_list):
+        if protocol_list is None:
+            self._protocols = []
+            return
         assert isinstance(protocol_list, list)
         for protocol in protocol_list:
             assert isinstance(protocol, Protocol)
@@ -943,6 +957,9 @@ class ProtocolTransfer(Transfer):
         return self._parameters
 
     def set_parameters(self, params):
+        if params is None:
+            self._parameters = []
+            return
         assert isinstance(params, list)
         for param in params:
             assert isinstance(param, Parameter)
@@ -1005,21 +1022,15 @@ class ProtocolTransfer(Transfer):
 
 
 class PushToSpace(ProtocolTransfer):
-    def __init__(self, target, protocols=[], view=None, params=[]):
-        super().__init__(target=target,
-                         direction='pushToVoSpace',
-                         protocols=protocols,
-                         view=view,
-                         params=params)
+    def __init__(self, target, protocols=None, view=None, params=None):
+        super().__init__(target=target, direction='pushToVoSpace',
+                         protocols=protocols, view=view, params=params)
 
 
 class PullFromSpace(ProtocolTransfer):
-    def __init__(self, target, protocols=[], view=None, params=[], redirect=True):
-        super().__init__(target=target,
-                         direction='pullFromVoSpace',
-                         protocols=protocols,
-                         view=view,
-                         params=params)
+    def __init__(self, target, protocols=None, view=None, params=None, redirect=True):
+        super().__init__(target=target, direction='pullFromVoSpace',
+                         protocols=protocols, view=view, params=params)
         self.redirect = redirect
 
 

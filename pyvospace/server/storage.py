@@ -6,19 +6,16 @@ import configparser
 from aiohttp import web
 from aiohttp_security import authorized_userid, permits
 from aiohttp_security.api import AUTZ_KEY
-from threading import Event
-from contextlib import suppress
+from abc import abstractmethod
 
-from pyvospace.core.model import PushToSpace
 from pyvospace.core.exception import VOSpaceError, PermissionDenied, NodeBusyError, InvalidJobError, \
     InvalidJobStateError, NodeDoesNotExistError
 from .auth import SpacePermission
 from .uws import StorageUWSJobPool
-from .database import NodeDatabase
 from .heartbeat import StorageHeartbeatSource
 
 
-class SpaceStorageServer(web.Application, SpacePermission):
+class HTTPSpaceStorageServer(web.Application, SpacePermission):
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = configparser.ConfigParser()
@@ -58,6 +55,27 @@ class SpaceStorageServer(web.Application, SpacePermission):
         await self.executor.setup()
         self.heartbeat = StorageHeartbeatSource(dsn, self.storage_id)
         await self.heartbeat.run()
+        self.set_router()
+
+    @abstractmethod
+    async def download(self, job, request):
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def upload(self, job, request):
+        raise NotImplementedError()
+
+    def set_router(self):
+        self.router.add_put('/vospace/{direction}/{job_id}', self.upload_request)
+        self.router.add_get('/vospace/{direction}/{job_id}', self.download_request)
+
+    async def upload_request(self, request):
+        job_id = request.match_info.get('job_id', None)
+        return await self.execute_storage_job(request, job_id, self.upload)
+
+    async def download_request(self, request):
+        job_id = request.match_info.get('job_id', None)
+        return await self.execute_storage_job(request, job_id, self.download)
 
     async def permits(self, identity, permission, context):
         autz_policy = self.get(AUTZ_KEY)
@@ -70,50 +88,13 @@ class SpaceStorageServer(web.Application, SpacePermission):
         await self.executor.close()
         await self.db_pool.close()
 
-    async def _set_storage_and_busy(self, path, conn):
-        await conn.fetchrow("update nodes set storage_id=$1, busy=True "
-                            "where space_id=$2 and path=$3",
-                            self.storage_id, self.space_id, path)
-
-    async def _set_not_busy(self, path):
-        async with self.db_pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.fetchrow("update nodes set busy=False "
-                                    "where space_id=$1 and path=$2",
-                                    self.space_id, path)
-
-    async def _execute(self, job, func, request):
-        identity = await authorized_userid(request)
-        if identity is None:
-            raise PermissionDenied(f'Credentials not found.')
-
-        async with self.db_pool.acquire() as conn:
-            async with conn.transaction():
-                node_result = await self.executor._get_executing_target(job, conn)
-                target_node = NodeDatabase._resultset_to_node([node_result], [])
-                job.transfer.target = target_node
-
-                if not await request.app.permits(identity, 'dataTransfer', context=job):
-                    raise PermissionDenied('data transfer denied.')
-
-                if node_result['busy']:
-                    raise NodeBusyError(f"Path: {node_result['path']}")
-
-                if isinstance(job.job_info, PushToSpace):
-                    await self._set_storage_and_busy(node_result['path'], conn)
-        try:
-            return await func(job, request)
-        finally:
-            if isinstance(job.job_info, PushToSpace):
-                await asyncio.shield(self._set_not_busy(node_result['path']))
-
-    async def execute(self, request, job_id, func):
+    async def execute_storage_job(self, request, job_id, func):
         try:
             identity = await authorized_userid(request)
             if identity is None:
                 raise PermissionDenied(f'Credentials not found.')
 
-            response = await self.executor.execute(job_id, identity, self._execute, func, request)
+            response = await self.executor.execute(job_id, identity, func, request)
             await asyncio.shield(self.executor.set_completed(job_id))
             return response
 
@@ -128,6 +109,6 @@ class SpaceStorageServer(web.Application, SpacePermission):
             await asyncio.shield(self.executor.set_error(job_id, e.error))
             return web.Response(status=e.code, text=e.error)
 
-        except Exception as f:
+        except BaseException as f:
             await asyncio.shield(self.executor.set_error(job_id, str(f)))
             return web.Response(status=500, text=str(f))

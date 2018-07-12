@@ -14,6 +14,31 @@ class TestCreate(TestBase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         super().tearDown()
 
+
+    def test_delete(self):
+        async def run():
+            node = ContainerNode('test1')
+            await self.create_node(node)
+
+            node = Node('/test1/zzz')
+            await self.create_node(node)
+
+            node = ContainerNode('/test1/test2')
+            await self.create_node(node)
+
+            node = ContainerNode('/test1/test2/anothercontainer')
+            await self.create_node(node)
+
+            node = DataNode('/test1/test2/anothercontainer/test.tar')
+            await self.create_node(node)
+
+            node = Node('/test1/ddd')
+            await self.create_node(node)
+
+            await self.delete('http://localhost:8080/vospace/nodes/test1')
+
+        self.loop.run_until_complete(run())
+
     def test_get_protocol(self):
         async def run():
             status, response = await self.get('http://localhost:8080/vospace/protocols', params=None)

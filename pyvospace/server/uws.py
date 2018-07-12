@@ -182,9 +182,64 @@ class UWSJobPool(object):
 
 
 class StorageUWSJob(UWSJob):
-    def __init__(self, job_id, phase, destruction, job_info, transfer):
+    def __init__(self, storage_pool, job_id, phase, destruction, job_info, transfer):
         super().__init__(job_id, phase, destruction, job_info, None, None)
+        self._storage_pool = storage_pool
         self.transfer = transfer
+
+    class StorageUWSJobTransaction(object):
+        def __init__(self, storage_pool):
+            self.storage_pool = storage_pool
+            self.conn = None
+            self.tr = None
+
+        async def start(self):
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(self._start())
+
+        async def rollback(self):
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(self._rollback())
+
+        async def commit(self):
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(self._commit())
+
+        async def save(self):
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(self._save())
+
+        async def _start(self):
+            if self.conn is None:
+                self.conn = await self.storage_pool.db_pool.acquire()
+                self.tr = self.conn.transaction()
+                await self.tr.start()
+
+        async def _rollback(self):
+            if self.conn:
+                await self.tr.rollback()
+                await self.storage_pool.db_pool.release(self.conn)
+                self.conn = None
+
+        async def _commit(self):
+            if self.conn:
+                await self.tr.commit()
+                await self.storage_pool.db_pool.release(self.conn)
+                self.conn = None
+
+        async def _save(self):
+            pass
+
+        async def __aenter__(self):
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(self._start())
+
+        async def __aexit__(self, exc_type, exc, tb):
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(self._commit())
+
+    def transaction(self):
+        return StorageUWSJob.StorageUWSJobTransaction(self._storage_pool)
 
 
 class StorageUWSJobPool(UWSJobPool):
@@ -215,23 +270,67 @@ class StorageUWSJobPool(UWSJobPool):
             loop = asyncio.get_event_loop()
             asyncio.run_coroutine_threadsafe(self.executor.abort(job_id), loop)
 
-    def _resultset_to_job(self, result):
+    def _resultset_to_storage_job(self, result):
         job_info = Transfer.fromstring(result['job_info'])
         transfer = Transfer.fromstring(result['transfer'])
-        job = StorageUWSJob(result['id'], result['phase'], result['destruction'], job_info, transfer)
+        job = StorageUWSJob(self, result['id'], result['phase'], result['destruction'], job_info, transfer)
         job.owner = result['owner']
         return job
 
-    async def _get_executing_target(self, job, conn):
-        result = await conn.fetchrow("select uws_jobs.phase, nodes.* from nodes left join uws_jobs on "
-                                     "nodes.space_id=uws_jobs.space_id and nodes.path=uws_jobs.target "
-                                     "where uws_jobs.id=$1 and uws_jobs.space_id=$2 for update of nodes",
-                                     job.job_id, self.space_id)
+    async def _get_storage_target(self, job, conn):
+        result = await conn.fetch("select uws_jobs.phase, nodes.* from nodes left join uws_jobs on "
+                                  "nodes.space_id=uws_jobs.space_id and nodes.path=uws_jobs.target "
+                                  "where (uws_jobs.id=$1 and uws_jobs.space_id=$2) or "
+                                  "(nodes.path <@ uws_jobs.target and nodes.space_id=$2) "
+                                  "order by nodes.path asc for update of nodes",
+                                  job.job_id, self.space_id)
+
         if not result:
             raise NodeDoesNotExistError('target node does not exist.')
+
+        for i in result:
+            print(i)
+
+        result = result[0]
         if result['phase'] != UWSPhase.Executing:
             raise InvalidJobStateError('Job not EXECUTING')
         return result
+
+    async def _set_storage_and_busy(self, path, conn):
+        await conn.fetchrow("update nodes set storage_id=$1, busy=True "
+                            "where space_id=$2 and path=$3",
+                            self.storage_id, self.space_id, path)
+
+    async def _set_not_busy(self, path):
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.fetchrow("update nodes set busy=False "
+                                    "where space_id=$1 and path=$2",
+                                    self.space_id, path)
+
+    async def _execute(self, job, identity, func, *args):
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                node_result = await self._get_storage_target(job, conn)
+                target_node = NodeDatabase._resultset_to_node([node_result], [])
+                print(target_node)
+                print()
+
+                job.transfer.target = target_node
+
+                if not await self.permission.permits(identity, 'dataTransfer', context=job):
+                    raise PermissionDenied('data transfer denied.')
+
+                if node_result['busy']:
+                    raise NodeBusyError(f"Path: {NodeDatabase.ltree_to_path(node_result['path'])}")
+
+                if isinstance(job.job_info, PushToSpace):
+                    await self._set_storage_and_busy(node_result['path'], conn)
+        try:
+            return await func(job, *args)
+        finally:
+            if isinstance(job.job_info, PushToSpace):
+                await asyncio.shield(self._set_not_busy(node_result['path']))
 
     async def execute(self, job_id, identity, func, *args):
         async with self.db_pool.acquire() as conn:
@@ -241,14 +340,15 @@ class StorageUWSJobPool(UWSJobPool):
                 if result['phase'] != UWSPhase.Executing:
                     raise InvalidJobStateError('Invalid Job State')
 
-                job = self._resultset_to_job(result)
+                job = self._resultset_to_storage_job(result)
                 if not isinstance(job.job_info, ProtocolTransfer):
                     raise InvalidJobStateError('Invalid Job Type')
 
                 if not await self.permission.permits(identity, 'runJob', context=job):
                     raise PermissionDenied('runJob denied.')
 
-                fut = self.executor.execute(job, func, *args)
+                fut = self.executor.execute(job, self._execute, identity, func, *args)
+
         return await fut
 
 
