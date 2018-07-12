@@ -9,8 +9,8 @@ from cryptography import fernet
 from typing import List
 
 from pyvospace.server.space import SpaceServer, AbstractSpace
-from pyvospace.core.model import Views, View, Endpoint, PullFromSpace, PushToSpace, Protocols, Protocol, \
-    HTTPGet, HTTPPut, HTTPSGet, HTTPSPut, Node, NodeTextLookup, NodeType, Properties, Property
+from pyvospace.core.model import Views, View, PullFromSpace, Protocols, Protocol, \
+    Node, NodeTextLookup, NodeType, Properties, Property, HTTPGet, HTTPPut
 from pyvospace.core.exception import VOSpaceError
 
 from pyvospace.server.spaces.posix.utils import move, copy, mkdir, remove, rmtree, exists
@@ -130,6 +130,8 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
 
     async def delete_storage_node(self, node):
         m_path = f"{self.root_dir}/{node.path}"
+        #print([(i.path,i.object_id) for i in Node.walk(node)])
+
         if node.node_type == NodeType.ContainerNode:
             # The directory should always exists unless
             # it has been deleted under us.
@@ -138,55 +140,3 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
             # File may or may not exist as the user may not have upload
             if await exists(m_path):
                 await remove(m_path)
-
-    async def get_transfer_protocols(self, job) -> List[Protocol]:
-        new_protocols = []
-        protocols = job.job_info.protocols
-        if isinstance(job.job_info, PushToSpace):
-            if any(i in [HTTPPut(), HTTPSPut()] for i in protocols) is False:
-                raise VOSpaceError(400, "Protocol Not Supported.")
-
-            async with self['db_pool'].acquire() as conn:
-                async with conn.transaction():
-                    results = await conn.fetch("select * from storage where name=$1", self.name)
-
-            if HTTPPut() in protocols:
-                for row in results:
-                    if row['https'] is False:
-                        endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
-                                            f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPPut(endpoint))
-
-            if HTTPSPut() in protocols:
-                for row in results:
-                    if row['https'] is True:
-                        endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
-                                            f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPPut(endpoint))
-
-        elif isinstance(job.job_info, PullFromSpace):
-            if any(i in [HTTPGet(), HTTPSGet()] for i in protocols) is False:
-                raise VOSpaceError(400, "Protocol Not Supported.")
-
-            async with self['db_pool'].acquire() as conn:
-                async with conn.transaction():
-                    results = await conn.fetch("select * from storage where name=$1", self.name)
-
-            if HTTPGet() in protocols:
-                for row in results:
-                    if row['https'] is False:
-                        endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
-                                            f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPGet(endpoint))
-
-            if HTTPSGet() in protocols:
-                for row in results:
-                    if row['https'] is True:
-                        endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
-                                            f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPSGet(endpoint))
-
-        if not new_protocols:
-            raise VOSpaceError(400, "Protocol Not Supported. No storage found")
-
-        return new_protocols

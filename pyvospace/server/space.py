@@ -10,7 +10,8 @@ from aiohttp_security.api import AUTZ_KEY
 from typing import List
 
 from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
-from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node, UWSJob
+from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node, UWSJob, \
+    PushToSpace, PullFromSpace, HTTPGet, HTTPSGet, HTTPPut, HTTPSPut, Endpoint
 
 from .view import get_node_request, delete_node_request, create_node_request, \
     set_node_properties_request, create_transfer_request, sync_transfer_request, \
@@ -58,9 +59,57 @@ class AbstractSpace(metaclass=ABCMeta):
     async def delete_storage_node(self, node: Node):
         raise NotImplementedError()
 
-    @abstractmethod
-    async def get_transfer_protocols(self, job: UWSJob) -> List[Protocol]:
-        raise NotImplementedError()
+    async def get_transfer_protocols(self, job) -> List[Protocol]:
+        new_protocols = []
+        protocols = job.job_info.protocols
+        if isinstance(job.job_info, PushToSpace):
+            if any(i in [HTTPPut(), HTTPSPut()] for i in protocols) is False:
+                raise VOSpaceError(400, "Protocol Not Supported.")
+
+            async with self['db_pool'].acquire() as conn:
+                async with conn.transaction():
+                    results = await conn.fetch("select * from storage where name=$1", self.name)
+
+            if HTTPPut() in protocols:
+                for row in results:
+                    if row['https'] is False:
+                        endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPPut(endpoint))
+
+            if HTTPSPut() in protocols:
+                for row in results:
+                    if row['https'] is True:
+                        endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPPut(endpoint))
+
+        elif isinstance(job.job_info, PullFromSpace):
+            if any(i in [HTTPGet(), HTTPSGet()] for i in protocols) is False:
+                raise VOSpaceError(400, "Protocol Not Supported.")
+
+            async with self['db_pool'].acquire() as conn:
+                async with conn.transaction():
+                    results = await conn.fetch("select * from storage where name=$1", self.name)
+
+            if HTTPGet() in protocols:
+                for row in results:
+                    if row['https'] is False:
+                        endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPGet(endpoint))
+
+            if HTTPSGet() in protocols:
+                for row in results:
+                    if row['https'] is True:
+                        endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
+                                            f'vospace/{job.job_info.direction}/{job.job_id}')
+                        new_protocols.append(HTTPSGet(endpoint))
+
+        if not new_protocols:
+            raise VOSpaceError(400, "Protocol Not Supported. No storage found")
+
+        return new_protocols
 
 
 async def register_space(db_pool, name, host, port, parameters):
@@ -189,7 +238,6 @@ class SpaceServer(web.Application, SpacePermission):
         try:
             node = await get_node_request(request)
             return web.Response(status=200, content_type='text/xml', text=node.tostring())
-
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except Exception as g:
@@ -200,7 +248,6 @@ class SpaceServer(web.Application, SpacePermission):
             with suppress(asyncio.CancelledError):
                 node = await asyncio.shield(create_node_request(request))
             return web.Response(status=201, content_type='text/xml', text=node.tostring())
-
         except VOSpaceError as e:
             return web.Response(status=e.code, text=e.error)
         except Exception as g:

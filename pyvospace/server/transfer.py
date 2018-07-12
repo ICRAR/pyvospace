@@ -115,17 +115,16 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
         raise VOSpaceError(404, f"Node Not Found. {job.job_info.target.path} not found.")
 
     except BaseException as e:
+        import traceback
+        traceback.print_exc()
         raise VOSpaceError(500, str(e))
 
 
 async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
     space_id = app['space_id']
     try:
-        target_path_array = list(filter(None, target_path.split('/')))
-        direction_path_array = list(filter(None, direction_path.split('/')))
-
-        target_path_tree = '.'.join(target_path_array)
-        destination_path_tree = '.'.join(direction_path_array)
+        target_path_tree = NodeDatabase.path_to_ltree(target_path)
+        destination_path_tree = NodeDatabase.path_to_ltree(direction_path)
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
@@ -148,7 +147,7 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                     raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
 
                 if dest_record is None:
-                    raise VOSpaceError(404, f"Node Not Found. {destination_path_tree} not found.")
+                    raise VOSpaceError(404, f"Node Not Found. {direction_path} not found.")
 
                 if dest_record['type'] != NodeType.ContainerNode:
                     raise VOSpaceError(400, f"Duplicate Node. {direction_path} already exists "
@@ -174,8 +173,9 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                                                     target_path_tree, destination_path_tree, space_id)
 
                     await conn.execute("insert into nodes(name, type, owner, groupread, groupwrite, "
-                                       "space_id, link, path) (select name, type, owner, groupread, groupwrite, "
-                                       "space_id, link, $2||subpath(path, nlevel($1)-1) as concat "
+                                       "space_id, link, object_id, path) "
+                                       "(select name, type, owner, groupread, groupwrite, "
+                                       "space_id, link, uuid_generate_v4(), $2||subpath(path, nlevel($1)-1) as concat "
                                        "from nodes where path <@ $1 and space_id=$3)",
                                        target_path_tree, destination_path_tree, space_id)
 

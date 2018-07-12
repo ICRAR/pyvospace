@@ -28,7 +28,7 @@ class TestPushPull(TestBase):
     def tearDown(self):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode'))
-        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode1'))
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode1.fits'))
         self.loop.run_until_complete(self.posix_runner.shutdown())
         self.loop.run_until_complete(self.posix_runner.cleanup())
         super().tearDown()
@@ -55,7 +55,7 @@ class TestPushPull(TestBase):
 
     def test_push_to_space_sync(self):
         async def run():
-            node = Node('/syncdatanode1')
+            node = Node('/syncdatanode1.fits')
             push = PushToSpace(node, [HTTPPut()],
                                params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
 
@@ -72,7 +72,7 @@ class TestPushPull(TestBase):
 
     def test_push_to_space_sync_parameterised(self):
         async def run():
-            node = Node('/syncdatanode1')
+            node = Node('/syncdatanode1.fits')
             push = PushToSpace(node, [HTTPPut()])
             transfer = await self.sync_transfer_node_parameterised(push)
             put_end = transfer.protocols[0].endpoint.url
@@ -208,10 +208,10 @@ class TestPushPull(TestBase):
             node1 = ContainerNode('/datanode/datanode1')
             await self.create_node(node1)
 
-            node1 = Node('/datanode/datanode1/datanode2')
+            node1 = Node('/datanode/datanode1/datanode2.dat')
             await self.create_node(node1)
 
-            node = Node('/datanode/datanode1/datanode2')
+            node = Node('/datanode/datanode1/datanode2.dat')
             push = PushToSpace(node, [HTTPPut()])
 
             job = await self.transfer_node(push)
