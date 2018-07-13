@@ -63,27 +63,28 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
                     if node.node_type == NodeType.LinkNode:
                         raise VOSpaceError(400, 'Operation Not Supported. No data transfer to a LinkNode.')
 
+                    job.node_path_modified = node.path_modified
                     job.job_info.target = node
                     job.transfer = copy.deepcopy(job.job_info)
                     new_protocols = await app['abstract_space'].get_transfer_protocols(job)
                     job.transfer.set_protocols(new_protocols)
 
-            job.results = [UWSResult('transferDetails',
-                                    {'{http://www.w3.org/1999/xlink}href':
-                                         f"/vospace/transfers/{job.job_id}/results/transferDetails"}),
-                           UWSResult('dataNode',
-                                    {'{http://www.w3.org/1999/xlink}href':
-                                         f"vos://{app['uri']}!vospace/{job.job_info.target.path}"})]
+                    job.results = [UWSResult('transferDetails',
+                                            {'{http://www.w3.org/1999/xlink}href':
+                                                 f"/vospace/transfers/{job.job_id}/results/transferDetails"}),
+                                   UWSResult('dataNode',
+                                            {'{http://www.w3.org/1999/xlink}href':
+                                                 f"vos://{app['uri']}!vospace/{job.job_info.target.path}"})]
 
-            endpoint = None
-            if redirect:
-                assert len(job.transfer.protocols) > 0, "Protocol endpoint not found."
-                endpoint = str(job.transfer.protocols[0].endpoint.url)
+                    endpoint = None
+                    if redirect:
+                        assert len(job.transfer.protocols) > 0, "Protocol endpoint not found."
+                        endpoint = str(job.transfer.protocols[0].endpoint.url)
 
-            await fuzz()
-            job.phase = UWSPhase.Executing
-            await app['executor']._update_uws_job(job)
-            return endpoint
+                    await fuzz()
+                    job.phase = UWSPhase.Executing
+                    await app['executor']._update_uws_job(job, conn)
+                    return endpoint
         else:
             if sync is True:
                 raise VOSpaceError(403, "Permission Denied. Move/Copy denied.")
@@ -115,8 +116,6 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
         raise VOSpaceError(404, f"Node Not Found. {job.job_info.target.path} not found.")
 
     except BaseException as e:
-        import traceback
-        traceback.print_exc()
         raise VOSpaceError(500, str(e))
 
 
@@ -173,9 +172,9 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                                                     target_path_tree, destination_path_tree, space_id)
 
                     await conn.execute("insert into nodes(name, type, owner, groupread, groupwrite, "
-                                       "space_id, link, object_id, path) "
+                                       "space_id, link, path) "
                                        "(select name, type, owner, groupread, groupwrite, "
-                                       "space_id, link, uuid_generate_v4(), $2||subpath(path, nlevel($1)-1) as concat "
+                                       "space_id, link, $2||subpath(path, nlevel($1)-1) as concat "
                                        "from nodes where path <@ $1 and space_id=$3)",
                                        target_path_tree, destination_path_tree, space_id)
 

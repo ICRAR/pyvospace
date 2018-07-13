@@ -47,7 +47,6 @@ class Parameter(object):
     def __init__(self, uri, value):
         self.uri = uri
         self.value = value
-        self._name = None
 
     def __eq__(self, other):
         if not isinstance(other, Parameter):
@@ -84,7 +83,6 @@ class Property(object):
         self.uri = uri
         self.value = value
         self.read_only = read_only
-        self._name = None
         # Persist property in store, not avaliable to client
         self.persist = persist
 
@@ -355,7 +353,7 @@ class Node(object):
     SPACE = 'icrar.org'
 
     def __init__(self, path, properties=None, capabilities=None, node_type='vos:Node',
-                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
         self._path = Node.uri_to_path(path)
         self.node_type_text = node_type
         self._properties = []
@@ -364,7 +362,8 @@ class Node(object):
         self.owner = owner
         self.group_read = group_read
         self.group_write = group_write
-        self._object_id = object_id
+        self._id = id
+        self.path_modified = 0
 
     def __str__(self):
         return self.path
@@ -392,15 +391,15 @@ class Node(object):
 
     def tolist(self):
         return [self.node_type, os.path.basename(self.path), self.owner,
-                self.group_read, self.group_write, None, self.object_id]
+                self.group_read, self.group_write, None, self.id]
 
     @property
-    def object_id(self):
-        return self._object_id
+    def id(self):
+        return self._id
 
-    @object_id.setter
-    def object_id(self, value):
-        self._object_id = value
+    @id.setter
+    def id(self, value):
+        self._id = value
 
     @property
     def owner(self):
@@ -561,9 +560,9 @@ class Node(object):
 
 class LinkNode(Node):
     def __init__(self, path, uri_target, properties=None, capabilities=None,
-                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
         super().__init__(path=path, properties=properties, capabilities=capabilities, node_type='vos:LinkNode',
-                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
+                         owner=owner, group_read=group_read, group_write=group_write, id=id)
         self.node_uri_target = uri_target
 
     @property
@@ -583,7 +582,7 @@ class LinkNode(Node):
 
     def tolist(self):
         return [self.node_type, os.path.basename(self.path), self.owner,
-                self.group_read, self.group_write, self.target, self.object_id]
+                self.group_read, self.group_write, self.target, self.id]
 
     def build_node(self, root):
         super().build_node(root)
@@ -601,9 +600,9 @@ class LinkNode(Node):
 class DataNode(Node):
     def __init__(self, path, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, node_type='vos:DataNode',
-                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
         super().__init__(path=path, properties=properties, capabilities=capabilities, node_type=node_type,
-                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
+                         owner=owner, group_read=group_read, group_write=group_write, id=id)
         self._accepts = []
         self.accepts = accepts
         self._provides = []
@@ -692,10 +691,10 @@ class DataNode(Node):
 class ContainerNode(DataNode):
     def __init__(self, path, nodes=None, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, owner=None,
-                 group_read=None, group_write=None, object_id=uuid.uuid4()):
+                 group_read=None, group_write=None, id=uuid.uuid4()):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
                          accepts=accepts, provides=provides, busy=busy, node_type='vos:ContainerNode',
-                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
+                         owner=owner, group_read=group_read, group_write=group_write, id=id)
         self._nodes = []
         self.set_nodes(nodes, True)
 
@@ -763,10 +762,10 @@ class ContainerNode(DataNode):
 
 class UnstructuredDataNode(DataNode):
     def __init__(self, path, properties=None, capabilities=None, accepts=None, provides=None, busy=False,
-                 owner=None, group_read=None, group_write=None, object_id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
                          accepts=accepts, provides=provides, busy=busy, node_type='vos:UnstructuredDataNode',
-                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
+                         owner=owner, group_read=group_read, group_write=group_write, id=id)
 
     def __eq__(self, other):
         if not isinstance(other, UnstructuredDataNode):
@@ -784,10 +783,10 @@ class UnstructuredDataNode(DataNode):
 class StructuredDataNode(DataNode):
     def __init__(self, path, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, owner=None,
-                 group_read=None, group_write=None, object_id=uuid.uuid4()):
+                 group_read=None, group_write=None, id=uuid.uuid4()):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
                          accepts=accepts, provides=provides, busy=busy, node_type='vos:StructuredDataNode',
-                         owner=owner, group_read=group_read, group_write=group_write, object_id=object_id)
+                         owner=owner, group_read=group_read, group_write=group_write, id=id)
 
     def __eq__(self, other):
         if not isinstance(other, StructuredDataNode):
@@ -1106,6 +1105,7 @@ class UWSJob(object):
         self.error = error
         self.transfer = None
         self.owner = None
+        self.node_path_modified = None
 
     @property
     def results(self):
