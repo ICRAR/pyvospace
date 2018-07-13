@@ -130,8 +130,6 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
 
     async def delete_storage_node(self, node):
         m_path = f"{self.root_dir}/{node.path}"
-        #print([(i.path,i.object_id) for i in Node.walk(node)])
-
         if node.node_type == NodeType.ContainerNode:
             # The directory should always exists unless
             # it has been deleted under us.

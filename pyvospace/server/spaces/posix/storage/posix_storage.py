@@ -9,7 +9,7 @@ from aiohttp_security import SessionIdentityPolicy
 from aiohttp_session import setup as setup_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 
-from pyvospace.core.model import NodeType
+from pyvospace.core.model import NodeType, Node
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move
 from pyvospace.server.storage import HTTPSpaceStorageServer
 from pyvospace.server import fuzz
@@ -66,13 +66,14 @@ class PosixStorageServer(HTTPSpaceStorageServer):
 
     async def upload(self, job, request):
         reader = request.content
+
         # This implementation wont accept container node data
         if job.transfer.target.node_type == NodeType.ContainerNode:
             return web.Response(status=400, text='Unable to upload data to a container.')
 
         path_tree = job.job_info.target.path
-        object_id = job.transfer.target.object_id
-        base_name = f'{object_id}_{os.path.basename(path_tree)}'
+        id = job.transfer.target.id
+        base_name = f'{id}_{os.path.basename(path_tree)}'
         real_file_name = f'{self.root_dir}/{path_tree}'
         stage_file_name = f'{self.staging_dir}/{base_name}'
         try:
@@ -84,6 +85,7 @@ class PosixStorageServer(HTTPSpaceStorageServer):
                     await fuzz()
                     await f.write(buffer)
 
+            #TODO: this whole section needs to be shielded. Check that the job isn't invalid after upload
             async with job.transaction() as tr:
                 await asyncio.shield(move(stage_file_name, real_file_name))
 

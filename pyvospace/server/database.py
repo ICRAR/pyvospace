@@ -35,12 +35,27 @@ class NodeDatabase(object):
             return '.'.join(path_array_result)
 
     @classmethod
-    def resultset_to_node_tree(cls, results):
-        d = OrderedDict()
+    def resultset_to_node_tree(cls, results, prop_results=None):
+        level_dict = OrderedDict()
+        node_path_dict = {}
+
         for result in results:
-            d.setdefault(result['nlevel'], []).append(NodeDatabase._create_node(result))
-        for k, v in reversed(d.items()):
-            parent = d.get(k-1)
+            node = NodeDatabase._create_node(result)
+            level_dict.setdefault(result['nlevel'], []).append(node)
+            if prop_results:
+                node_path_dict[result['path']] = node
+
+        if prop_results:
+            prop_dict = {}
+            for result in prop_results:
+                prop_dict.setdefault(result['node_path'], []).append(
+                    Property(result['uri'], result['value'], result['read_only']))
+
+            for k, v in prop_dict.items():
+                node_path_dict[k].set_properties(v)
+
+        for k, v in reversed(level_dict.items()):
+            parent = level_dict.get(k-1)
             if parent is None:
                 return v[0]
             for node in v:
@@ -74,25 +89,26 @@ class NodeDatabase(object):
     def _create_node(cls, node_row):
         path = NodeDatabase.ltree_to_path(node_row['path'])
         node_type = node_row['type']
-        object_id = node_row['object_id']
+        id = node_row['id']
         if node_type == NodeType.Node:
-            node = Node(path, object_id=object_id)
+            node = Node(path, id=id)
         elif node_type == NodeType.DataNode:
-            node = DataNode(path, busy=node_row['busy'], object_id=object_id)
+            node = DataNode(path, busy=node_row['busy'], id=id)
         elif node_type == NodeType.StructuredDataNode:
-            node = StructuredDataNode(path, busy=node_row['busy'], object_id=object_id)
+            node = StructuredDataNode(path, busy=node_row['busy'], id=id)
         elif node_type == NodeType.UnstructuredDataNode:
-            node = UnstructuredDataNode(path, busy=node_row['busy'], object_id=object_id)
+            node = UnstructuredDataNode(path, busy=node_row['busy'], id=id)
         elif node_type == NodeType.ContainerNode:
-            node = ContainerNode(path, busy=node_row['busy'], object_id=object_id)
+            node = ContainerNode(path, busy=node_row['busy'], id=id)
         elif node_type == NodeType.LinkNode:
-            node = LinkNode(path, uri_target=node_row['link'], object_id=object_id)
+            node = LinkNode(path, uri_target=node_row['link'], id=id)
         else:
             raise VOSpaceError(500, "Unknown type")
 
         node.owner = node_row['owner']
         node.group_read = node_row['groupread']
         node.group_write = node_row['groupwrite']
+        node.path_modified = node_row['path_modified']
         return node
 
     async def _get_node_and_parent(self, path, conn):
@@ -176,20 +192,19 @@ class NodeDatabase(object):
             if not await self.permission.permits(identity, 'createNode', context=(parent_node, node)):
                 raise PermissionDenied('createNode denied.')
 
-            await conn.fetchrow("INSERT INTO nodes (type, name, path, owner, "
-                                "groupread, groupwrite, space_id, link, object_id) "
-                                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            await conn.fetchrow("insert into nodes (type, name, path, owner, "
+                                "groupread, groupwrite, space_id, link) "
+                                "values ($1, $2, $3, $4, $5, $6, $7, $8)",
                                 node.node_type, node_name, path_tree, identity,
-                                node.group_read, node.group_write, self.space_id, target,
-                                node.object_id)
+                                node.group_read, node.group_write, self.space_id, target)
             node_properties = []
             for prop in node.properties:
                 if prop.persist:
                     node_properties.append(prop.tolist()+[path_tree, self.space_id])
 
             if node_properties:
-                await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
-                                       "VALUES ($1, $2, $3, $4, $5)", node_properties)
+                await conn.executemany("insert into properties (uri, value, read_only, node_path, space_id) "
+                                       "values ($1, $2, $3, $4, $5)", node_properties)
             return parent_row, child_row
         except asyncpg.exceptions.UniqueViolationError as f:
             raise DuplicateNodeError(f"{node.path} already exists.")
@@ -230,7 +245,7 @@ class NodeDatabase(object):
         if not results:
             raise NodeDoesNotExistError(f"{node.path} not found.")
 
-        node.object_id = results['object_id']
+        node.id = results['id']
         node.owner = results['owner']
         node.group_read = results['groupread']
         node.group_write = results['groupwrite']
@@ -253,13 +268,13 @@ class NodeDatabase(object):
                            node.group_read, node.group_write, node_path_tree, self.space_id)
 
         # if a property already exists then update it
-        await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
-                               "VALUES ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
+        await conn.executemany("insert into properties (uri, value, read_only, node_path, space_id) "
+                               "values ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
                                "do update set value=$2 where properties.value!=$2",
                                node_props_insert)
 
-        await conn.execute("DELETE FROM properties WHERE uri=any($1::text[]) "
-                           "AND node_path=$2 and space_id=$3",
+        await conn.execute("delete from properties where uri=any($1::text[]) "
+                           "and node_path=$2 and space_id=$3",
                            node_props_delete, node_path_tree, self.space_id)
 
         node_properties = await conn.fetch("select * from properties "

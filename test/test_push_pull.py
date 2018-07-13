@@ -44,7 +44,7 @@ class TestPushPull(TestBase):
                 await self.delete_node(node)
 
             tasks = [
-                asyncio.ensure_future(self.sync_transfer_node(push, 404)),
+                asyncio.ensure_future(self.sync_transfer_node(push, 200)),
                 asyncio.ensure_future(defer_delete(node))
             ]
 
@@ -55,7 +55,26 @@ class TestPushPull(TestBase):
 
     def test_push_to_space_sync(self):
         async def run():
-            node = Node('/syncdatanode1.fits')
+            container_node = ContainerNode('/syncdatanode',
+                                           properties=[Property('ivo://ivoa.net/vospace/core#title',
+                                                                "syncdatanode", True)])
+            await self.create_node(container_node)
+
+            node = DataNode('/syncdatanode/syncdatanode1.fits',
+                            properties=[Property('ivo://ivoa.net/vospace/core#title', "syncdatanode1.fits", True),
+                                        Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
+
+            await self.create_node(node)
+
+            # push to container node
+            container_push = PushToSpace(container_node, [HTTPPut()],
+                                         params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
+
+            transfer = await self.sync_transfer_node(container_push)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=400)
+
+            # push to leaf node
             push = PushToSpace(node, [HTTPPut()],
                                params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
 
@@ -63,6 +82,7 @@ class TestPushPull(TestBase):
             put_end = transfer.protocols[0].endpoint.url
             await self.push_to_space(put_end, '/tmp/datafile.dat', expected_status=200)
 
+            # retrieve leaf data
             push = PullFromSpace(node, [HTTPGet()])
             transfer = await self.sync_transfer_node(push)
             pull_end = transfer.protocols[0].endpoint.url
@@ -105,7 +125,7 @@ class TestPushPull(TestBase):
 
         self.loop.run_until_complete(run())
 
-    def test_push_to_space_async(self):
+    def ttest_push_to_space_async(self):
         async def run():
             node1 = ContainerNode('/datanode')
             await self.create_node(node1)
@@ -159,8 +179,13 @@ class TestPushPull(TestBase):
     def test_push_to_space_async_error(self):
         async def run():
             # can not push data to container node
-            node1 = ContainerNode('/datanode')
+            node1 = ContainerNode('/datanode',
+                                  properties=[Property('ivo://ivoa.net/vospace/core#title', "datanode", True)])
             await self.create_node(node1)
+
+            leaf = ContainerNode('/datanode/datanode1',
+                                 properties=[Property('ivo://ivoa.net/vospace/core#title', "datanode", True)])
+            await self.create_node(leaf)
 
             push = PushToSpace(node1, [HTTPPut()])
             job = await self.transfer_node(push)
