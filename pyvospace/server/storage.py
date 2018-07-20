@@ -7,6 +7,7 @@ from aiohttp import web
 from aiohttp_security import authorized_userid, permits
 from aiohttp_security.api import AUTZ_KEY
 from abc import abstractmethod
+from aiojobs.aiohttp import create_scheduler, spawn
 
 from pyvospace.core.exception import VOSpaceError, PermissionDenied, NodeBusyError, InvalidJobError, \
     InvalidJobStateError, NodeDoesNotExistError
@@ -53,9 +54,10 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         self.executor = StorageUWSJobPool(self.space_id, self.storage_id, self.db_pool,
                                           self.config.get('Space', 'dsn'), self)
         await self.executor.setup()
-        self.heartbeat = StorageHeartbeatSource(dsn, self.storage_id)
-        await self.heartbeat.run()
+        #self.heartbeat = StorageHeartbeatSource(dsn, self.storage_id)
+        #await self.heartbeat.run()
         self.set_router()
+        self['AIOJOBS_SCHEDULER'] = await create_scheduler()
 
     @abstractmethod
     async def download(self, job, request):
@@ -71,11 +73,13 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
 
     async def upload_request(self, request):
         job_id = request.match_info.get('job_id', None)
-        return await self.execute_storage_job(request, job_id, self.upload)
+        job = await spawn(request, self.execute_storage_job(request, job_id, self.upload))
+        return await job.wait()
 
     async def download_request(self, request):
         job_id = request.match_info.get('job_id', None)
-        return await self.execute_storage_job(request, job_id, self.download)
+        job = await spawn(request, self.execute_storage_job(request, job_id, self.download))
+        return await job.wait()
 
     async def permits(self, identity, permission, context):
         autz_policy = self.get(AUTZ_KEY)
@@ -84,7 +88,8 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         return await autz_policy.permits(identity, permission, context)
 
     async def shutdown(self):
-        await self.heartbeat.close()
+        #await self.heartbeat.close()
+        await self['AIOJOBS_SCHEDULER'].close()
         await self.executor.close()
         await self.db_pool.close()
 
@@ -102,13 +107,15 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
             await asyncio.shield(self.executor.set_error(job_id, 'Cancelled'))
             return web.Response(status=400, text="Cancelled")
 
-        except (InvalidJobError, InvalidJobStateError) as v:
+        except (InvalidJobError, InvalidJobStateError, NodeBusyError) as v:
             return web.Response(status=v.code, text=v.error)
 
-        except (NodeDoesNotExistError, PermissionDenied, NodeBusyError, VOSpaceError) as e:
+        except (NodeDoesNotExistError, PermissionDenied, VOSpaceError) as e:
             await asyncio.shield(self.executor.set_error(job_id, e.error))
             return web.Response(status=e.code, text=e.error)
 
         except BaseException as f:
+            #import traceback
+            #traceback.print_exc()
             await asyncio.shield(self.executor.set_error(job_id, str(f)))
             return web.Response(status=500, text=str(f))

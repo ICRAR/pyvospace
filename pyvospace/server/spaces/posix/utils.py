@@ -15,6 +15,13 @@ def copytree(src, dst, symlinks=False, ignore=None):
     if not os.path.exists(dst):
         os.makedirs(dst)
         shutil.copystat(src, dst)
+
+    byte_copy = False
+    src_id = int(os.stat(src).st_dev >> 8 & 0xff)
+    dst_id = int(os.stat(dst).st_dev >> 8 & 0xff)
+    if src_id != dst_id:
+        byte_copy = True
+
     lst = os.listdir(src)
     if ignore:
         excl = ignore(src, lst)
@@ -35,7 +42,17 @@ def copytree(src, dst, symlinks=False, ignore=None):
         elif os.path.isdir(s):
             copytree(s, d, symlinks, ignore)
         else:
-            shutil.copy2(s, d)
+            if byte_copy:
+                shutil.copy2(s, d)
+            else:
+                os.rename(s, d)
+
+
+def _move(src, dst, create_dir=True):
+    if create_dir:
+        if not os.path.exists(os.path.dirname(dst)):
+            os.makedirs(dst)
+    shutil.move(src, dst)
 
 
 async def mkdir(path):
@@ -53,7 +70,7 @@ async def remove(path):
 
 async def move(src, dest):
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, shutil.move, src, dest)
+    await loop.run_in_executor(None, _move, src, dest)
 
 
 async def copy(src, dest):

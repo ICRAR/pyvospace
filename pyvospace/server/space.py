@@ -175,14 +175,14 @@ class SpaceServer(web.Application, SpacePermission):
         self['space_id'] = space_id
         self['executor'] = UWSJobPool(space_id, db_pool, self)
         self['db'] = NodeDatabase(space_id, db_pool, self)
-        heartbeat = StorageHeartbeatSink(db_pool, self['space_name'])
-        self['heartbeat'] = heartbeat
-        await heartbeat.run()
+        #heartbeat = StorageHeartbeatSink(db_pool, self['space_name'])
+        #self['heartbeat'] = heartbeat
+        #await heartbeat.run()
 
     async def shutdown(self):
-        heartbeat = self.get('heartbeat')
-        if heartbeat:
-            await heartbeat.close()
+        #heartbeat = self.get('heartbeat')
+        #if heartbeat:
+        #    await heartbeat.close()
         pool = self.get('db_pool')
         if pool:
             await pool.close()
@@ -258,7 +258,6 @@ class SpaceServer(web.Application, SpacePermission):
             with suppress(asyncio.CancelledError):
                 await asyncio.shield(delete_node_request(self, request))
             return web.Response(status=204)
-
         except VOSpaceError as f:
             return web.Response(status=f.code, text=f.error)
         except Exception as e:

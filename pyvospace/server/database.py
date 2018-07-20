@@ -36,33 +36,22 @@ class NodeDatabase(object):
 
     @classmethod
     def resultset_to_node_tree(cls, results, prop_results=None):
-        level_dict = OrderedDict()
-        node_path_dict = {}
-
-        for result in results:
-            node = NodeDatabase._create_node(result)
-            level_dict.setdefault(result['nlevel'], []).append(node)
-            if prop_results:
-                node_path_dict[result['path']] = node
-
+        prop_dict = {}
         if prop_results:
-            prop_dict = {}
             for result in prop_results:
                 prop_dict.setdefault(result['node_path'], []).append(
                     Property(result['uri'], result['value'], result['read_only']))
 
-            for k, v in prop_dict.items():
-                node_path_dict[k].set_properties(v)
-
-        for k, v in reversed(level_dict.items()):
-            parent = level_dict.get(k-1)
-            if parent is None:
-                return v[0]
-            for node in v:
-                for parent_node in parent:
-                    if os.path.dirname(node.path) == parent_node.path:
-                        parent_node.add_node(node)
-        return None
+        root = NodeDatabase._create_node(results.pop(0))
+        if results:
+            if not isinstance(root, ContainerNode):
+                raise InvalidURI(f'{root} is not a container')
+        for result in results:
+            node = NodeDatabase._create_node(result)
+            props = prop_dict.get(result['path'], [])
+            node.set_properties(props)
+            root.insert_node_into_tree(node)
+        return root
 
     @classmethod
     def _resultset_to_node(cls, root_node_rows, root_properties_row):
@@ -73,7 +62,7 @@ class NodeDatabase(object):
         child_nodes = [NodeDatabase._create_node(node_row) for node_row in root_node_rows]
         if len(child_nodes) > 0:
             assert node.node_type == NodeType.ContainerNode
-            node.set_nodes(child_nodes)
+            node.nodes = child_nodes
         node.set_properties(NodeDatabase._resultset_to_properties(root_properties_row))
         return node
 
@@ -173,13 +162,13 @@ class NodeDatabase(object):
 
             path_list = NodeDatabase.path_to_ltree(node.path, as_array=True)
             path_parent = path_list[:-1]
-            node_name = path_list[-1]
+            node_name = os.path.basename(node.path)
             path_tree = '.'.join(path_list)
             # get parent node and check if its valid to add node to it
             parent_row, child_row = await self._get_node_and_parent(node.path, conn)
             # if the parent is not found but its expected to exist
             if not parent_row and len(path_parent) > 0:
-                raise ContainerDoesNotExistError(f"{'/'.join(path_parent)} not found.")
+                raise ContainerDoesNotExistError(f"{NodeDatabase.ltree_to_path(''.join(path_parent))} not found.")
 
             if parent_row:
                 if parent_row['type'] == NodeType.LinkNode:
@@ -211,32 +200,45 @@ class NodeDatabase(object):
         except asyncpg.exceptions.PostgresSyntaxError as e:
             raise InvalidURI(f"{node.path} contains invalid characters.")
 
-    '''async def update_insert_from_root(self, node, conn, identity):
-        try:
+    async def insert_tree(self, root, conn):
+        assert isinstance(root, ContainerNode)
+        nodes = [node for node in Node.walk(root)]
+        assert len(nodes) > 0
+        # we only want to update its properties
+        nodes.pop(0)
+        nodes.sort()
+        await self.update_properties(root, conn, root.owner, check_identity=False)
 
-            node_set = NodeDatabase.node_to_resultset(node)
-            await self.update_properties(node, conn, None)
-            node.pop(0)
+        if nodes:
+            node_insert = []
+            for node in nodes:
+                path = NodeDatabase.path_to_ltree(node.path)
+                node_row = [node.node_type, node.name, path, node.owner,
+                            node.group_read, node.group_write, node.id, self.space_id]
+                if isinstance(node, LinkNode):
+                    node_row.append(node.target)
+                else:
+                    node_row.append(None)
+                node_insert.append(node_row)
 
-            await conn.executemany("INSERT INTO nodes (type, name, path, owner, groupread, groupwrite, link, space_id) "
-                                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                                node.node_type, node_name, path_tree, identity,
-                                node.group_read, node.group_write, target, self.space_id)
+            await conn.executemany("INSERT INTO nodes (type, name, path, owner, groupread, groupwrite, "
+                                   "id, space_id, link) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+                                   "on conflict (path, space_id) do nothing",
+                                   node_insert)
 
             node_properties = []
-            for prop in node.properties:
-                if prop.persist:
-                    node_properties.append(prop.tolist() + [path_tree, self.space_id])
+            for node in nodes:
+                for prop in node.properties:
+                    prop_list = prop.tolist() + [NodeDatabase.path_to_ltree(node.path), self.space_id]
+                    node_properties.append(prop_list)
 
             if node_properties:
                 await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
-                                       "VALUES ($1, $2, $3, $4, $5)", node_properties)
+                                       "VALUES ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
+                                       "do update set value=$2 where properties.value!=$2",
+                                       node_properties)
 
-        except asyncpg.exceptions.UniqueViolationError as f:
-            raise DuplicateNodeError(f"{node_name} already exists.")'''
-
-
-    async def update_properties(self, node, conn, identity):
+    async def update_properties(self, node, conn, identity, check_identity=True):
         node_path_tree = NodeDatabase.path_to_ltree(node.path)
 
         results = await conn.fetchrow("select * from nodes where path=$1 "
@@ -249,8 +251,9 @@ class NodeDatabase(object):
         node.owner = results['owner']
         node.group_read = results['groupread']
         node.group_write = results['groupwrite']
-        if not await self.permission.permits(identity, 'setNode', context=node):
-            raise PermissionDenied('setNode denied.')
+        if check_identity:
+            if not await self.permission.permits(identity, 'setNode', context=node):
+                raise PermissionDenied('setNode denied.')
 
         pass_through_properties = []
         node_props_delete = []
@@ -294,6 +297,7 @@ class NodeDatabase(object):
             raise NodeDoesNotExistError(f"{path} not found.")
 
         node = NodeDatabase.resultset_to_node_tree(results)
+
         if not await self.permission.permits(identity, 'deleteNode', context=node):
             raise PermissionDenied('deleteNode denied.')
         return node

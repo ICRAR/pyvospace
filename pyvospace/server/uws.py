@@ -3,11 +3,12 @@ import asyncio
 import functools
 import asyncpg
 import json
+import uuid
 
 from contextlib import suppress
 
 from pyvospace.core.model import UWSPhase, UWSJob, UWSResult, Transfer, \
-    ProtocolTransfer, Copy, Move, PushToSpace, PullFromSpace
+    ProtocolTransfer, Copy, Move, PushToSpace, Node, ContainerNode
 from pyvospace.core.exception import VOSpaceError, JobDoesNotExistError, InvalidJobError, \
     InvalidJobStateError, PermissionDenied, NodeDoesNotExistError, ClosingError, NodeBusyError
 from .database import NodeDatabase
@@ -130,6 +131,7 @@ class UWSJobPool(object):
                     raise PermissionDenied('abortJob denied.')
 
                 with suppress(asyncio.CancelledError):
+                    #print('ABORT')
                     await asyncio.shield(self.set_aborted(job_id, conn))
 
         with suppress(asyncio.CancelledError):
@@ -178,17 +180,92 @@ class UWSJobPool(object):
         return result
 
 
+class NodeProxy:
+    def __init__(self, proxied_object, tr):
+        self._proxied = proxied_object
+        self._tr = tr
+
+    def __setattr__(self, key, value):
+        super().__setattr__(key, value)
+        try:
+            getattr(self._proxied, key)
+            self._proxied.__setattr__(key, value)
+        except AttributeError:
+            pass
+
+    def __getattr__(self, attr):
+        value = getattr(self._proxied, attr)
+        return value
+
+    async def save(self):
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(self._save())
+
+    async def _save(self):
+        if not self._tr._conn:
+            raise InvalidJobStateError('transaction not established')
+
+        if not self._tr._exclusive:
+            raise InvalidJobStateError('transaction not exclusive')
+
+        try:
+            if isinstance(self._proxied, ContainerNode):
+                await self._tr._job._storage_pool.node_db.insert_tree(self._proxied, self._tr._conn)
+            else:
+                await self._tr._job._storage_pool.node_db.update_properties(self._proxied, self._tr._conn,
+                                                                            self.owner, check_identity=False)
+        except Exception as e:
+            raise
+
+
+class StorageContainerNode(ContainerNode):
+    def __init__(self, tr, path, nodes=None, properties=None, capabilities=None,
+                accepts=None, provides=None, busy=False, owner=None,
+                group_read=None, group_write=None, id=None):
+        super().__init__(path=path, nodes=nodes, properties=properties, capabilities=capabilities,
+                accepts=accepts, provides=provides, busy=busy, owner=owner,
+                group_read=group_read, group_write=group_write, id=id)
+        self._tr = tr
+
+    async def save(self):
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(self._save())
+
+    async def _save(self):
+        if not self._tr._conn:
+            raise InvalidJobStateError('transaction not established')
+        if not self._tr._exclusive:
+            raise InvalidJobStateError('transaction not exclusive')
+        try:
+            await self._tr._job._storage_pool.node_db.insert_tree(self, self._tr._conn)
+        except Exception as e:
+            raise
+
 class StorageUWSJob(UWSJob):
     def __init__(self, storage_pool, job_id, phase, destruction, job_info, transfer):
         super().__init__(job_id, phase, destruction, job_info, None, None)
         self._storage_pool = storage_pool
-        self.transfer = transfer
+        self._transfer = transfer
+
+    @property
+    def transfer(self):
+        return self._transfer
+
+    @transfer.setter
+    def transfer(self, value):
+        self._transfer = value
 
     class StorageUWSJobTransaction(object):
-        def __init__(self, storage_pool):
-            self.storage_pool = storage_pool
-            self.conn = None
-            self.tr = None
+        def __init__(self, job, exclusive):
+            self._job = job
+            self._conn = None
+            self._tr = None
+            self._exclusive = exclusive
+            self._target = None
+
+        @property
+        def target(self):
+            return self._target
 
         async def start(self):
             with suppress(asyncio.CancelledError):
@@ -202,30 +279,64 @@ class StorageUWSJob(UWSJob):
             with suppress(asyncio.CancelledError):
                 await asyncio.shield(self._commit())
 
-        async def save(self):
-            with suppress(asyncio.CancelledError):
-                await asyncio.shield(self._save())
-
         async def _start(self):
-            if self.conn is None:
-                self.conn = await self.storage_pool.db_pool.acquire()
-                self.tr = self.conn.transaction()
-                await self.tr.start()
+            if self._conn is None:
+                self._conn = await self._job._storage_pool.db_pool.acquire()
+                self._tr = self._conn.transaction()
+                await self._tr.start()
+
+                job_result = await self._job._storage_pool._get_uws_job_conn(conn=self._conn,
+                                                                             job_id=self._job.job_id,
+                                                                             for_update=True)
+                if job_result['phase'] != UWSPhase.Executing:
+                    raise InvalidJobStateError('Invalid Job State')
+
+                if self._exclusive:
+                    node_results = await self._conn.fetch("select *, nlevel(path) from nodes "
+                                                          "where path <@ $1 and space_id=$2 "
+                                                          "order by nlevel(path) asc for update",
+                                                          job_result['node_path'],
+                                                          self._job._storage_pool.space_id)
+                else:
+                    node_results = await self._conn.fetch("select *, nlevel(path) from nodes "
+                                                          "where path <@ $1 and space_id=$2 "
+                                                          "order by nlevel(path) asc for share",
+                                                          job_result['node_path'],
+                                                          self._job._storage_pool.space_id)
+                if not node_results:
+                    raise NodeDoesNotExistError("target node does not exist.")
+
+                # The first entry should always be the target path in the job
+                if node_results[0]['path'] != job_result['node_path']:
+                    raise InvalidJobError(f"{node_results[0]['path']} does not match target "
+                                          f"{job_result['node_path']}")
+
+                if node_results[0]['path_modified'] != job_result['node_path_modified']:
+                    raise NodeDoesNotExistError('target has been modified.')
+
+                node_properties = await self._conn.fetch("select * from properties "
+                                                         "where node_path=any($1::ltree[]) and space_id=$2",
+                                                         [node['path'] for node in node_results],
+                                                         self._job._storage_pool.space_id)
+
+                root_node = NodeDatabase.resultset_to_node_tree(node_results, node_properties)
+                self._target = NodeProxy(root_node, self)
 
         async def _rollback(self):
-            if self.conn:
-                await self.tr.rollback()
-                await self.storage_pool.db_pool.release(self.conn)
-                self.conn = None
+            if self._conn:
+                try:
+                    await self._tr.rollback()
+                finally:
+                    await self._job._storage_pool.db_pool.release(self._conn)
+                    self._conn = None
 
         async def _commit(self):
-            if self.conn:
-                await self.tr.commit()
-                await self.storage_pool.db_pool.release(self.conn)
-                self.conn = None
-
-        async def _save(self):
-            pass
+            if self._conn:
+                try:
+                    await self._tr.commit()
+                finally:
+                    await self._job._storage_pool.db_pool.release(self._conn)
+                    self._conn = None
 
         async def __aenter__(self):
             with suppress(asyncio.CancelledError):
@@ -233,11 +344,15 @@ class StorageUWSJob(UWSJob):
                 return self
 
         async def __aexit__(self, exc_type, exc, tb):
-            with suppress(asyncio.CancelledError):
-                await asyncio.shield(self._commit())
+            if exc:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.shield(self._rollback())
+            else:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.shield(self._commit())
 
-    def transaction(self):
-        return StorageUWSJob.StorageUWSJobTransaction(self._storage_pool)
+    def transaction(self, exclusive=True):
+        return StorageUWSJob.StorageUWSJobTransaction(self, exclusive)
 
 
 class StorageUWSJobPool(UWSJobPool):
@@ -246,6 +361,7 @@ class StorageUWSJobPool(UWSJobPool):
         self.storage_id = storage_id
         self.listener = None
         self.dsn = dsn
+        self.node_db = NodeDatabase(space_id, db_pool, permission)
 
     async def setup(self):
         self.listener = await asyncpg.connect(dsn=self.dsn)
@@ -289,12 +405,12 @@ class StorageUWSJobPool(UWSJobPool):
                                     self.space_id, path)
 
     async def _execute(self, job, func, *args):
-        try:
-            return await func(job, *args)
-        finally:
-            if isinstance(job.job_info, PushToSpace):
-                path = NodeDatabase.path_to_ltree(job.transfer.target.path)
-                await asyncio.shield(self._set_not_busy(path))
+        #try:
+        return await func(job, *args)
+        #finally:
+        #    if isinstance(job.job_info, PushToSpace):
+        #        path = NodeDatabase.path_to_ltree(job.transfer.target.path)
+        #        await asyncio.shield(self._set_not_busy(path))
 
     async def execute(self, job_id, identity, func, *args):
         async with self.db_pool.acquire() as conn:
@@ -311,29 +427,33 @@ class StorageUWSJobPool(UWSJobPool):
                 if not await self.permission.permits(identity, 'runJob', context=job):
                     raise PermissionDenied('runJob denied.')
 
-                node_results = await conn.fetch("select *, nlevel(path) from nodes "
-                                                "where path <@ $1 and space_id=$2 "
-                                                "order by nlevel(path) asc for update;",
-                                                job_result['node_path'], self.space_id)
+                try:
+                    node_results = await conn.fetch("select *, nlevel(path) from nodes "
+                                                    "where path <@ $1 and space_id=$2 "
+                                                    "order by nlevel(path) asc for update nowait;",
+                                                    job_result['node_path'], self.space_id)
+                except asyncpg.exceptions.LockNotAvailableError:
+                    raise NodeBusyError(f"Path: {NodeDatabase.ltree_to_path(job_result['node_path'])}")
+
                 if not node_results:
                     raise NodeDoesNotExistError("target node does not exist.")
 
+                # The first entry should always be the target path in the job
+                if node_results[0]['path'] != job_result['node_path']:
+                    raise InvalidJobError(f"{node_results[0]['path']} does not match target "
+                                          f"{job_result['node_path']}")
+
                 if node_results[0]['path_modified'] != job_result['node_path_modified']:
                     raise NodeDoesNotExistError('target has been modified.')
-
-                if node_results[0]['busy']:
-                    raise NodeBusyError(f"Path: {NodeDatabase.ltree_to_path(node_results[0]['path'])}")
 
                 node_properties = await conn.fetch("select * from properties "
                                                    "where node_path=any($1::ltree[]) and space_id=$2",
                                                    [node['path'] for node in node_results], self.space_id)
 
-                job.transfer.target = NodeDatabase.resultset_to_node_tree(node_results, node_properties)
+                root_node = NodeDatabase.resultset_to_node_tree(node_results, node_properties)
+                job.transfer.target = root_node
                 if not await self.permission.permits(identity, 'dataTransfer', context=job):
                     raise PermissionDenied('data transfer denied.')
-
-                if isinstance(job.job_info, PushToSpace):
-                    await self._set_storage_and_busy(node_results[0]['path'], conn)
 
                 fut = self.executor.execute(job, self._execute, func, *args)
 

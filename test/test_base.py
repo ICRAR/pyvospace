@@ -1,4 +1,3 @@
-import os
 import io
 import sys
 import asyncio
@@ -11,6 +10,7 @@ import unittest
 import configparser
 import xml.etree.ElementTree as ET
 import requests
+import tarfile
 
 from aiohttp import web
 from urllib.parse import urlencode
@@ -72,12 +72,25 @@ class TestBase(unittest.TestCase):
         self.loop.run_until_complete(self.runner.cleanup())
         self.loop.close()
 
-    async def create_file(self, file_name):
+    async def create_tar(self, file_name):
+        if not os.path.exists('/tmp/tar'):
+            os.makedirs('/tmp/tar')
+        if not os.path.exists('/tmp/tar/dir1/dir2'):
+            os.makedirs('/tmp/tar/dir1/dir2')
+        await self.create_file('/tmp/tar/test1', blocksize=2)
+        await self.create_file('/tmp/tar/test2', blocksize=64)
+        await self.create_file('/tmp/tar/test3', blocksize=1024)
+        await self.create_file('/tmp/tar/dir1/test1', blocksize=2048)
+        await self.create_file('/tmp/tar/dir1/dir2/test2', blocksize=128)
+        with tarfile.open(file_name, "w") as tar:
+                tar.add('/tmp/tar')
+
+    async def create_file(self, file_name, blocksize=1024):
         try:
             await aiofiles.os.stat(file_name)
         except FileNotFoundError:
             async with aiofiles.open(file_name, mode='wb') as f:
-                await f.truncate(1024*io.DEFAULT_BUFFER_SIZE)
+                await f.truncate(blocksize*io.DEFAULT_BUFFER_SIZE)
 
     async def file_sender(self, file_name=None):
         async with aiofiles.open(file_name, 'rb') as f:

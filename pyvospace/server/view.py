@@ -52,7 +52,7 @@ async def get_node_request(request):
             node.provides = request.app['abstract_space'].get_provide_views(node)
     if isinstance(node, ContainerNode):
         if limit:
-            node.set_nodes(node.nodes[:limit])
+            node.nodes = node.nodes[:limit]
     return node
 
 
