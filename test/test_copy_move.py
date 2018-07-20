@@ -55,10 +55,11 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
+
             orig_node = ContainerNode('/root1/test2',
                                       properties=properties,
-                                      nodes=[ContainerNode('/root1/test2/test4'),
-                                             ContainerNode('/root1/test2/test3')])
+                                      nodes=[ContainerNode('/root1/test2/test3'),
+                                             ContainerNode('/root1/test2/test4')])
             self.assertEqual(node, orig_node)
 
             params = {'detail': 'max'}
@@ -86,8 +87,8 @@ class TestCopyMove(TestBase):
             node = Node.fromstring(response)
             moved_node = ContainerNode('/root2/test2',
                                        properties=properties,
-                                       nodes=[ContainerNode('/root2/test2/test4'),
-                                              ContainerNode('/root2/test2/test3')])
+                                       nodes=[ContainerNode('/root2/test2/test3'),
+                                              ContainerNode('/root2/test2/test4')])
             self.assertEqual(node, moved_node)
 
             params = {'detail': 'max'}

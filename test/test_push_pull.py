@@ -24,14 +24,47 @@ class TestPushPull(TestBase):
 
     async def _setup(self):
         await self.create_file('/tmp/datafile.dat')
+        await self.create_tar('/tmp/mytar.tar.gz')
 
     def tearDown(self):
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/root'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode1.fits'))
         self.loop.run_until_complete(self.posix_runner.shutdown())
         self.loop.run_until_complete(self.posix_runner.cleanup())
         super().tearDown()
+
+    def test_push_to_container(self):
+        async def run():
+            root_node = ContainerNode('/root')
+            await self.create_node(root_node)
+
+            node = DataNode('/root/mytar.tar.gz',
+                            properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True)])
+            await self.create_node(node)
+
+            # push tar to node
+            container_push = PushToSpace(node, [HTTPPut()],
+                                         view=View('ivo://ivoa.net/vospace/core#tar'),
+                                         params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
+
+            transfer = await self.sync_transfer_node(container_push)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
+
+            # push to container node
+            container_push = PushToSpace(root_node, [HTTPPut()],
+                                         view=View('ivo://ivoa.net/vospace/core#tar'),
+                                         params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
+
+            transfer = await self.sync_transfer_node(container_push)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
+
+            await self.delete('http://localhost:8080/vospace/nodes/root/mytar.tar.gz')
+
+        self.loop.run_until_complete(run())
 
     def test_push_to_space_sync_node_delete(self):
         async def run():
@@ -125,7 +158,7 @@ class TestPushPull(TestBase):
 
         self.loop.run_until_complete(run())
 
-    def ttest_push_to_space_async(self):
+    def test_push_to_space_async(self):
         async def run():
             node1 = ContainerNode('/datanode')
             await self.create_node(node1)

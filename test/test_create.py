@@ -14,8 +14,20 @@ class TestCreate(TestBase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         super().tearDown()
 
+    def test_container_model(self):
+        root = ContainerNode('/test')
+        root.insert_node_into_tree(ContainerNode('/test/test1'))
+        root.insert_node_into_tree(ContainerNode('/test/test1/test3'))
+        with self.assertRaises(InvalidArgument):
+            root.insert_node_into_tree(DataNode('/test/test1/test3/'))
+        with self.assertRaises(InvalidArgument):
+            root.insert_node_into_tree(Node('/test/test1/test3/test3/test4'))
+        root.insert_node_into_tree(Node('/test/test1/'), True)
+        with self.assertRaises(InvalidArgument):
+            root.insert_node_into_tree(Node('/test/'), True)
+        self.assertEqual(root, ContainerNode('/test', nodes=[Node('/test/test1/')]))
 
-    def test_delete(self):
+    def ttest_create_delete(self):
         async def run():
             node = ContainerNode('test1')
             await self.create_node(node)
@@ -32,8 +44,9 @@ class TestCreate(TestBase):
             node = DataNode('/test1/test2/anothercontainer/test.tar')
             await self.create_node(node)
 
-            node = Node('/test1/ddd')
-            await self.create_node(node)
+            for i in range(100):
+                node = Node(f'/test1/{i}')
+                await self.create_node(node)
 
             await self.delete('http://localhost:8080/vospace/nodes/test1')
 

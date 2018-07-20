@@ -4,7 +4,7 @@ import copy
 import lxml.etree as ET
 
 from urllib.parse import urlparse
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 
 from .exception import *
 
@@ -353,17 +353,26 @@ class Node(object):
     SPACE = 'icrar.org'
 
     def __init__(self, path, properties=None, capabilities=None, node_type='vos:Node',
-                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=None):
         self._path = Node.uri_to_path(path)
+        self.name = os.path.basename(self._path)
+        self.dirname = os.path.dirname(self._path)
         self.node_type_text = node_type
         self._properties = []
         self.set_properties(properties, True)
         self.capabilities = capabilities
+
         self.owner = owner
         self.group_read = group_read
         self.group_write = group_write
-        self._id = id
+        if id is None:
+            self._id = uuid.uuid4()
+        else:
+            self._id = id
         self.path_modified = 0
+
+    def __lt__(self, other):
+        return self.path < other.path
 
     def __str__(self):
         return self.path
@@ -388,10 +397,6 @@ class Node(object):
                         yield j
                 else:
                     yield i
-
-    def tolist(self):
-        return [self.node_type, os.path.basename(self.path), self.owner,
-                self.group_read, self.group_write, None, self.id]
 
     @property
     def id(self):
@@ -442,7 +447,7 @@ class Node(object):
         uri_parsed = urlparse(uri)
         if not uri_parsed.path:
             raise InvalidURI("URI does not exist.")
-        return os.path.normpath(uri_parsed.path).lstrip('/')
+        return os.path.normpath(uri_parsed.path).lstrip('/').rstrip('/')
 
     @property
     def path(self):
@@ -467,7 +472,6 @@ class Node(object):
                 prop_ro = prop_ro_bool
 
             prop_text = node_property.text
-
             if delete_prop is None:
                 prop = Property(prop_uri, prop_text, prop_ro)
             else:
@@ -518,8 +522,7 @@ class Node(object):
         self._properties = []
 
     def set_properties(self, property_list, sort=False):
-        if property_list is None:
-            self._properties = []
+        if not property_list:
             return
         assert isinstance(property_list, list)
         for prop in property_list:
@@ -560,7 +563,7 @@ class Node(object):
 
 class LinkNode(Node):
     def __init__(self, path, uri_target, properties=None, capabilities=None,
-                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities, node_type='vos:LinkNode',
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
         self.node_uri_target = uri_target
@@ -581,7 +584,7 @@ class LinkNode(Node):
                self.node_uri_target == other.node_uri_target
 
     def tolist(self):
-        return [self.node_type, os.path.basename(self.path), self.owner,
+        return [self.node_type, self.name, self.path, self.owner,
                 self.group_read, self.group_write, self.target, self.id]
 
     def build_node(self, root):
@@ -600,7 +603,7 @@ class LinkNode(Node):
 class DataNode(Node):
     def __init__(self, path, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, node_type='vos:DataNode',
-                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities, node_type=node_type,
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
         self._accepts = []
@@ -691,12 +694,12 @@ class DataNode(Node):
 class ContainerNode(DataNode):
     def __init__(self, path, nodes=None, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, owner=None,
-                 group_read=None, group_write=None, id=uuid.uuid4()):
+                 group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
                          accepts=accepts, provides=provides, busy=busy, node_type='vos:ContainerNode',
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
-        self._nodes = []
-        self.set_nodes(nodes, True)
+        self._nodes = OrderedDict()
+        self.nodes = nodes
 
     def __eq__(self, other):
         if not isinstance(other, DataNode):
@@ -705,14 +708,11 @@ class ContainerNode(DataNode):
 
     @property
     def nodes(self):
-        return self._nodes
+        return list(self._nodes.values())
 
     @property
     def node_type(self):
         return NodeType.ContainerNode
-
-    def sort_nodes(self):
-        self._nodes.sort(key=lambda x: x.path)
 
     def build_node(self, root):
         super().build_node(root)
@@ -725,30 +725,61 @@ class ContainerNode(DataNode):
             else:
                 node_busy = False
             node = Node.create_node(node_uri, node_type, node_busy)
-            self._nodes.append(node)
-        self.sort_nodes()
+            self.add_node(node)
 
     def check_path(self, child):
         assert isinstance(child, Node)
-        if self.path != os.path.dirname(child.path):
+        if self.path != child.dirname:
             raise InvalidArgument(f"{self.path} is not a parent of {child.path}")
 
-    def set_nodes(self, node_list, sort=False):
-        if node_list is None:
-            self._nodes = []
+    @nodes.setter
+    def nodes(self, value):
+        if not value:
             return
-        assert isinstance(node_list, list)
-        for node in node_list:
-            self.check_path(node)
-        self._nodes = copy.deepcopy(node_list)
-        if sort:
-            self.sort_nodes()
+        assert isinstance(value, list)
+        self._nodes = OrderedDict()
+        for node in value:
+            self.add_node(node)
 
-    def add_node(self, value, sort=False):
-        self.check_path(value)
-        self._nodes.append(value)
-        if sort:
-            self.sort_nodes()
+    def _insert_node_into_tree(self, parent_node, path_split, node_to_insert, overwrite):
+        while path_split:
+            name = path_split.pop(0)
+            node = parent_node._nodes.get(name)
+            if node:
+                if isinstance(node, ContainerNode) and path_split:
+                    return self._insert_node_into_tree(node, path_split, node_to_insert, overwrite)
+                else:
+                    if overwrite:
+                        parent_node.add_node(node_to_insert)
+                        assert not path_split
+                        break
+                    raise InvalidArgument(f'duplicate node {node_to_insert.path}')
+            else:
+                # its a leaf
+                if len(path_split) == 0:
+                    parent_node.add_node(node_to_insert)
+                    assert not path_split
+                    break
+                # there is no node in parent but the node is not a leaf
+                else:
+                    raise InvalidArgument(f'no path to {node_to_insert.path}')
+
+    def insert_node_into_tree(self, node, overwrite=False):
+        path_split = node.path.split('/')
+        path_len = len(path_split)
+        if path_len == 0:
+            raise InvalidArgument('Invalid node path')
+        elif path_len == 1:
+            raise InvalidArgument('Can not insert over root node.')
+        path_split.pop(0)
+        return self._insert_node_into_tree(self, path_split, node, overwrite)
+
+    def add_node(self, node, overwrite=True):
+        self.check_path(node)
+        if not overwrite:
+            if self._nodes.get(node.name):
+                raise InvalidArgument(f'duplicate node {node.path}')
+        self._nodes[node.name] = copy.deepcopy(node)
 
     def tostring(self):
         root = super().toxml()
@@ -762,7 +793,7 @@ class ContainerNode(DataNode):
 
 class UnstructuredDataNode(DataNode):
     def __init__(self, path, properties=None, capabilities=None, accepts=None, provides=None, busy=False,
-                 owner=None, group_read=None, group_write=None, id=uuid.uuid4()):
+                 owner=None, group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
                          accepts=accepts, provides=provides, busy=busy, node_type='vos:UnstructuredDataNode',
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
@@ -783,7 +814,7 @@ class UnstructuredDataNode(DataNode):
 class StructuredDataNode(DataNode):
     def __init__(self, path, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, owner=None,
-                 group_read=None, group_write=None, id=uuid.uuid4()):
+                 group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
                          accepts=accepts, provides=provides, busy=busy, node_type='vos:StructuredDataNode',
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
@@ -812,7 +843,6 @@ class Transfer(object):
 
     @target.setter
     def target(self, value):
-        assert isinstance(value, Node)
         self._target = value
 
     @property
@@ -995,7 +1025,7 @@ class ProtocolTransfer(Transfer):
     def build_node(self, root):
         view_elem = root.xpath('/vos:transfer/vos:view', namespaces=Node.NS)
         if view_elem:
-            view_uri = view_elem.attrib.get('uri', None)
+            view_uri = view_elem[0].attrib.get('uri', None)
             self._view = View(view_uri)
         protocols = root.xpath('/vos:transfer/vos:protocol', namespaces=Node.NS)
         for protocol in protocols:
