@@ -131,7 +131,6 @@ class UWSJobPool(object):
                     raise PermissionDenied('abortJob denied.')
 
                 with suppress(asyncio.CancelledError):
-                    #print('ABORT')
                     await asyncio.shield(self.set_aborted(job_id, conn))
 
         with suppress(asyncio.CancelledError):
@@ -217,29 +216,6 @@ class NodeProxy:
         except Exception as e:
             raise
 
-
-class StorageContainerNode(ContainerNode):
-    def __init__(self, tr, path, nodes=None, properties=None, capabilities=None,
-                accepts=None, provides=None, busy=False, owner=None,
-                group_read=None, group_write=None, id=None):
-        super().__init__(path=path, nodes=nodes, properties=properties, capabilities=capabilities,
-                accepts=accepts, provides=provides, busy=busy, owner=owner,
-                group_read=group_read, group_write=group_write, id=id)
-        self._tr = tr
-
-    async def save(self):
-        with suppress(asyncio.CancelledError):
-            await asyncio.shield(self._save())
-
-    async def _save(self):
-        if not self._tr._conn:
-            raise InvalidJobStateError('transaction not established')
-        if not self._tr._exclusive:
-            raise InvalidJobStateError('transaction not exclusive')
-        try:
-            await self._tr._job._storage_pool.node_db.insert_tree(self, self._tr._conn)
-        except Exception as e:
-            raise
 
 class StorageUWSJob(UWSJob):
     def __init__(self, storage_pool, job_id, phase, destruction, job_info, transfer):

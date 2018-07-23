@@ -115,7 +115,5 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
             return web.Response(status=e.code, text=e.error)
 
         except BaseException as f:
-            #import traceback
-            #traceback.print_exc()
             await asyncio.shield(self.executor.set_error(job_id, str(f)))
             return web.Response(status=500, text=str(f))

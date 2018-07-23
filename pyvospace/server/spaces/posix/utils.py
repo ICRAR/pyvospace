@@ -4,11 +4,14 @@ import asyncio
 import aiohttp
 import aiofiles
 import shutil
+import tarfile
 
 from aiofiles.os import stat
 from aiohttp import web
+from contextlib import suppress
 
 from pyvospace.server import fuzz
+from pyvospace.core.model import ContainerNode, StructuredDataNode, Property
 
 
 def copytree(src, dst, symlinks=False, ignore=None):
@@ -45,7 +48,11 @@ def copytree(src, dst, symlinks=False, ignore=None):
             if byte_copy:
                 shutil.copy2(s, d)
             else:
-                os.rename(s, d)
+                try:
+                    os.unlink(d)
+                except FileNotFoundError:
+                    pass
+                os.link(s, d)
 
 
 def _move(src, dst, create_dir=True):
@@ -115,3 +122,53 @@ async def send_file(request, file_name, file_path):
         return response
     finally:
         await asyncio.shield(response.write_eof())
+
+
+def tar(input, output, arcname):
+    with suppress(OSError):
+        os.makedirs(os.path.dirname(output))
+
+    with tarfile.open(output, "w") as tar:
+        tar.add(input, arcname=arcname)
+
+
+def untar(tar_name, extract_dir, target):
+    root_node = ContainerNode(target.path,
+                              owner=target.owner,
+                              group_read=target.group_read,
+                              group_write=target.group_write)
+
+    with suppress(OSError):
+        shutil.rmtree(extract_dir)
+
+    with suppress(OSError):
+        os.makedirs(extract_dir)
+
+    with tarfile.open(tar_name) as tar:
+        tar.extractall(path=extract_dir)
+
+    for root, dirs, files in os.walk(extract_dir):
+        dir_name = root
+        if dir_name.startswith(extract_dir):
+            dir_name = dir_name[len(extract_dir):]
+        if dir_name:
+            node = ContainerNode(f'{target.path}/{dir_name}',
+                                 owner=target.owner,
+                                 group_read=target.group_read,
+                                 group_write=target.group_write)
+            root_node.insert_node_into_tree(node)
+
+        for file in files:
+            name = f"{root}/{file}"
+            file_size = Property('ivo://ivoa.net/vospace/core#length', str(os.path.getsize(name)))
+            if name.startswith(extract_dir):
+                name = name[len(extract_dir):]
+            node_name = os.path.normpath(name)
+
+            node = StructuredDataNode(f'{target.path}/{node_name}',
+                                      owner=target.owner,
+                                      group_read=target.group_read,
+                                      group_write=target.group_write,
+                                      properties=[file_size])
+            root_node.insert_node_into_tree(node)
+    return root_node

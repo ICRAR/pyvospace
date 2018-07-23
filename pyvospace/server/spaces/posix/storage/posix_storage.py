@@ -1,8 +1,6 @@
 import io
 import os
 import uuid
-import shutil
-import tarfile
 import asyncio
 import aiofiles
 
@@ -12,9 +10,10 @@ from aiohttp_security import SessionIdentityPolicy
 from aiohttp_session import setup as setup_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from contextlib import suppress
+from concurrent.futures import ProcessPoolExecutor
 
-from pyvospace.core.model import NodeType, Property, View, ContainerNode, StructuredDataNode, Node
-from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move, copy, rmtree
+from pyvospace.core.model import NodeType, Property, View
+from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move, copy, rmtree, tar, untar
 from pyvospace.server.storage import HTTPSpaceStorageServer
 from pyvospace.server import fuzz
 from pyvospace.server.spaces.posix.auth import DBUserNodeAuthorizationPolicy
@@ -35,10 +34,13 @@ class PosixStorageServer(HTTPSpaceStorageServer):
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
 
+        self.process_executor = ProcessPoolExecutor(max_workers=32)
         self.on_shutdown.append(self.shutdown)
 
     async def shutdown(self):
+        loop = asyncio.get_event_loop()
         await super().shutdown()
+        await loop.run_in_executor(None, self.process_executor.shutdown)
 
     async def setup(self):
         await super().setup()
@@ -62,53 +64,33 @@ class PosixStorageServer(HTTPSpaceStorageServer):
         await app.setup()
         return app
 
-    def untar(self, tar_name, extract_dir, target):
-        root_node = ContainerNode(target.path,
-                                  owner=target.owner,
-                                  group_read=target.group_read,
-                                  group_write=target.group_write)
-
-        with suppress(OSError):
-            shutil.rmtree(extract_dir)
-
-        with suppress(OSError):
-            os.makedirs(extract_dir)
-
-        with tarfile.open(tar_name) as tar:
-            tar.extractall(path=extract_dir)
-
-        for root, dirs, files in os.walk(extract_dir):
-            dir_name = root
-            if dir_name.startswith(extract_dir):
-                dir_name = dir_name[len(extract_dir):]
-            if dir_name:
-                node = ContainerNode(f'{target.path}/{dir_name}',
-                                     owner=target.owner,
-                                     group_read=target.group_read,
-                                     group_write=target.group_write)
-                root_node.insert_node_into_tree(node)
-
-            for file in files:
-                name = f"{root}/{file}"
-                file_size = Property('ivo://ivoa.net/vospace/core#length', str(os.path.getsize(name)))
-                if name.startswith(extract_dir):
-                    name = name[len(extract_dir):]
-                node_name = os.path.normpath(name)
-
-                node = StructuredDataNode(f'{target.path}/{node_name}',
-                                          owner=target.owner,
-                                          group_read=target.group_read,
-                                          group_write=target.group_write,
-                                          properties=[file_size])
-                root_node.insert_node_into_tree(node)
-        return root_node
-
     async def download(self, job, request):
         root_dir = self.root_dir
         path_tree = job.transfer.target.path
-        file_path = f'{root_dir}/{path_tree}'
-        #TODO: retrieve tar from a ivo://ivoa.net/vospace/core#tar request
-        return await send_file(request, os.path.basename(path_tree), file_path)
+        if job.transfer.target.node_type == NodeType.ContainerNode:
+            if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
+                return web.Response(status=400, text=f'Unsupported Container View. '
+                                                     f'View: {job.transfer.view}')
+
+            tar_file = f'{self.staging_dir}/{uuid.uuid4()}/{os.path.basename(path_tree)}.tar'
+            stage_path = f'{self.staging_dir}/{uuid.uuid4()}/{path_tree}'
+            real_path = f'{self.root_dir}/{path_tree}'
+            async with job.transaction(exclusive=False):
+                await copy(real_path, stage_path)
+
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(self.process_executor, tar,
+                                           stage_path, tar_file, os.path.basename(path_tree))
+                return await send_file(request, os.path.basename(tar_file), tar_file)
+            finally:
+                with suppress(Exception):
+                    await asyncio.shield(rmtree(os.path.dirname(tar_file)))
+                with suppress(Exception):
+                    await asyncio.shield(rmtree(os.path.dirname(stage_path)))
+        else:
+            file_path = f'{root_dir}/{path_tree}'
+            return await send_file(request, os.path.basename(path_tree), file_path)
 
     async def upload(self, job, request):
         reader = request.content
@@ -136,7 +118,8 @@ class PosixStorageServer(HTTPSpaceStorageServer):
                 try:
 
                     loop = asyncio.get_event_loop()
-                    root_node = await loop.run_in_executor(None, self.untar,
+                    root_node = await loop.run_in_executor(self.process_executor,
+                                                           untar,
                                                            stage_file_name,
                                                            extract_dir,
                                                            job.transfer.target)
