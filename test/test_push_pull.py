@@ -62,6 +62,16 @@ class TestPushPull(TestBase):
             put_end = transfer.protocols[0].endpoint.url
             await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
 
+            pull = PullFromSpace(root_node, [HTTPGet()], view=View('ivo://ivoa.net/vospace/core#tar'))
+            transfer = await self.sync_transfer_node(pull)
+            pull_end = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(pull_end, '/tmp/download/')
+
+            pull = PullFromSpace(node, [HTTPGet()], view=View('ivo://ivoa.net/vospace/core#tar'))
+            transfer = await self.sync_transfer_node(pull)
+            pull_end = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(pull_end, '/tmp/download/')
+
             await self.delete('http://localhost:8080/vospace/nodes/root/mytar.tar.gz')
 
         self.loop.run_until_complete(run())
