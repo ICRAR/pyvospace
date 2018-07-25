@@ -27,7 +27,14 @@ class TestCreate(TestBase):
             root.insert_node_into_tree(Node('/test/'), True)
         self.assertEqual(root, ContainerNode('/test', nodes=[Node('/test/test1/')]))
 
-    def ttest_create_delete(self):
+        # add to a node deeper in the tree
+        root1 = ContainerNode('/root1/test2/test3')
+        root1.insert_node_into_tree(ContainerNode('/root1/test2/test3/test4'))
+        nodes = [n for n in Node.walk(root1)]
+        self.assertEqual(len(nodes), 2)
+
+
+    def test_create_delete(self):
         async def run():
             node = ContainerNode('test1')
             await self.create_node(node)

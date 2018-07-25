@@ -760,18 +760,18 @@ class ContainerNode(DataNode):
                     parent_node.add_node(node_to_insert)
                     assert not path_split
                     break
-                # there is no node in parent but the node is not a leaf
+                # there is no node in parent but the node is not a leaf, so there is no path
                 else:
                     raise InvalidArgument(f'no path to {node_to_insert.path}')
 
     def insert_node_into_tree(self, node, overwrite=False):
-        path_split = node.path.split('/')
-        path_len = len(path_split)
-        if path_len == 0:
-            raise InvalidArgument('Invalid node path')
-        elif path_len == 1:
+        if not node.path.startswith(self.path):
+            raise InvalidArgument('Invalid node path.')
+        if node.path == self.path:
             raise InvalidArgument('Can not insert over root node.')
-        path_split.pop(0)
+        # normalise the node path relative to root path
+        node_path = node.path[len(self.path):]
+        path_split = list(filter(None, node_path.split('/')))
         return self._insert_node_into_tree(self, path_split, node, overwrite)
 
     def add_node(self, node, overwrite=True):
