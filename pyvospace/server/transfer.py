@@ -131,16 +131,19 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                                            "from nodes where path <@ $1 or path <@ $2 and space_id=$3 "
                                            "order by path asc for update",
                                            target_path_tree, destination_path_tree, space_id)
-
                 target_record = None
                 dest_record = None
+                target_tree = []
+                dest_tree = []
                 for result in results:
                     if result['path'] == target_path_tree:
                         target_record = result
                     if result['path'] == destination_path_tree:
                         dest_record = result
-                    if target_record and dest_record:
-                        break
+                    if result['path'].startswith(target_path_tree):
+                        target_tree.append(result)
+                    if result['path'].startswith(destination_path_tree):
+                        dest_tree.append(result)
 
                 if target_record is None:
                     raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
@@ -155,9 +158,9 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                 if target_record['common'] is True and target_record['type'] == NodeType.ContainerNode:
                     raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
                                             f"is invalid.")
-
-                src = NodeDatabase._resultset_to_node([target_record], [])
-                dest = NodeDatabase._resultset_to_node([dest_record], [])
+                # offer the storage the full node tree
+                src = NodeDatabase.resultset_to_node_tree(target_tree, [])
+                dest = NodeDatabase.resultset_to_node_tree(dest_tree, [])
                 if perform_copy:
                     if not await app.permits(identity, 'copyNode', context=(src, dest)):
                         raise PermissionDenied('copyNode denied.')
@@ -182,8 +185,8 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                     for prop in prop_results:
                         user_props_insert.append(tuple(prop))
 
-                    await conn.executemany("INSERT INTO properties (uri, value, read_only, space_id, node_path) "
-                                           "VALUES ($1, $2, $3, $4, $5)",
+                    await conn.executemany("insert into properties (uri, value, read_only, space_id, node_path) "
+                                           "values ($1, $2, $3, $4, $5)",
                                            user_props_insert)
 
                     await app['abstract_space'].copy_storage_node(src, dest)
