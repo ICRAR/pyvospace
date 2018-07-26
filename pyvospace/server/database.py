@@ -2,10 +2,8 @@ import os
 import asyncpg
 import base64
 
-from collections import OrderedDict
-
 from pyvospace.core.exception import VOSpaceError, InvalidURI, NodeDoesNotExistError, PermissionDenied, \
-    ContainerDoesNotExistError, DuplicateNodeError
+    ContainerDoesNotExistError, DuplicateNodeError, InvalidArgument
 from pyvospace.core.model import Node, DataNode, UnstructuredDataNode, StructuredDataNode, LinkNode, ContainerNode, \
     NodeType, Property, DeleteProperty, NodeTextLookup
 
@@ -200,43 +198,43 @@ class NodeDatabase(object):
         except asyncpg.exceptions.PostgresSyntaxError as e:
             raise InvalidURI(f"{node.path} contains invalid characters.")
 
-    async def insert_tree(self, root, conn):
-        assert isinstance(root, ContainerNode)
-        nodes = [node for node in Node.walk(root)]
-        assert len(nodes) > 0
-        # we only want to update its properties
-        nodes.pop(0)
+    async def insert_tree(self, nodes, conn):
+        if not isinstance(nodes, list):
+            raise InvalidArgument('nodes is not a list.')
+        if not nodes:
+            return
         nodes.sort()
-        await self.update_properties(root, conn, root.owner, check_identity=False)
 
-        if nodes:
-            node_insert = []
-            for node in nodes:
-                path = NodeDatabase.path_to_ltree(node.path)
-                node_row = [node.node_type, node.name, path, node.owner,
-                            node.group_read, node.group_write, node.id, self.space_id]
-                if isinstance(node, LinkNode):
-                    node_row.append(node.target)
-                else:
-                    node_row.append(None)
-                node_insert.append(node_row)
+        node_insert = []
+        for node in nodes:
+            if not isinstance(node, Node):
+                raise InvalidArgument(f'{node} is not a Node.')
+            path = NodeDatabase.path_to_ltree(node.path)
+            node_row = [node.node_type, node.name, path, node.owner,
+                        node.group_read, node.group_write, node.id, self.space_id]
+            if isinstance(node, LinkNode):
+                node_row.append(node.target)
+            else:
+                node_row.append(None)
+            node_insert.append(node_row)
 
-            await conn.executemany("INSERT INTO nodes (type, name, path, owner, groupread, groupwrite, "
-                                   "id, space_id, link) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+        if node_insert:
+            await conn.executemany("insert into nodes (type, name, path, owner, groupread, groupwrite, "
+                                   "id, space_id, link) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
                                    "on conflict (path, space_id) do nothing",
                                    node_insert)
 
-            node_properties = []
-            for node in nodes:
-                for prop in node.properties:
-                    prop_list = prop.tolist() + [NodeDatabase.path_to_ltree(node.path), self.space_id]
-                    node_properties.append(prop_list)
+        node_properties = []
+        for node in nodes:
+            for prop in node.properties:
+                prop_list = prop.tolist() + [NodeDatabase.path_to_ltree(node.path), self.space_id]
+                node_properties.append(prop_list)
 
-            if node_properties:
-                await conn.executemany("INSERT INTO properties (uri, value, read_only, node_path, space_id) "
-                                       "VALUES ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
-                                       "do update set value=$2 where properties.value!=$2",
-                                       node_properties)
+        if node_properties:
+            await conn.executemany("insert into properties (uri, value, read_only, node_path, space_id) "
+                                   "values ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
+                                   "do update set value=$2 where properties.value!=$2",
+                                   node_properties)
 
     async def update_properties(self, node, conn, identity, check_identity=True):
         node_path_tree = NodeDatabase.path_to_ltree(node.path)
@@ -270,15 +268,17 @@ class NodeDatabase(object):
         await conn.execute("update nodes set groupread=$1, groupwrite=$2 where path=$3 and space_id=$4",
                            node.group_read, node.group_write, node_path_tree, self.space_id)
 
-        # if a property already exists then update it
-        await conn.executemany("insert into properties (uri, value, read_only, node_path, space_id) "
-                               "values ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
-                               "do update set value=$2 where properties.value!=$2",
-                               node_props_insert)
+        if node_props_insert:
+            # if a property already exists then update it
+            await conn.executemany("insert into properties (uri, value, read_only, node_path, space_id) "
+                                   "values ($1, $2, $3, $4, $5) on conflict (uri, node_path, space_id) "
+                                   "do update set value=$2 where properties.value!=$2",
+                                   node_props_insert)
 
-        await conn.execute("delete from properties where uri=any($1::text[]) "
-                           "and node_path=$2 and space_id=$3",
-                           node_props_delete, node_path_tree, self.space_id)
+        if node_props_delete:
+            await conn.execute("delete from properties where uri=any($1::text[]) "
+                               "and node_path=$2 and space_id=$3",
+                               node_props_delete, node_path_tree, self.space_id)
 
         node_properties = await conn.fetch("select * from properties "
                                            "where node_path=$1 and space_id=$2",

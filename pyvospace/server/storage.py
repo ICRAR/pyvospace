@@ -4,7 +4,7 @@ import asyncpg
 import configparser
 
 from aiohttp import web
-from aiohttp_security import authorized_userid, permits
+from aiohttp_security import authorized_userid
 from aiohttp_security.api import AUTZ_KEY
 from abc import abstractmethod
 from aiojobs.aiohttp import create_scheduler, spawn
@@ -13,7 +13,6 @@ from pyvospace.core.exception import VOSpaceError, PermissionDenied, NodeBusyErr
     InvalidJobStateError, NodeDoesNotExistError
 from .auth import SpacePermission
 from .uws import StorageUWSJobPool
-from .heartbeat import StorageHeartbeatSource
 
 
 class HTTPSpaceStorageServer(web.Application, SpacePermission):
@@ -54,10 +53,8 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         self.executor = StorageUWSJobPool(self.space_id, self.storage_id, self.db_pool,
                                           self.config.get('Space', 'dsn'), self)
         await self.executor.setup()
-        #self.heartbeat = StorageHeartbeatSource(dsn, self.storage_id)
-        #await self.heartbeat.run()
-        self.set_router()
         self['AIOJOBS_SCHEDULER'] = await create_scheduler()
+        self.set_router()
 
     @abstractmethod
     async def download(self, job, request):
@@ -88,7 +85,6 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         return await autz_policy.permits(identity, permission, context)
 
     async def shutdown(self):
-        #await self.heartbeat.close()
         await self['AIOJOBS_SCHEDULER'].close()
         await self.executor.close()
         await self.db_pool.close()

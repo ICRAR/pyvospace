@@ -124,6 +124,39 @@ async def send_file(request, file_name, file_path):
         await asyncio.shield(response.write_eof())
 
 
+def path_to_node_tree(directory, root_node_path, owner, group_read, group_write):
+    root_node = ContainerNode(root_node_path,
+                              owner=owner,
+                              group_read=group_read,
+                              group_write=group_write)
+
+    for root, dirs, files in os.walk(directory):
+        dir_name = root
+        if dir_name.startswith(directory):
+            dir_name = dir_name[len(directory):]
+        if dir_name:
+            node = ContainerNode(f'{root_node_path}/{dir_name}',
+                                 owner=owner,
+                                 group_read=group_read,
+                                 group_write=group_write)
+            root_node.insert_node_into_tree(node)
+
+        for file in files:
+            name = f"{root}/{file}"
+            file_size = Property('ivo://ivoa.net/vospace/core#length', str(os.path.getsize(name)))
+            if name.startswith(directory):
+                name = name[len(directory):]
+            node_name = os.path.normpath(name)
+
+            node = StructuredDataNode(f'{root_node_path}/{node_name}',
+                                      owner=owner,
+                                      group_read=group_read,
+                                      group_write=group_write,
+                                      properties=[file_size])
+            root_node.insert_node_into_tree(node)
+    return root_node
+
+
 def tar(input, output, arcname):
     with suppress(OSError):
         os.makedirs(os.path.dirname(output))
@@ -133,11 +166,6 @@ def tar(input, output, arcname):
 
 
 def untar(tar_name, extract_dir, target):
-    root_node = ContainerNode(target.path,
-                              owner=target.owner,
-                              group_read=target.group_read,
-                              group_write=target.group_write)
-
     with suppress(OSError):
         shutil.rmtree(extract_dir)
 
@@ -147,28 +175,5 @@ def untar(tar_name, extract_dir, target):
     with tarfile.open(tar_name) as tar:
         tar.extractall(path=extract_dir)
 
-    for root, dirs, files in os.walk(extract_dir):
-        dir_name = root
-        if dir_name.startswith(extract_dir):
-            dir_name = dir_name[len(extract_dir):]
-        if dir_name:
-            node = ContainerNode(f'{target.path}/{dir_name}',
-                                 owner=target.owner,
-                                 group_read=target.group_read,
-                                 group_write=target.group_write)
-            root_node.insert_node_into_tree(node)
-
-        for file in files:
-            name = f"{root}/{file}"
-            file_size = Property('ivo://ivoa.net/vospace/core#length', str(os.path.getsize(name)))
-            if name.startswith(extract_dir):
-                name = name[len(extract_dir):]
-            node_name = os.path.normpath(name)
-
-            node = StructuredDataNode(f'{target.path}/{node_name}',
-                                      owner=target.owner,
-                                      group_read=target.group_read,
-                                      group_write=target.group_write,
-                                      properties=[file_size])
-            root_node.insert_node_into_tree(node)
-    return root_node
+    return path_to_node_tree(extract_dir, target.path, target.owner,
+                               target.group_read, target.group_write)

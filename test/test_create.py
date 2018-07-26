@@ -33,6 +33,12 @@ class TestCreate(TestBase):
         nodes = [n for n in Node.walk(root1)]
         self.assertEqual(len(nodes), 2)
 
+        # check root
+        root1 = ContainerNode('///')
+        root1.insert_node_into_tree(ContainerNode('///root1'))
+        nodes = [n for n in Node.walk(root1)]
+        self.assertEqual(len(nodes), 2)
+
 
     def test_create_delete(self):
         async def run():

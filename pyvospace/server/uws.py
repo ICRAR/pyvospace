@@ -3,12 +3,11 @@ import asyncio
 import functools
 import asyncpg
 import json
-import uuid
 
 from contextlib import suppress
 
 from pyvospace.core.model import UWSPhase, UWSJob, UWSResult, Transfer, \
-    ProtocolTransfer, Copy, Move, PushToSpace, Node, ContainerNode
+    ProtocolTransfer, Copy, Move, Node, ContainerNode
 from pyvospace.core.exception import VOSpaceError, JobDoesNotExistError, InvalidJobError, \
     InvalidJobStateError, PermissionDenied, NodeDoesNotExistError, ClosingError, NodeBusyError
 from .database import NodeDatabase
@@ -173,10 +172,14 @@ class UWSJobPool(object):
                                            UWSPhase.Aborted, self.space_id)
 
     async def set_aborted(self, job_id, conn):
-        result = await conn.fetchrow("update uws_jobs set phase=$2 "
-                                     "where id=$1 and space_id=$3 returning id",
-                                     job_id, UWSPhase.Aborted, self.space_id)
-        return result
+        return await conn.fetchrow("with cte as (select id, space_id, phase from uws_jobs "
+                                   "where id=$1 and space_id=$4 for update)"
+                                   "update uws_jobs set phase=$2 "
+                                   "from cte where cte.phase=any($3::integer[]) and "
+                                   "uws_jobs.id=cte.id and uws_jobs.space_id=cte.space_id "
+                                   "returning cte.id",
+                                   job_id, UWSPhase.Aborted,
+                                   [UWSPhase.Queued, UWSPhase.Pending, UWSPhase.Executing], self.space_id)
 
 
 class NodeProxy:
@@ -207,14 +210,13 @@ class NodeProxy:
         if not self._tr._exclusive:
             raise InvalidJobStateError('transaction not exclusive')
 
-        try:
-            if isinstance(self._proxied, ContainerNode):
-                await self._tr._job._storage_pool.node_db.insert_tree(self._proxied, self._tr._conn)
-            else:
-                await self._tr._job._storage_pool.node_db.update_properties(self._proxied, self._tr._conn,
-                                                                            self.owner, check_identity=False)
-        except Exception as e:
-            raise
+        root = self._proxied
+        node_db = self._tr._job._storage_pool.node_db
+        await node_db.update_properties(root, self._tr._conn, root.owner, check_identity=False)
+        if isinstance(root, ContainerNode):
+            nodes = [node for node in Node.walk(root)]
+            nodes.pop(0)
+            await node_db.insert_tree(nodes, self._tr._conn)
 
 
 class StorageUWSJob(UWSJob):
@@ -381,12 +383,7 @@ class StorageUWSJobPool(UWSJobPool):
                                     self.space_id, path)
 
     async def _execute(self, job, func, *args):
-        #try:
         return await func(job, *args)
-        #finally:
-        #    if isinstance(job.job_info, PushToSpace):
-        #        path = NodeDatabase.path_to_ltree(job.transfer.target.path)
-        #        await asyncio.shield(self._set_not_busy(path))
 
     async def execute(self, job_id, identity, func, *args):
         async with self.db_pool.acquire() as conn:

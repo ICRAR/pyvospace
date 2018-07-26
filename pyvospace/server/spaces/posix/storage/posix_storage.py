@@ -15,7 +15,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pyvospace.core.model import NodeType, Property, View
 from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move, copy, rmtree, tar, untar
 from pyvospace.server.storage import HTTPSpaceStorageServer
-from pyvospace.server import fuzz
+from pyvospace.server import fuzz, fuzz01
 from pyvospace.server.spaces.posix.auth import DBUserNodeAuthorizationPolicy
 
 
@@ -136,6 +136,7 @@ class PosixStorageServer(HTTPSpaceStorageServer):
                 async with job.transaction() as tr:
                     node = tr.target
                     node.add_property(Property('ivo://ivoa.net/vospace/core#length', str(size)))
+                    await asyncio.shield(fuzz01(2))
                     await asyncio.shield(node.save())
                     await asyncio.shield(move(stage_file_name, real_file_name))
 
