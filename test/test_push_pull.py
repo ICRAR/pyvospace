@@ -1,12 +1,12 @@
 import unittest
 import asyncio
-import xml.etree.ElementTree as ET
 
 from aiohttp import web
 
 from pyvospace.core.model import *
 from pyvospace.server import set_fuzz
 from pyvospace.server.spaces.posix.storage.posix_storage import PosixStorageServer
+from pyvospace.server.spaces.posix.utils import path_to_node_tree
 from test.test_base import TestBase
 
 

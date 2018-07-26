@@ -1,15 +1,16 @@
 import unittest
 import asyncio
 
-from aiohttp import web, client_exceptions
+from aiohttp import web
+from contextlib import suppress
 
 from pyvospace.core.model import *
-from pyvospace.server import set_fuzz
+from pyvospace.server import set_fuzz, set_fuzz01, wait_fuzz01
 from pyvospace.server.spaces.posix.storage.posix_storage import PosixStorageServer
 from test.test_base import TestBase
 
 
-class TestPushPull(TestBase):
+class TestAbort(TestBase):
 
     def setUp(self):
         super().setUp()
@@ -29,6 +30,32 @@ class TestPushPull(TestBase):
         self.loop.run_until_complete(self.posix_runner.shutdown())
         self.loop.run_until_complete(self.posix_runner.cleanup())
         super().tearDown()
+
+    def test_push_shield_abort(self):
+        async def run():
+            node = Node('/syncdatanode')
+            push = PushToSpace(node, [HTTPPut()])
+            transfer = await self.sync_transfer_node(push, 200)
+            put_end = transfer.protocols[0].endpoint.url
+            set_fuzz01(True)
+
+            async def push(url):
+                with suppress(Exception):
+                    await self.push_to_space(url, '/tmp/datafile.dat', expected_status=200)
+
+            push_task = asyncio.ensure_future(push(put_end))
+            await wait_fuzz01()
+            push_task.cancel()
+            await push_task
+            set_fuzz01(False)
+
+            node = Node('/syncdatanode')
+            pull = PullFromSpace(node, [HTTPGet()])
+            transfer = await self.sync_transfer_node(pull)
+            end_get = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(end_get, '/tmp/download/', expected_status=(200,))
+
+        self.loop.run_until_complete(run())
 
     def test_push_to_space_sync_push_abort(self):
         async def run():
