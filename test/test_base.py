@@ -14,6 +14,7 @@ import tarfile
 
 from aiohttp import web
 from urllib.parse import urlencode
+from passlib.hash import pbkdf2_sha256
 
 from pyvospace.server.spaces.posix import PosixSpaceServer
 from pyvospace.core.model import *
@@ -60,8 +61,10 @@ class TestBase(unittest.TestCase):
         site = web.TCPSite(self.runner, 'localhost', 8080,
                            reuse_address=True, reuse_port=True)
         self.loop.run_until_complete(site.start())
-        self.session = self.loop.run_until_complete(self._login('test', 'test'))
 
+        user = ['test', pbkdf2_sha256.hash('test'), [], [], 'posix', False]
+        self.loop.run_until_complete(self.create_user(self.app['db_pool'], *user))
+        self.session = self.loop.run_until_complete(self._login('test', 'test'))
 
     def tearDown(self):
         if self.session:
@@ -72,18 +75,29 @@ class TestBase(unittest.TestCase):
         self.loop.run_until_complete(self.runner.cleanup())
         self.loop.close()
 
+    async def create_user(self, db_pool, username, password, group_read, group_write, space_name, admin):
+        async with db_pool.acquire() as conn:
+            await conn.fetchrow("insert into users (username, password, groupread, "
+                                "groupwrite, space_name, admin) values($1, $2, $3, $4, $5, $6) "
+                                "on conflict (username, space_name) do nothing",
+                                username, password, group_read, group_write, space_name, admin)
+
+
     async def create_tar(self, file_name):
-        if not os.path.exists('/tmp/tar'):
-            os.makedirs('/tmp/tar')
-        if not os.path.exists('/tmp/tar/dir1/dir2'):
-            os.makedirs('/tmp/tar/dir1/dir2')
-        await self.create_file('/tmp/tar/test1', blocksize=2)
-        await self.create_file('/tmp/tar/test2', blocksize=64)
-        await self.create_file('/tmp/tar/test3', blocksize=1024)
-        await self.create_file('/tmp/tar/dir1/test1', blocksize=2048)
-        await self.create_file('/tmp/tar/dir1/dir2/test2', blocksize=128)
-        with tarfile.open(file_name, "w") as tar:
-                tar.add('/tmp/tar')
+        try:
+            await aiofiles.os.stat(file_name)
+        except FileNotFoundError:
+            if not os.path.exists('/tmp/tar'):
+                os.makedirs('/tmp/tar')
+            if not os.path.exists('/tmp/tar/dir1/dir2'):
+                os.makedirs('/tmp/tar/dir1/dir2')
+            await self.create_file('/tmp/tar/test1', blocksize=2)
+            await self.create_file('/tmp/tar/test2', blocksize=64)
+            await self.create_file('/tmp/tar/test3', blocksize=1024)
+            await self.create_file('/tmp/tar/dir1/test1', blocksize=2048)
+            await self.create_file('/tmp/tar/dir1/dir2/test2', blocksize=128)
+            with tarfile.open(file_name, "w") as tar:
+                    tar.add('/tmp/tar')
 
     async def create_file(self, file_name, blocksize=1024):
         try:
