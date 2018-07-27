@@ -152,8 +152,7 @@ class DBUserAuthentication(object):
         if not user:
             return None
 
-        #if pbkdf2_sha256.verify(password, user['password']):
-        if password == user['password']:
+        if pbkdf2_sha256.verify(password, user['password']):
             return username
         return None
 
