@@ -138,8 +138,24 @@ class Capability(object):
         self.param = param
 
 
+class SecurityMethod(object):
+    def __init__(self, url):
+        if url is None:
+            raise InvalidArgument("SecurityMethod URI is None.")
+        self._url = url
+
+    @property
+    def url(self):
+        return self._url
+
+    def __str__(self):
+        return self._url
+
+
 class Endpoint(object):
     def __init__(self, url):
+        if url is None:
+            raise InvalidArgument("Endpoint URI is None.")
         self._url = url
 
     @property
@@ -151,10 +167,12 @@ class Endpoint(object):
 
 
 class Protocol(object):
-    def __init__(self, uri, endpoint=None):
+    def __init__(self, uri, endpoint=None, security_method=None):
         self.uri = uri
         self._endpoint = None
         self.endpoint = endpoint
+        self._security_method = None
+        self.security_method = security_method
 
     def __str__(self):
         return self._uri
@@ -174,17 +192,20 @@ class Protocol(object):
         self._uri = copy.deepcopy(value)
 
     @classmethod
-    def create_protocol(cls, uri):
+    def create_protocol(cls, uri, security_method_uri=None):
+        security_obj = None
+        if security_method_uri:
+            security_obj = SecurityMethod(security_method_uri)
         if uri == 'ivo://ivoa.net/vospace/core#httpput':
-            return HTTPPut()
+            return HTTPPut(security_method=security_obj)
         elif uri == 'ivo://ivoa.net/vospace/core#httpget':
-            return HTTPGet()
+            return HTTPGet(security_method=security_obj)
         elif uri == 'ivo://ivoa.net/vospace/core#httpsput':
-            return HTTPSPut()
+            return HTTPSPut(security_method=security_obj)
         elif uri == 'ivo://ivoa.net/vospace/core#httpsget':
-            return HTTPSGet()
+            return HTTPSGet(security_method=security_obj)
         else:
-            return Protocol(uri)
+            return Protocol(uri, security_method=security_obj)
 
     @property
     def endpoint(self):
@@ -195,6 +216,16 @@ class Protocol(object):
         if value:
             assert isinstance(value, Endpoint)
             self._endpoint = value
+
+    @property
+    def security_method(self):
+        return self._security_method
+
+    @security_method.setter
+    def security_method(self, value):
+        if value:
+            assert isinstance(value, SecurityMethod)
+            self._security_method = value
 
     def __eq__(self, other):
         if not isinstance(other, Protocol):
@@ -269,23 +300,27 @@ class Properties(object):
 
 
 class HTTPPut(Protocol):
-    def __init__(self, endpoint=None):
-        super().__init__('ivo://ivoa.net/vospace/core#httpput', endpoint)
+    def __init__(self, endpoint=None, security_method=None):
+        super().__init__(uri='ivo://ivoa.net/vospace/core#httpput',
+                         endpoint=endpoint, security_method=security_method)
 
 
 class HTTPGet(Protocol):
-    def __init__(self, endpoint=None):
-        super().__init__('ivo://ivoa.net/vospace/core#httpget', endpoint)
+    def __init__(self, endpoint=None, security_method=None):
+        super().__init__(uri='ivo://ivoa.net/vospace/core#httpget',
+                         endpoint=endpoint, security_method=security_method)
 
 
 class HTTPSPut(Protocol):
-    def __init__(self, endpoint=None):
-        super().__init__('ivo://ivoa.net/vospace/core#httpsput', endpoint)
+    def __init__(self, endpoint=None, security_method=None):
+        super().__init__(uri='ivo://ivoa.net/vospace/core#httpsput',
+                         endpoint=endpoint, security_method=security_method)
 
 
 class HTTPSGet(Protocol):
-    def __init__(self, endpoint=None):
-        super().__init__('ivo://ivoa.net/vospace/core#httpsget', endpoint)
+    def __init__(self, endpoint=None, security_method=None):
+        super().__init__(uri='ivo://ivoa.net/vospace/core#httpsget',
+                         endpoint=endpoint, security_method=security_method)
 
 
 class Views(object):
@@ -1016,6 +1051,9 @@ class ProtocolTransfer(Transfer):
             if protocol.endpoint:
                 endpoint_tag = ET.SubElement(protocol_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}endpoint")
                 endpoint_tag.text = str(protocol.endpoint)
+            if protocol.security_method:
+                security_tag = ET.SubElement(protocol_elem, "{http://www.ivoa.net/xml/VOSpace/v2.1}securityMethod")
+                security_tag.set('uri', str(protocol.security_method))
         for param in self._parameters:
             param_elem = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}param")
             param_elem.set('uri', str(param))
@@ -1027,27 +1065,42 @@ class ProtocolTransfer(Transfer):
         if view_elem:
             view_uri = view_elem[0].attrib.get('uri', None)
             self._view = View(view_uri)
+
         protocols = root.xpath('/vos:transfer/vos:protocol', namespaces=Node.NS)
         for protocol in protocols:
-            uri = protocol.attrib.get('uri', None)
+            protocol_uri = protocol.attrib.get('uri', None)
+
+            # Security Methods
+            security_obj = None
+            security_elem = protocol.xpath('vos:securityMethod', namespaces=Node.NS)
+            if security_elem:
+                security_uri = security_elem[0].attrib.get('uri', None)
+                if security_uri is None:
+                    raise InvalidArgument('SecurityMethod URI does not exist.')
+                security_obj = SecurityMethod(security_uri)
+
+            # Endpoint
             endpoint = None
             endpoint_elem = protocol.xpath('vos:endpoint', namespaces=Node.NS)
             if endpoint_elem:
                 endpoint = Endpoint(endpoint_elem[0].text)
-            if uri == 'ivo://ivoa.net/vospace/core#httpput':
-                self._protocols.append(HTTPPut(endpoint))
-            elif uri == 'ivo://ivoa.net/vospace/core#httpget':
-                self._protocols.append(HTTPGet(endpoint))
-            elif uri == 'ivo://ivoa.net/vospace/core#httpsput':
-                self._protocols.append(HTTPSPut(endpoint))
-            elif uri == 'ivo://ivoa.net/vospace/core#httpsget':
-                self._protocols.append(HTTPSGet(endpoint))
+
+            if protocol_uri == 'ivo://ivoa.net/vospace/core#httpput':
+                protocol_obj = HTTPPut(endpoint, security_obj)
+            elif protocol_uri == 'ivo://ivoa.net/vospace/core#httpget':
+                protocol_obj = HTTPGet(endpoint, security_obj)
+            elif protocol_uri == 'ivo://ivoa.net/vospace/core#httpsput':
+                protocol_obj = HTTPSPut(endpoint, security_obj)
+            elif protocol_uri == 'ivo://ivoa.net/vospace/core#httpsget':
+                protocol_obj = HTTPSGet(endpoint, security_obj)
             else:
-                self._protocols.append(Protocol(endpoint))
+                protocol_obj = Protocol(endpoint, security_obj)
+            self._protocols.append(protocol_obj)
+
         params = root.xpath('/vos:transfer/vos:param', namespaces=Node.NS)
         for param in params:
-            uri = param.attrib.get('uri', None)
-            self._parameters.append(Parameter(uri, param.text))
+            param_uri = param.attrib.get('uri', None)
+            self._parameters.append(Parameter(param_uri, param.text))
 
 
 class PushToSpace(ProtocolTransfer):

@@ -5,13 +5,11 @@ from aiohttp_security import setup as setup_security
 from aiohttp_security import SessionIdentityPolicy
 from aiohttp_session import setup as setup_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
-from cryptography import fernet
 from typing import List
 
 from pyvospace.server.space import SpaceServer, AbstractSpace
-from pyvospace.core.model import Views, View, PullFromSpace, Protocols, Protocol, \
+from pyvospace.core.model import Views, View, Protocols, SecurityMethod, \
     Node, NodeTextLookup, NodeType, Properties, Property, HTTPGet, HTTPPut
-from pyvospace.core.exception import VOSpaceError
 
 from pyvospace.server.spaces.posix.utils import move, copy, mkdir, remove, rmtree, exists
 from pyvospace.server.spaces.posix.auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
@@ -96,7 +94,9 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
         return Properties(accepts, provides)
 
     def get_protocols(self) -> Protocols:
-        return Protocols(accepts=[], provides=[HTTPGet(), HTTPPut()])
+        security_method = SecurityMethod('ivo://ivoa.net/sso#cookie')
+        return Protocols(accepts=[], provides=[HTTPGet(security_method=security_method),
+                                               HTTPPut(security_method=security_method)])
 
     def get_views(self) -> Views:
         return Views(accepts=[View('ivo://ivoa.net/vospace/core#anyview')],
