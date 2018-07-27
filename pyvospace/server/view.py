@@ -125,8 +125,9 @@ async def sync_transfer_request(request):
             direction = request.query.get('DIRECTION')
             protocol_uri = request.query.get('PROTOCOL')
             view_uri = request.query.get('VIEW')
-            transfer = Transfer.create_transfer(target, direction, False)
-            protocol = Protocol.create_protocol(protocol_uri)
+            security_uri = request.query.get('SECURITYMETHOD')
+            transfer = Transfer.create_transfer(target=target, direction=direction, keep_bytes=False)
+            protocol = Protocol.create_protocol(uri=protocol_uri, security_method_uri=security_uri)
             transfer.set_protocols([protocol])
             if view_uri:
                 transfer.view = View(view_uri)

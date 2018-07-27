@@ -44,8 +44,10 @@ class TestPushPull(TestBase):
                             properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True)])
             await self.create_node(node)
 
+            security_method = SecurityMethod('ivo://ivoa.net/sso#cookie')
+
             # push tar to node
-            container_push = PushToSpace(node, [HTTPPut()],
+            container_push = PushToSpace(node, [HTTPPut(security_method=security_method)],
                                          view=View('ivo://ivoa.net/vospace/core#tar'),
                                          params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
 
@@ -54,7 +56,7 @@ class TestPushPull(TestBase):
             await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
 
             # push to container node
-            container_push = PushToSpace(root_node, [HTTPPut()],
+            container_push = PushToSpace(root_node, [HTTPPut(security_method=security_method)],
                                          view=View('ivo://ivoa.net/vospace/core#tar'),
                                          params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
 

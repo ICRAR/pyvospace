@@ -10,8 +10,8 @@ from aiohttp_security.api import AUTZ_KEY
 from typing import List
 
 from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
-from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node, UWSJob, \
-    PushToSpace, PullFromSpace, HTTPGet, HTTPSGet, HTTPPut, HTTPSPut, Endpoint
+from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node, \
+    PushToSpace, PullFromSpace, HTTPGet, HTTPSGet, HTTPPut, HTTPSPut, Endpoint, SecurityMethod
 
 from .view import get_node_request, delete_node_request, create_node_request, \
     set_node_properties_request, create_transfer_request, sync_transfer_request, \
@@ -19,7 +19,6 @@ from .view import get_node_request, delete_node_request, create_node_request, \
 from .uws import UWSJobPool
 from .database import NodeDatabase
 from .auth import SpacePermission
-from .heartbeat import StorageHeartbeatSink
 
 
 class AbstractSpace(metaclass=ABCMeta):
@@ -62,6 +61,8 @@ class AbstractSpace(metaclass=ABCMeta):
     async def get_transfer_protocols(self, job) -> List[Protocol]:
         new_protocols = []
         protocols = job.job_info.protocols
+        security_method = SecurityMethod('ivo://ivoa.net/sso#cookie')
+
         if isinstance(job.job_info, PushToSpace):
             if any(i in [HTTPPut(), HTTPSPut()] for i in protocols) is False:
                 raise VOSpaceError(400, "Protocol Not Supported.")
@@ -75,14 +76,14 @@ class AbstractSpace(metaclass=ABCMeta):
                     if row['https'] is False:
                         endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
                                             f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPPut(endpoint))
+                        new_protocols.append(HTTPPut(endpoint=endpoint, security_method=security_method))
 
             if HTTPSPut() in protocols:
                 for row in results:
                     if row['https'] is True:
                         endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
                                             f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPPut(endpoint))
+                        new_protocols.append(HTTPPut(endpoint=endpoint, security_method=security_method))
 
         elif isinstance(job.job_info, PullFromSpace):
             if any(i in [HTTPGet(), HTTPSGet()] for i in protocols) is False:
@@ -97,14 +98,14 @@ class AbstractSpace(metaclass=ABCMeta):
                     if row['https'] is False:
                         endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
                                             f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPGet(endpoint))
+                        new_protocols.append(HTTPGet(endpoint=endpoint, security_method=security_method))
 
             if HTTPSGet() in protocols:
                 for row in results:
                     if row['https'] is True:
                         endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
                                             f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPSGet(endpoint))
+                        new_protocols.append(HTTPSGet(endpoint=endpoint, security_method=security_method))
 
         if not new_protocols:
             raise VOSpaceError(400, "Protocol Not Supported. No storage found")
@@ -175,14 +176,8 @@ class SpaceServer(web.Application, SpacePermission):
         self['space_id'] = space_id
         self['executor'] = UWSJobPool(space_id, db_pool, self)
         self['db'] = NodeDatabase(space_id, db_pool, self)
-        #heartbeat = StorageHeartbeatSink(db_pool, self['space_name'])
-        #self['heartbeat'] = heartbeat
-        #await heartbeat.run()
 
     async def shutdown(self):
-        #heartbeat = self.get('heartbeat')
-        #if heartbeat:
-        #    await heartbeat.close()
         pool = self.get('db_pool')
         if pool:
             await pool.close()
