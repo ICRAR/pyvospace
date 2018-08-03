@@ -1,4 +1,5 @@
 import os
+import ssl
 import asyncio
 import argparse
 import configparser
@@ -21,12 +22,19 @@ def main(args=None):
 
     config = configparser.ConfigParser()
     config.read(cfg_file)
-    host = config['Space']['host']
-    port = config['Space']['port']
+    port = config.getint('Space', 'port')
+    use_ssl = config.getint('Space', 'use_ssl')
+
+    context = None
+    if bool(use_ssl):
+        cert_file = config['Space']['cert_file']
+        key_file = config['Space']['key_file']
+        context = ssl.SSLContext()
+        context.load_cert_chain(certfile=cert_file, keyfile=key_file)
 
     loop = asyncio.get_event_loop()
     app = loop.run_until_complete(PosixSpaceServer.create(cfg_file))
-    web.run_app(app, host=host, port=port)
+    web.run_app(app, port=port, ssl_context=context)
 
 
 if __name__ == "__main__":
