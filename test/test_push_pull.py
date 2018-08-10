@@ -4,9 +4,8 @@ import asyncio
 from aiohttp import web
 
 from pyvospace.core.model import *
-from pyvospace.server import set_fuzz
+from pyvospace.server import set_fuzz, set_busy_fuzz
 from pyvospace.server.spaces.posix.storage.posix_storage import PosixStorageServer
-from pyvospace.server.spaces.posix.utils import path_to_node_tree
 from test.test_base import TestBase
 
 
@@ -299,11 +298,15 @@ class TestPushPull(TestBase):
             transfer = await self.get_transfer_details(job.job_id, expected_status=200)
             end2 = transfer.protocols[0].endpoint.url
 
+            set_fuzz(True)
+
             # concurrent upload
             tasks = [
                 asyncio.ensure_future(self.push_to_space_defer_error(end1, '/tmp/datafile.dat')),
                 asyncio.ensure_future(self.push_to_space_defer_error(end2, '/tmp/datafile.dat'))
             ]
+
+            set_fuzz(False)
 
             result = []
             finished, unfinished = await asyncio.wait(tasks)

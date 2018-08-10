@@ -11,6 +11,7 @@ from pyvospace.core.model import UWSPhase, UWSJob, UWSResult, Transfer, \
 from pyvospace.core.exception import VOSpaceError, JobDoesNotExistError, InvalidJobError, \
     InvalidJobStateError, PermissionDenied, NodeDoesNotExistError, ClosingError, NodeBusyError
 from .database import NodeDatabase
+from pyvospace.server import busy_fuzz
 
 
 class UWSJobPool(object):
@@ -407,6 +408,8 @@ class StorageUWSJobPool(UWSJobPool):
                                                     job_result['node_path'], self.space_id)
                 except asyncpg.exceptions.LockNotAvailableError:
                     raise NodeBusyError(f"Path: {NodeDatabase.ltree_to_path(job_result['node_path'])}")
+
+                await busy_fuzz()
 
                 if not node_results:
                     raise NodeDoesNotExistError("target node does not exist.")

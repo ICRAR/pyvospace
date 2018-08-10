@@ -34,12 +34,17 @@ NodeType = Node_Type(0, 1, 2, 3, 4, 5)
 
 
 def validate_property_uri(uri):
-    assert uri, 'uri empty'
+    if not uri:
+        raise InvalidArgument('uri empty')
     parsed = urlparse(uri)
-    assert parsed.scheme == 'ivo', 'uri does not start with ivo'
-    assert parsed.path, 'path empty'
-    assert parsed.path.startswith('/vospace'), 'path does not start with /vospace'
-    assert parsed.fragment, 'fragment empty'
+    if parsed.scheme != 'ivo':
+        raise InvalidArgument('uri does not start with ivo')
+    if not parsed.path:
+        raise InvalidArgument('path empty')
+    if not parsed.path.startswith('/vospace'):
+        raise InvalidArgument('path does not start with /vospace')
+    if not parsed.fragment:
+        raise InvalidArgument('fragment empty')
     return parsed
 
 
@@ -99,7 +104,8 @@ class Property(object):
 
     @persist.setter
     def persist(self, value):
-        assert isinstance(value, bool)
+        if not isinstance(value, bool):
+            raise InvalidArgument('invalid value')
         self._persist = value
 
     @property
@@ -214,7 +220,8 @@ class Protocol(object):
     @endpoint.setter
     def endpoint(self, value):
         if value:
-            assert isinstance(value, Endpoint)
+            if not isinstance(value, Endpoint):
+                raise InvalidArgument('invalid Endpoint')
             self._endpoint = value
 
     @property
@@ -224,7 +231,8 @@ class Protocol(object):
     @security_method.setter
     def security_method(self, value):
         if value:
-            assert isinstance(value, SecurityMethod)
+            if not isinstance(value, SecurityMethod):
+                raise InvalidArgument('invalid SecurityMethod')
             self._security_method = value
 
     def __eq__(self, other):
@@ -235,13 +243,17 @@ class Protocol(object):
 
 class Protocols(object):
     def __init__(self, accepts, provides):
-        assert isinstance(accepts, list)
+        if not isinstance(accepts, list):
+            raise InvalidArgument('invalid list')
         for view in accepts:
-            assert isinstance(view, Protocol)
+            if not isinstance(view, Protocol):
+                raise InvalidArgument('invalid Protocol')
         self.accepts = accepts
-        assert isinstance(accepts, list)
+        if not isinstance(accepts, list):
+            raise InvalidArgument('invalid list')
         for view in accepts:
-            assert isinstance(view, Protocol)
+            if not isinstance(view, Protocol):
+                raise InvalidArgument('invalid Protocol')
         self.provides = provides
 
     def tostring(self):
@@ -265,13 +277,17 @@ class Protocols(object):
 
 class Properties(object):
     def __init__(self, accepts, provides):
-        assert isinstance(accepts, list)
+        if not isinstance(accepts, list):
+            raise InvalidArgument('invalid list')
         for prop in accepts:
-            assert isinstance(prop, Property)
+            if not isinstance(prop, Property):
+                raise InvalidArgument('invalid Property')
         self.accepts = accepts
-        assert isinstance(accepts, list)
+        if not isinstance(accepts, list):
+            raise InvalidArgument('invalid list')
         for prop in accepts:
-            assert isinstance(prop, Property)
+            if not isinstance(prop, Property):
+                raise InvalidArgument('invalid Property')
         self.provides = provides
         self.contains = []
 
@@ -325,13 +341,17 @@ class HTTPSGet(Protocol):
 
 class Views(object):
     def __init__(self, accepts, provides):
-        assert isinstance(accepts, list)
+        if not isinstance(accepts, list):
+            raise InvalidArgument('invalid list')
         for view in accepts:
-            assert isinstance(view, View)
+            if not isinstance(view, View):
+                raise InvalidArgument('invalid View')
         self.accepts = accepts
-        assert isinstance(accepts, list)
+        if not isinstance(accepts, list):
+            raise InvalidArgument('invalid list')
         for view in accepts:
-            assert isinstance(view, View)
+            if not isinstance(view, View):
+                raise InvalidArgument('invalid View')
         self.provides = provides
 
     def tostring(self):
@@ -458,9 +478,11 @@ class Node(object):
         if value is None:
             self._group_read = []
             return
-        assert isinstance(value, list)
+        if not isinstance(value, list):
+            raise InvalidArgument('invalid list')
         for val in value:
-            assert isinstance(val, str)
+            if not isinstance(val, str):
+                raise InvalidArgument('invalid string')
         self._group_read = copy.deepcopy(value)
 
     @property
@@ -472,9 +494,11 @@ class Node(object):
         if value is None:
             self._group_write = []
             return
-        assert isinstance(value, list)
+        if not isinstance(value, list):
+            raise InvalidArgument('invalid list')
         for val in value:
-            assert isinstance(val, str)
+            if not isinstance(val, str):
+                raise InvalidArgument('invalid string')
         self._group_write = copy.deepcopy(value)
 
     @classmethod
@@ -496,7 +520,7 @@ class Node(object):
         for node_property in root.xpath('/vos:node/vos:properties/vos:property', namespaces=Node.NS):
             prop_uri = node_property.attrib.get('uri', None)
             if prop_uri is None:
-                raise InvalidURI("Property URI does not exist.")
+                raise InvalidXML("vos:property URI does not exist.")
 
             delete_prop = node_property.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}nil', None)
             prop_ro = node_property.attrib.get('readOnly', None)
@@ -559,15 +583,18 @@ class Node(object):
     def set_properties(self, property_list, sort=False):
         if not property_list:
             return
-        assert isinstance(property_list, list)
+        if not isinstance(property_list, list):
+            raise InvalidArgument('invalid list')
         for prop in property_list:
-            assert isinstance(prop, Property)
+            if not isinstance(prop, Property):
+                raise InvalidArgument('invalid Property')
         self._properties = copy.deepcopy(property_list)
         if sort:
             self.sort_properties()
 
     def add_property(self, value, sort=False):
-        assert isinstance(value, Property)
+        if not isinstance(value, Property):
+            raise InvalidArgument('invalid Property')
         self._properties.append(value)
         if sort:
             self.sort_properties()
@@ -580,7 +607,7 @@ class Node(object):
         return ET.tostring(root).decode("utf-8")
 
     def toxml(self):
-        root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}node", nsmap = Node.NS)
+        root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}node", nsmap=Node.NS)
         root.set("{http://www.w3.org/2001/XMLSchema-instance}type", self.node_type_text)
         root.set("uri", self.to_uri())
 
@@ -626,7 +653,7 @@ class LinkNode(Node):
         super().build_node(root)
         target = root.find('vos:target', Node.NS)
         if target is None:
-            raise InvalidURI('LinkNode target does not exist.')
+            raise InvalidXML('vos:target target does not exist.')
         self.node_uri_target = target.text
 
     def tostring(self):
@@ -661,13 +688,13 @@ class DataNode(Node):
         for view in root.xpath('/vos:node/vos:accepts/vos:view', namespaces=Node.NS):
             view_uri = view.attrib.get('uri', None)
             if view_uri is None:
-                raise InvalidURI("Accepts URI does not exist.")
+                raise InvalidXML("Accepts URI does not exist.")
             self._accepts.append(View(view_uri))
 
         for view in root.xpath('/vos:node/vos:provides/vos:view', namespaces=Node.NS):
             view_uri = view.attrib.get('uri', None)
             if view_uri is None:
-                raise InvalidURI("Provides URI does not exist.")
+                raise InvalidXML("Provides URI does not exist.")
             self._provides.append(View(view_uri))
 
     @property
@@ -683,13 +710,16 @@ class DataNode(Node):
         if value is None:
             self._accepts = []
             return
-        assert isinstance(value, list)
+        if not isinstance(value, list):
+            raise InvalidArgument('invalid list')
         for val in value:
-            assert isinstance(val, View)
+            if not isinstance(val, View):
+                raise InvalidArgument('invalid View')
         self._accepts = copy.deepcopy(value)
 
     def add_accepts_view(self, value):
-        assert isinstance(value, View)
+        if not isinstance(value, View):
+            raise InvalidArgument('invalid View')
         self._accepts.append(value)
 
     @property
@@ -701,13 +731,16 @@ class DataNode(Node):
         if value is None:
             self._provides = []
             return
-        assert isinstance(value, list)
+        if not isinstance(value, list):
+            raise InvalidArgument('invalid list')
         for val in value:
-            assert isinstance(val, View)
+            if not isinstance(val, View):
+                raise InvalidArgument('invalid View')
         self._provides = copy.deepcopy(value)
 
     def add_provides_view(self, value):
-        assert isinstance(value, View)
+        if not isinstance(value, View):
+            raise InvalidArgument('invalid View')
         self._provides.append(value)
 
     def tostring(self):
@@ -763,7 +796,8 @@ class ContainerNode(DataNode):
             self.add_node(node)
 
     def check_path(self, child):
-        assert isinstance(child, Node)
+        if not isinstance(child, Node):
+            raise InvalidArgument('invalid Node')
         if self.path != child.dirname:
             raise InvalidArgument(f"{self.path} is not a parent of {child.path}")
 
@@ -771,7 +805,8 @@ class ContainerNode(DataNode):
     def nodes(self, value):
         if not value:
             return
-        assert isinstance(value, list)
+        if not isinstance(value, list):
+            raise InvalidArgument('invalid list')
         self._nodes = OrderedDict()
         for node in value:
             self.add_node(node)
@@ -921,10 +956,10 @@ class Transfer(object):
     def fromroot(cls, root):
         target = root.xpath('/vos:transfer/vos:target', namespaces=Node.NS)
         if not target:
-            raise InvalidURI('target not found')
+            raise InvalidXML('vos:target not found')
         direction = root.xpath('/vos:transfer/vos:direction', namespaces=Node.NS)
         if not direction:
-            raise InvalidURI('direction not found')
+            raise InvalidXML('vos:direction not found')
         keep_bytes = root.xpath('/vos:transfer/vos:keepBytes', namespaces=Node.NS)
         if keep_bytes:
             if keep_bytes[0].text == 'false':
@@ -932,7 +967,7 @@ class Transfer(object):
             elif keep_bytes[0].text == 'true':
                 keep_bytes = True
             else:
-                raise InvalidURI('keepBytes invalid')
+                raise InvalidXML('keepBytes invalid')
         node = Transfer.create_transfer(target[0].text, direction[0].text, keep_bytes)
         node.build_node(root)
         return node
@@ -1000,7 +1035,8 @@ class ProtocolTransfer(Transfer):
     @view.setter
     def view(self, value):
         if value:
-            assert isinstance(value, View)
+            if not isinstance(value, View):
+                raise InvalidArgument('invalid View')
             self._view = value
 
     @property
@@ -1011,9 +1047,11 @@ class ProtocolTransfer(Transfer):
         if protocol_list is None:
             self._protocols = []
             return
-        assert isinstance(protocol_list, list)
+        if not isinstance(protocol_list, list):
+            raise InvalidArgument('invalid list')
         for protocol in protocol_list:
-            assert isinstance(protocol, Protocol)
+            if not isinstance(protocol, Protocol):
+                raise InvalidArgument('invalid Protocol')
         self._protocols = copy.deepcopy(protocol_list)
 
     @property
@@ -1024,9 +1062,11 @@ class ProtocolTransfer(Transfer):
         if params is None:
             self._parameters = []
             return
-        assert isinstance(params, list)
+        if not isinstance(params, list):
+            raise InvalidArgument('invalid list')
         for param in params:
-            assert isinstance(param, Parameter)
+            if not isinstance(param, Parameter):
+                raise InvalidArgument('invalid Parameter')
         self._parameters = copy.deepcopy(params)
 
     def tomap(self):
@@ -1076,7 +1116,7 @@ class ProtocolTransfer(Transfer):
             if security_elem:
                 security_uri = security_elem[0].attrib.get('uri', None)
                 if security_uri is None:
-                    raise InvalidArgument('SecurityMethod URI does not exist.')
+                    raise InvalidXML('vos:securityMethod URI does not exist.')
                 security_obj = SecurityMethod(security_uri)
 
             # Endpoint
@@ -1158,7 +1198,8 @@ class UWSResult(object):
         result_set = []
         for result in root.xpath('/uws:results/uws:result', namespaces=UWSJob.NS):
             id = result.attrib.get('id', None)
-            assert id, 'id is empty'
+            if not id:
+                raise InvalidXML('id is empty')
             del result.attrib['id']
             result_set.append(UWSResult(id, result.attrib))
         return result_set
@@ -1181,7 +1222,8 @@ class UWSJob(object):
         self.phase = phase
         self.destruction = destruction
         if job_info:
-            assert isinstance(job_info, Transfer)
+            if not isinstance(job_info, Transfer):
+                raise InvalidArgument('invalid Transfer')
         self.job_info = job_info
         self._results = None
         self.results = results
@@ -1197,9 +1239,11 @@ class UWSJob(object):
     @results.setter
     def results(self, value):
         if value:
-            assert isinstance(value, list)
+            if not isinstance(value, list):
+                raise InvalidArgument('invalid list')
             for result in value:
-                assert isinstance(result, UWSResult)
+                if not isinstance(result, UWSResult):
+                    raise InvalidArgument('invalid UWSResult')
                 self._results = copy.deepcopy(value)
 
     def toxml(self):
@@ -1243,13 +1287,16 @@ class UWSJob(object):
     def fromstring(cls, xml):
         root = ET.fromstring(xml)
         root_elem = root.xpath('/uws:job/uws:jobId', namespaces=UWSJob.NS)
-        assert root_elem
+        if not root_elem:
+            raise InvalidXML('uws:jobId does not exist')
         job_id = root_elem[0].text
         phase_elem = root.xpath('/uws:job/uws:phase', namespaces=UWSJob.NS)
-        assert phase_elem
+        if not phase_elem:
+            raise InvalidXML('uws:phase does not exist')
         phase = phase_elem[0].text
         destruction_elem = root.xpath('/uws:job/uws:destruction', namespaces=UWSJob.NS)
-        assert destruction_elem
+        if not destruction_elem:
+            raise InvalidXML('uws:phase does not exist')
         destruction = destruction_elem[0].text
         result_set = UWSResult.fromroot(root)
         job_info = None

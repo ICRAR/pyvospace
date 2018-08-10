@@ -7,6 +7,12 @@ class VOSpaceError(Exception):
         return self.error
 
 
+class InvalidXML(VOSpaceError):
+    def __init__(self, error):
+        error = f"Invalid URI. {error}"
+        super().__init__(400, error)
+
+
 class InvalidURI(VOSpaceError):
     def __init__(self, error):
         error = f"Invalid URI. {error}"
