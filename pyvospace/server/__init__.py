@@ -5,6 +5,7 @@ import asyncio
 FUZZ = False
 FUZZ01 = False
 FUZZ01_reached = False
+FUZZ02 = False
 
 
 async def fuzz(elapse=1):
@@ -35,5 +36,15 @@ def set_fuzz01(fuzz):
 async def wait_fuzz01(timer=0.01):
     while FUZZ01_reached is False:
         await asyncio.sleep(timer)
+
+
+async def busy_fuzz(elapse=1):
+    if FUZZ02:
+        await asyncio.sleep(elapse)
+
+
+def set_busy_fuzz(fuzz):
+    global FUZZ02
+    FUZZ02 = fuzz
 
 ###########################################################################################

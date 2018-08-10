@@ -15,7 +15,8 @@ async def get_properties_request(request):
     if identity is None:
         raise PermissionDenied(f'Credentials not found.')
     properties = request.app['abstract_space'].get_properties()
-    assert properties
+    if not properties:
+        raise InvalidArgument('properties empty')
     results = await request.app['db'].get_contains_properties()
     properties.contains = NodeDatabase._resultset_to_properties(results)
     return properties
@@ -120,23 +121,22 @@ async def sync_transfer_request(request):
         raise PermissionDenied(f'Credentials not found.')
     redirect_endpoint = False
     if request.query:
-        try:
-            target = request.query.get('TARGET')
-            direction = request.query.get('DIRECTION')
-            protocol_uri = request.query.get('PROTOCOL')
-            view_uri = request.query.get('VIEW')
-            security_uri = request.query.get('SECURITYMETHOD')
-            transfer = Transfer.create_transfer(target=target, direction=direction, keep_bytes=False)
-            protocol = Protocol.create_protocol(uri=protocol_uri, security_method_uri=security_uri)
-            transfer.set_protocols([protocol])
-            if view_uri:
-                transfer.view = View(view_uri)
-            if isinstance(transfer, PullFromSpace):
-                redirect_request = request.query.get('REQUEST')
-                assert redirect_request == 'redirect', 'REQUEST must be set to request'
-                redirect_endpoint = True
-        except AssertionError as g:
-            raise InvalidArgument(str(g))
+        target = request.query.get('TARGET')
+        direction = request.query.get('DIRECTION')
+        protocol_uri = request.query.get('PROTOCOL')
+        view_uri = request.query.get('VIEW')
+        security_uri = request.query.get('SECURITYMETHOD')
+        transfer = Transfer.create_transfer(target=target, direction=direction, keep_bytes=False)
+        protocol = Protocol.create_protocol(uri=protocol_uri, security_method_uri=security_uri)
+        transfer.set_protocols([protocol])
+        if view_uri:
+            transfer.view = View(view_uri)
+        if isinstance(transfer, PullFromSpace):
+            redirect_request = request.query.get('REQUEST')
+            if redirect_request != 'redirect':
+                raise InvalidArgument('REQUEST must be set to request')
+            redirect_endpoint = True
+
     else:
         job_xml = await request.text()
         if not job_xml:
