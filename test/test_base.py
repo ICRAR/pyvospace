@@ -41,7 +41,7 @@ class TestBase(unittest.TestCase):
                                'port': 8080,
                                'name': 'posix',
                                'uri': 'icrar.org',
-                               'dsn': 'postgres://test:test@localhost:5432/vos',
+                               'dsn': 'postgres://vos_user:vos_user@localhost:5435/vospace',
                                'parameters': '{}',
                                'secret_key': 'ZlmNyXdQgRhhrC2Wwy-gLZj7Wv6ZtoKH',
                                'domain': 'localhost'}
