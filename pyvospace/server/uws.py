@@ -371,18 +371,6 @@ class StorageUWSJobPool(UWSJobPool):
         job.owner = result['owner']
         return job
 
-    async def _set_storage_and_busy(self, path, conn):
-        await conn.fetchrow("update nodes set storage_id=$1, busy=True "
-                            "where space_id=$2 and path=$3",
-                            self.storage_id, self.space_id, path)
-
-    async def _set_not_busy(self, path):
-        async with self.db_pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.fetchrow("update nodes set busy=False "
-                                    "where space_id=$1 and path=$2",
-                                    self.space_id, path)
-
     async def _execute(self, job, func, *args):
         return await func(job, *args)
 
