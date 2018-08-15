@@ -1,0 +1,9 @@
+version: '3'
+
+services:
+  pyvospace-db:
+    build: .
+    image: pyvospace/pyvospace-db
+    container_name: pyvospace-db
+    ports:
+      - 5435:5432
