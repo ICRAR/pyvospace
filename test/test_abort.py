@@ -23,6 +23,8 @@ class TestAbort(TestBase):
         self.loop.run_until_complete(self.posix_site.start())
 
     async def _setup(self):
+        if not os.path.exists('/tmp/download'):
+            os.makedirs('/tmp/download')
         await self.create_file('/tmp/datafile.dat')
 
     def tearDown(self):

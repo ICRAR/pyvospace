@@ -17,7 +17,8 @@ setup(name='pyvospace',
                         'lxml',
                         'cchardet',
                         'aiodns',
-                        'aiojobs'],
+                        'aiojobs',
+                        'requests'],
       entry_points={'console_scripts': [
           'posix_space = pyvospace.server.spaces.posix.space.__main__:main',
           'posix_storage = pyvospace.server.spaces.posix.storage.__main__:main']
