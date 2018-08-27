@@ -34,7 +34,7 @@ def main(args=None):
 
     loop = asyncio.get_event_loop()
     app = loop.run_until_complete(PosixSpaceServer.create(cfg_file))
-    web.run_app(app, port=port, ssl_context=context)
+    web.run_app(app, host='localhost', port=port, ssl_context=context)
 
 
 if __name__ == "__main__":

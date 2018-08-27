@@ -6,6 +6,7 @@ import aiofiles
 import shutil
 import tarfile
 
+from pathlib import Path
 from aiofiles.os import stat
 from aiohttp import web
 from contextlib import suppress
@@ -98,6 +99,25 @@ async def rmtree(path):
 async def exists(path):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, os.path.exists, path)
+
+
+async def statvfs(path):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, os.statvfs, path)
+
+
+async def lstat(path):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, os.lstat, path)
+
+
+def sync_touch(path):
+    Path(path).touch()
+
+
+async def touch(path):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, sync_touch, path)
 
 
 async def send_file(request, file_name, file_path):

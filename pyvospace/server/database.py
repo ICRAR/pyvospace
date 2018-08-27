@@ -130,20 +130,30 @@ class NodeDatabase(object):
         return None, None
 
     async def directory(self, path, conn, identity=None):
-        path_tree = NodeDatabase.path_to_ltree(path)
+        path = os.path.normpath(path)
+        if not any(path in s for s in ['/', '//']):
+            path_tree = NodeDatabase.path_to_ltree(path)
+            results = await conn.fetch("select * from nodes where path <@ $1 and "
+                                       "nlevel(path)-nlevel($1)<=1 and space_id=$2 "
+                                       "order by path asc",
+                                       path_tree, self.space_id)
+            if len(results) == 0:
+                raise NodeDoesNotExistError(f"{path} not found.")
 
-        results = await conn.fetch("select * from nodes where path <@ $1 and "
-                                   "nlevel(path)-nlevel($1)<=1 and space_id=$2 "
-                                   "order by path asc",
-                                   path_tree, self.space_id)
-        if len(results) == 0:
-            raise NodeDoesNotExistError(f"{path} not found.")
+            properties = await conn.fetch("select * from properties "
+                                          "where node_path=$1 and space_id=$2",
+                                          results[0]['path'], self.space_id)
 
-        properties = await conn.fetch("select * from properties "
-                                      "where node_path=$1 and space_id=$2",
-                                      results[0]['path'], self.space_id)
+            node = self._resultset_to_node(results, properties)
 
-        node = self._resultset_to_node(results, properties)
+        else:
+            results = await conn.fetch("select * from nodes where nlevel(path) = 1 "
+                                       "and space_id=$1 order by path asc",
+                                       self.space_id)
+            node = ContainerNode('/', group_read=[identity])
+            for result in results:
+                node.insert_node_into_tree(NodeDatabase._create_node(result))
+
         if not await self.permission.permits(identity, 'getNode', context=node):
             raise PermissionDenied('getNode denied.')
         return node
@@ -175,7 +185,9 @@ class NodeDatabase(object):
                 if parent_row['type'] != NodeType.ContainerNode:
                     raise ContainerDoesNotExistError(f"{parent_row['name']} is not a container.")
 
-            parent_node = NodeDatabase._resultset_to_node([parent_row], [])
+                parent_node = NodeDatabase._resultset_to_node([parent_row], [])
+            else:
+                parent_node = ContainerNode('/', group_read=[identity])
             if not await self.permission.permits(identity, 'createNode', context=(parent_node, node)):
                 raise PermissionDenied('createNode denied.')
 
@@ -185,7 +197,7 @@ class NodeDatabase(object):
                                 node.node_type, node_name, path_tree, identity,
                                 node.group_read, node.group_write, self.space_id, target)
             node_properties = []
-            for prop in node.properties:
+            for prop in node.properties.values():
                 if prop.persist:
                     node_properties.append(prop.tolist()+[path_tree, self.space_id])
 
@@ -226,7 +238,7 @@ class NodeDatabase(object):
 
         node_properties = []
         for node in nodes:
-            for prop in node.properties:
+            for prop in node.properties.values():
                 prop_list = prop.tolist() + [NodeDatabase.path_to_ltree(node.path), self.space_id]
                 node_properties.append(prop_list)
 
@@ -256,7 +268,7 @@ class NodeDatabase(object):
         pass_through_properties = []
         node_props_delete = []
         node_props_insert = []
-        for prop in node.properties:
+        for prop in node.properties.values():
             if isinstance(prop, DeleteProperty):
                 node_props_delete.append(prop.uri)
             else:

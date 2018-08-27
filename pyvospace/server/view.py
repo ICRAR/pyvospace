@@ -27,6 +27,7 @@ async def get_node_request(request):
     if identity is None:
         raise PermissionDenied(f'Credentials not found.')
     path = request.path.replace('/vospace/nodes', '')
+    node_path = Node(path)
     detail = request.query.get('detail', 'max')
     if detail:
         if detail not in ['min', 'max', 'properties']:
@@ -42,7 +43,7 @@ async def get_node_request(request):
 
     async with request.app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            node = await request.app['db'].directory(path, conn, identity)
+            node = await request.app['db'].directory(node_path.path, conn, identity)
 
     if detail == 'min':
         node.remove_properties()

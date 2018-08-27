@@ -12,9 +12,9 @@ from pyvospace.core.model import Views, View, Protocols, \
     Node, NodeTextLookup, NodeType, Properties, Property, Protocol,\
     PushToSpace, PullFromSpace, HTTPGet, HTTPSGet, HTTPPut, HTTPSPut, Endpoint, SecurityMethod
 
-from pyvospace.server.spaces.posix.utils import move, copy, mkdir, remove, rmtree, exists
+from pyvospace.server.spaces.posix.utils import move, copy, mkdir, remove, rmtree, exists, touch
 from pyvospace.server.spaces.posix.auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
-from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
+from pyvospace.core.exception import VOSpaceError
 
 
 ACCEPTS_VIEWS = {
@@ -70,7 +70,7 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
         self.authentication = DBUserAuthentication(self['space_name'], self['db_pool'])
         setup_security(self,
                        SessionIdentityPolicy(),
-                       DBUserNodeAuthorizationPolicy(self['space_name'], self['db_pool']))
+                       DBUserNodeAuthorizationPolicy(self['space_name'], self['db_pool'], self.root_dir))
 
         self.router.add_route('POST', '/login', self.authentication.login, name='login')
         self.router.add_route('POST', '/logout', self.authentication.logout, name='logout')
@@ -129,6 +129,8 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
             await remove(m_path)
         if node.node_type == NodeType.ContainerNode:
             await mkdir(m_path)
+        else:
+            await touch(m_path)
 
     async def delete_storage_node(self, node):
         m_path = f"{self.root_dir}/{node.path}"

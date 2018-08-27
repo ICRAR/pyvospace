@@ -55,6 +55,8 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
+            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
 
             orig_node = ContainerNode('/root1/test2',
                                       properties=properties,
@@ -68,6 +70,8 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
+            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
             orig_node = ContainerNode('/root2')
             self.assertEqual(node, orig_node)
 
@@ -85,6 +89,8 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
+            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
             moved_node = ContainerNode('/root2/test2',
                                        properties=properties,
                                        nodes=[ContainerNode('/root2/test2/test3'),
@@ -97,6 +103,8 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
+            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
             orig_node = ContainerNode('/root1')
             self.assertEqual(node, orig_node)
 
@@ -240,6 +248,8 @@ class TestCopyMove(TestBase):
             orig_node = ContainerNode('/root3/test1',
                                       properties=properties,
                                       nodes=[Node('/root3/test1/test2')])
+            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
             self.assertEqual(node, orig_node)
 
         self.loop.run_until_complete(run())
