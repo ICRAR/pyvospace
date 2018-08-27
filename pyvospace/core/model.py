@@ -413,8 +413,8 @@ class Node(object):
         self.name = os.path.basename(self._path)
         self.dirname = os.path.dirname(self._path)
         self.node_type_text = node_type
-        self._properties = []
-        self.set_properties(properties, True)
+        self._properties = {}
+        self.set_properties(properties)
         self.capabilities = capabilities
 
         self.owner = owner
@@ -438,9 +438,10 @@ class Node(object):
     def __eq__(self, other):
         if not isinstance(other, Node):
             return False
-        return self.path == other.path and \
-               self.node_type_text == other.node_type_text and \
-               self._properties == other._properties
+        ret = self.path == other.path and \
+              self.node_type_text == other.node_type_text and \
+              self.properties == other.properties
+        return ret
 
     @classmethod
     def walk(cls, node):
@@ -503,10 +504,18 @@ class Node(object):
 
     @classmethod
     def uri_to_path(cls, uri):
-        uri_parsed = urlparse(uri)
+        if not uri:
+            raise InvalidURI("URI does not exist.")
+        uri_new = uri
+        if uri.startswith('/'):
+            if uri == '/' or uri == '//':
+                return '/'
+            uri_new = uri.lstrip('/')
+        uri_parsed = urlparse(uri_new)
         if not uri_parsed.path:
             raise InvalidURI("URI does not exist.")
-        return os.path.normpath(uri_parsed.path).lstrip('/').rstrip('/')
+        new_path = os.path.normpath(uri_parsed.path).lstrip('/').rstrip('/')
+        return f"/{new_path}"
 
     @property
     def path(self):
@@ -535,12 +544,7 @@ class Node(object):
                 prop = Property(prop_uri, prop_text, prop_ro)
             else:
                 prop = DeleteProperty(prop_uri)
-            self._properties.append(prop)
-
-        self.sort_properties()
-
-    def sort_properties(self):
-        self._properties.sort(key=lambda x: x.uri)
+            self._properties[prop.uri] = prop
 
     @classmethod
     def create_node(cls, node_uri, node_type, node_busy=False):
@@ -578,9 +582,9 @@ class Node(object):
         return self._properties
 
     def remove_properties(self):
-        self._properties = []
+        self._properties = {}
 
-    def set_properties(self, property_list, sort=False):
+    def set_properties(self, property_list):
         if not property_list:
             return
         if not isinstance(property_list, list):
@@ -588,16 +592,15 @@ class Node(object):
         for prop in property_list:
             if not isinstance(prop, Property):
                 raise InvalidArgument('invalid Property')
-        self._properties = copy.deepcopy(property_list)
-        if sort:
-            self.sort_properties()
+            self._properties[prop.uri] = copy.deepcopy(prop)
 
-    def add_property(self, value, sort=False):
+    def add_property(self, value):
         if not isinstance(value, Property):
             raise InvalidArgument('invalid Property')
-        self._properties.append(value)
-        if sort:
-            self.sort_properties()
+        self._properties[value.uri] = copy.deepcopy(value)
+
+    def remove_property(self, uri_key):
+        return self._properties.pop(uri_key)
 
     def to_uri(self):
         return f"vos://{Node.SPACE}!vospace/{self.path}"
@@ -613,7 +616,7 @@ class Node(object):
 
         if self._properties:
             properties = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}properties")
-            for prop in self._properties:
+            for prop in self._properties.values():
                 property_element = ET.SubElement(properties, "{http://www.ivoa.net/xml/VOSpace/v2.1}property")
                 property_element.set('uri', prop.uri)
                 property_element.set('readOnly', str(prop.read_only).lower())
@@ -770,7 +773,7 @@ class ContainerNode(DataNode):
         self.nodes = nodes
 
     def __eq__(self, other):
-        if not isinstance(other, DataNode):
+        if not isinstance(other, ContainerNode):
             return False
         return super().__eq__(other) and self._nodes == other._nodes
 
