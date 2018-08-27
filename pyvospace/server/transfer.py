@@ -6,7 +6,7 @@ from contextlib import suppress
 
 from pyvospace.core.exception import VOSpaceError, NodeDoesNotExistError, PermissionDenied, InvalidArgument
 from pyvospace.core.model import UWSPhase, UWSResult, NodeTransfer, ProtocolTransfer, PushToSpace, \
-    NodeType, DataNode
+    NodeType, DataNode, ContainerNode
 from pyvospace.server import fuzz
 from .database import NodeDatabase
 
@@ -123,44 +123,63 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
     space_id = app['space_id']
     try:
         target_path_tree = NodeDatabase.path_to_ltree(target_path)
-        destination_path_tree = NodeDatabase.path_to_ltree(direction_path)
+        # check if destination is the root of the filesystem which in not technically a node
+        if not any(direction_path in s for s in ['/', '//']):
+            destination_path_tree = NodeDatabase.path_to_ltree(direction_path)
+        else:
+            destination_path_tree = ''
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
-                results = await conn.fetch("select *, path = subltree($2, 0, nlevel(path)) as common "
-                                           "from nodes where path <@ $1 or path <@ $2 and space_id=$3 "
-                                           "order by path asc for update",
-                                           target_path_tree, destination_path_tree, space_id)
                 target_record = None
                 dest_record = None
-                target_tree = []
-                dest_tree = []
-                for result in results:
-                    if result['path'] == target_path_tree:
-                        target_record = result
-                    if result['path'] == destination_path_tree:
-                        dest_record = result
-                    if result['path'].startswith(target_path_tree):
-                        target_tree.append(result)
-                    if result['path'].startswith(destination_path_tree):
-                        dest_tree.append(result)
 
-                if target_record is None:
-                    raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
+                if destination_path_tree:
+                    results = await conn.fetch("select *, path = subltree($2, 0, nlevel(path)) as common "
+                                               "from nodes where path <@ $1 or path <@ $2 and space_id=$3 "
+                                               "order by path asc for update",
+                                               target_path_tree, destination_path_tree, space_id)
+                    for result in results:
+                        if result['path'] == target_path_tree:
+                            target_record = result
+                            continue
+                        if result['path'] == destination_path_tree:
+                            dest_record = result
+                            continue
+                        if target_record and dest_record:
+                            break
 
-                if dest_record is None:
-                    raise VOSpaceError(404, f"Node Not Found. {direction_path} not found.")
+                    if target_record is None:
+                        raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
 
-                if dest_record['type'] != NodeType.ContainerNode:
-                    raise VOSpaceError(400, f"Duplicate Node. {direction_path} already exists "
-                                            f"and is not a container.")
+                    if dest_record is None:
+                        raise VOSpaceError(404, f"Node Not Found. {direction_path} not found.")
 
-                if target_record['common'] is True and target_record['type'] == NodeType.ContainerNode:
-                    raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
-                                            f"is invalid.")
-                # offer the storage the full node tree
-                src = NodeDatabase.resultset_to_node_tree(target_tree, [])
-                dest = NodeDatabase.resultset_to_node_tree(dest_tree, [])
+                    if dest_record['type'] != NodeType.ContainerNode:
+                        raise VOSpaceError(400, f"Duplicate Node. {direction_path} already exists "
+                                                f"and is not a container.")
+
+                    if target_record['common'] is True and target_record['type'] == NodeType.ContainerNode:
+                        raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
+                                                f"is invalid.")
+
+                    dest = NodeDatabase.resultset_to_node_tree([dest_record], [])
+                else:
+                    results = await conn.fetch("select * from nodes where path <@ $1 and space_id=$2 "
+                                               "order by path asc for update",
+                                               target_path_tree, space_id)
+                    for result in results:
+                        if result['path'] == target_path_tree:
+                            target_record = result
+                            break
+
+                    if target_record is None:
+                        raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
+
+                    dest = ContainerNode('/', group_read=[identity])
+
+                src = NodeDatabase.resultset_to_node_tree([target_record], [])
+
                 if perform_copy:
                     if not await app.permits(identity, 'copyNode', context=(src, dest)):
                         raise PermissionDenied('copyNode denied.')

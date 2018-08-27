@@ -56,7 +56,7 @@ class PosixStorageServer(HTTPSpaceStorageServer):
 
         setup_security(self,
                        SessionIdentityPolicy(),
-                       DBUserNodeAuthorizationPolicy(self.name, self.db_pool))
+                       DBUserNodeAuthorizationPolicy(self.name, self.db_pool, self.root_dir))
 
     @classmethod
     async def create(cls, cfg_file, *args, **kwargs):

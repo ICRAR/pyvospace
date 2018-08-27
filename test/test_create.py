@@ -34,7 +34,7 @@ class TestCreate(TestBase):
         self.assertEqual(len(nodes), 2)
 
         # check root
-        root1 = ContainerNode('///')
+        root1 = ContainerNode('/')
         root1.insert_node_into_tree(ContainerNode('///root1'))
         nodes = [n for n in Node.walk(root1)]
         self.assertEqual(len(nodes), 2)
@@ -111,7 +111,8 @@ class TestCreate(TestBase):
 
             params = {'detail': 'max'}
             node = await self.get_node('test1', params)
-
+            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
             prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle", False)]
             orig_node = ContainerNode('/test1', properties=prop)
             self.assertEqual(node, orig_node)
@@ -171,6 +172,10 @@ class TestCreate(TestBase):
             self.assertGreater(len(data_node.provides), 0)
             self.assertGreater(len(data_node.accepts), 0)
 
+            # Test failure cases of getNode
+            params = {'detail': 'max'}
+            await self.get_node('/', params, expected_status=200)
+
             # Duplicate Node
             await self.create_node(node1, expected_status=409)
 
@@ -184,10 +189,6 @@ class TestCreate(TestBase):
             # Check that Link Node is in Path
             node3 = Node('/test1/test2/test3/test4')
             await self.create_node(node3, expected_status=400)
-
-            # Test failure cases of getNode
-            params = {'detail': 'max'}
-            await self.get_node('', params, expected_status=400)
 
             # Node not found
             params = {'detail': 'max'}
@@ -211,7 +212,8 @@ class TestCreate(TestBase):
             # Should be in alphabetical order
             params = {'detail': 'max', 'limit': 1}
             node = await self.get_node('test1', params)
-
+            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
             cmp_node = ContainerNode('/test1',
                                      properties=properties,
                                      nodes=[Node('/test1/data')])

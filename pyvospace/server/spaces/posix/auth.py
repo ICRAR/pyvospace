@@ -1,9 +1,12 @@
+import json
+
 from aiohttp import helpers, web
 from aiohttp_security.abc import AbstractAuthorizationPolicy
-from aiohttp_security import remember, forget, authorized_userid, permits
+from aiohttp_security import remember, forget
 from passlib.hash import pbkdf2_sha256
 
-from pyvospace.core.model import PushToSpace
+from pyvospace.core.model import PushToSpace, Property
+from .utils import statvfs, lstat
 
 
 PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
@@ -34,10 +37,11 @@ PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
 
 class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
 
-    def __init__(self, space_name, db_pool):
+    def __init__(self, space_name, db_pool, root_dir):
         super().__init__()
         self.space_name = space_name
         self.db_pool = db_pool
+        self.root_dir = root_dir
 
     def _any_value_in_lists(self, a, b):
         return any(i in a for i in b)
@@ -68,14 +72,14 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
         if permission == 'createNode':
             parent = context[0]
             node = context[1]
-            modify_properties = self._any_property_in_protected(node.properties)
+            modify_properties = self._any_property_in_protected(node.properties.values())
             # User trying to create a protected property
             if modify_properties is True:
                 return False
             # allow root node creation
-            if parent is None:
+            if parent.path == '/':
                 return True
-            if parent is not None:
+            else:
                 # check if the parent container is owned by the user
                 if parent.owner == identity:
                     return True
@@ -85,7 +89,7 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
 
         elif permission == 'setNode':
             node = context
-            modify_properties = self._any_property_in_protected(context.properties)
+            modify_properties = self._any_property_in_protected(context.properties.values())
             # User trying to update a protected property
             if modify_properties is True:
                 return False
@@ -95,7 +99,31 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
 
         elif permission == 'getNode':
             node = context
+            real_path = f"{self.root_dir}/{node.path}"
+            try:
+                struct_lstat = await lstat(real_path)
+                struct_statvfs = await statvfs(real_path)
+                struct_lstat_dict = dict((key, getattr(struct_lstat, key)) for key in ('st_atime', 'st_ctime',
+                                                                                       'st_gid', 'st_mode',
+                                                                                       'st_mtime', 'st_nlink',
+                                                                                       'st_size', 'st_uid'))
+
+                struct_statvfs_dict = dict((key, getattr(struct_statvfs, key)) for key in ('f_bavail', 'f_bfree',
+                                                                                           'f_blocks', 'f_bsize',
+                                                                                           'f_favail', 'f_ffree',
+                                                                                           'f_files', 'f_flag',
+                                                                                           'f_frsize', 'f_namemax'))
+
+                prop_getattr = Property('ivo://icrar.org/vospace/core#getattr', json.dumps(struct_lstat_dict))
+                prop_statfs = Property('ivo://icrar.org/vospace/core#statfs', json.dumps(struct_statvfs_dict))
+                node.add_property(prop_getattr)
+                node.add_property(prop_statfs)
+            except FileNotFoundError:
+                pass
+
             if node.owner == identity:
+                return True
+            if node.path == '/':
                 return True
             return self._any_value_in_lists(node.group_write, user['groupwrite']) or \
                    self._any_value_in_lists(node.group_read, user['groupread'])
@@ -103,6 +131,8 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
         elif permission in ('moveNode', 'copyNode'):
             src = context[0]
             dest = context[1]
+            if dest.path == '/':
+                return True
             if src.owner == identity and dest.owner == identity:
                 return True
             if self._any_value_in_lists(src.group_write, user['groupwrite']) and \

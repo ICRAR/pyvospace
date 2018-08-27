@@ -149,28 +149,6 @@ class TestPushPull(TestBase):
 
         self.loop.run_until_complete(run())
 
-    def test_push_to_space_sync_failed(self):
-        async def run():
-            node = Node('/syncdatanode')
-            push = PushToSpace(node, [HTTPPut()])
-            transfer = await self.sync_transfer_node(push)
-            put_end = transfer.protocols[0].endpoint.url
-
-            try:
-                await asyncio.wait_for(self.push_to_space(put_end,
-                                                          '/tmp/datafile.dat',
-                                                          expected_status=200), 0.1)
-            except Exception as e:
-                pass
-
-            node = Node('/syncdatanode')
-            push = PullFromSpace(node, [HTTPGet()])
-            transfer = await self.sync_transfer_node(push)
-            end_get = transfer.protocols[0].endpoint.url
-            await self.pull_from_space(end_get, '/tmp/download/', expected_status=(500, 400))
-
-        self.loop.run_until_complete(run())
-
     def test_push_to_space_async(self):
         async def run():
             node1 = ContainerNode('/datanode')
