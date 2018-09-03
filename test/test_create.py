@@ -111,7 +111,10 @@ class TestCreate(TestBase):
 
             params = {'detail': 'max'}
             node = await self.get_node('test1', params)
-            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
             node.remove_property('ivo://icrar.org/vospace/core#statfs')
             prop = [Property('ivo://ivoa.net/vospace/core#title', "NewTitle", False)]
             orig_node = ContainerNode('/test1', properties=prop)
@@ -212,7 +215,10 @@ class TestCreate(TestBase):
             # Should be in alphabetical order
             params = {'detail': 'max', 'limit': 1}
             node = await self.get_node('test1', params)
-            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
             node.remove_property('ivo://icrar.org/vospace/core#statfs')
             cmp_node = ContainerNode('/test1',
                                      properties=properties,

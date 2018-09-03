@@ -1,3 +1,4 @@
+import os
 import json
 
 from aiohttp import helpers, web
@@ -66,9 +67,6 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
             if not user:
                 raise web.HTTPForbidden(f"{identity} not found.")
 
-        if user['admin'] is True:
-            return True
-
         if permission == 'createNode':
             parent = context[0]
             node = context[1]
@@ -77,14 +75,12 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
             if modify_properties is True:
                 return False
             # allow root node creation
-            if parent.path == '/':
+            if parent.path == '/' and user['admin']:
                 return True
             else:
                 # check if the parent container is owned by the user
                 if parent.owner == identity:
                     return True
-                if not parent.group_write:
-                    return False
                 return self._any_value_in_lists(parent.group_write, user['groupwrite'])
 
         elif permission == 'setNode':
@@ -99,39 +95,39 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
 
         elif permission == 'getNode':
             node = context
-            real_path = f"{self.root_dir}/{node.path}"
-            try:
-                struct_lstat = await lstat(real_path)
-                struct_statvfs = await statvfs(real_path)
-                struct_lstat_dict = dict((key, getattr(struct_lstat, key)) for key in ('st_atime', 'st_ctime',
-                                                                                       'st_gid', 'st_mode',
-                                                                                       'st_mtime', 'st_nlink',
-                                                                                       'st_size', 'st_uid'))
+            real_path = os.path.normpath(f"{self.root_dir}/{node.path}")
 
-                struct_statvfs_dict = dict((key, getattr(struct_statvfs, key)) for key in ('f_bavail', 'f_bfree',
-                                                                                           'f_blocks', 'f_bsize',
-                                                                                           'f_favail', 'f_ffree',
-                                                                                           'f_files', 'f_flag',
-                                                                                           'f_frsize', 'f_namemax'))
+            struct_lstat = await lstat(real_path)
+            struct_statvfs = await statvfs(real_path)
 
-                prop_getattr = Property('ivo://icrar.org/vospace/core#getattr', json.dumps(struct_lstat_dict))
-                prop_statfs = Property('ivo://icrar.org/vospace/core#statfs', json.dumps(struct_statvfs_dict))
-                node.add_property(prop_getattr)
-                node.add_property(prop_statfs)
-            except FileNotFoundError:
-                pass
 
-            if node.owner == identity:
-                return True
-            if node.path == '/':
-                return True
-            return self._any_value_in_lists(node.group_write, user['groupwrite']) or \
-                   self._any_value_in_lists(node.group_read, user['groupread'])
+            '''struct_lstat_dict = dict((key, getattr(struct_lstat, key)) for key in ('st_atime', 'st_ctime',
+                                                                                   'st_gid', 'st_mode',
+                                                                                   'st_mtime', 'st_nlink',
+                                                                                   'st_size', 'st_uid'))'''
+
+            struct_statvfs_dict = dict((key, getattr(struct_statvfs, key)) for key in ('f_bavail', 'f_bfree',
+                                                                                       'f_blocks', 'f_bsize',
+                                                                                       'f_favail', 'f_ffree',
+                                                                                       'f_files', 'f_flag',
+                                                                                       'f_frsize', 'f_namemax'))
+
+            prop_length = Property('ivo://ivoa.net/vospace/core#length', struct_lstat.st_size)
+            prop_btime = Property('ivo://ivoa.net/vospace/core#btime', struct_lstat.st_mtime)
+            prop_ctime = Property('ivo://ivoa.net/vospace/core#ctime', struct_lstat.st_ctime)
+            prop_mtime = Property('ivo://ivoa.net/vospace/core#mtime', struct_lstat.st_mtime)
+            prop_statfs = Property('ivo://icrar.org/vospace/core#statfs', json.dumps(struct_statvfs_dict))
+            node.add_property(prop_length)
+            node.add_property(prop_btime)
+            node.add_property(prop_ctime)
+            node.add_property(prop_mtime)
+            node.add_property(prop_statfs)
+            return True
 
         elif permission in ('moveNode', 'copyNode'):
             src = context[0]
             dest = context[1]
-            if dest.path == '/':
+            if dest.path == '/' and user['admin']:
                 return True
             if src.owner == identity and dest.owner == identity:
                 return True
