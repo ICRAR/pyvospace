@@ -407,12 +407,13 @@ class Node(object):
 
     SPACE = 'icrar.org'
 
-    def __init__(self, path, properties=None, capabilities=None, node_type='vos:Node',
+    def __init__(self, path, properties=None, capabilities=None,
                  owner=None, group_read=None, group_write=None, id=None):
+
         self._path = Node.uri_to_path(path)
         self.name = os.path.basename(self._path)
         self.dirname = os.path.dirname(self._path)
-        self.node_type_text = node_type
+
         self._properties = {}
         self.set_properties(properties)
         self.capabilities = capabilities
@@ -438,10 +439,7 @@ class Node(object):
     def __eq__(self, other):
         if not isinstance(other, Node):
             return False
-        ret = self.path == other.path and \
-              self.node_type_text == other.node_type_text and \
-              self.properties == other.properties
-        return ret
+        return self.path == other.path and self.properties == other.properties
 
     @classmethod
     def walk(cls, node):
@@ -514,7 +512,7 @@ class Node(object):
         uri_parsed = urlparse(uri_new)
         if not uri_parsed.path:
             raise InvalidURI("URI does not exist.")
-        new_path = os.path.normpath(uri_parsed.path).lstrip('/').rstrip('/')
+        new_path = os.path.normpath(uri_parsed.path).lstrip('/')
         return f"/{new_path}"
 
     @property
@@ -524,6 +522,9 @@ class Node(object):
     @property
     def node_type(self):
         return NodeType.Node
+
+    def node_type_text(self):
+        return 'vos:Node'
 
     def build_node(self, root):
         for node_property in root.xpath('/vos:node/vos:properties/vos:property', namespaces=Node.NS):
@@ -611,7 +612,7 @@ class Node(object):
 
     def toxml(self):
         root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}node", nsmap=Node.NS)
-        root.set("{http://www.w3.org/2001/XMLSchema-instance}type", self.node_type_text)
+        root.set("{http://www.w3.org/2001/XMLSchema-instance}type", self.node_type_text())
         root.set("uri", self.to_uri())
 
         if self._properties:
@@ -620,7 +621,7 @@ class Node(object):
                 property_element = ET.SubElement(properties, "{http://www.ivoa.net/xml/VOSpace/v2.1}property")
                 property_element.set('uri', prop.uri)
                 property_element.set('readOnly', str(prop.read_only).lower())
-                property_element.text = prop.value
+                property_element.text = str(prop.value)
                 if isinstance(prop, DeleteProperty):
                     property_element.set('{http://www.w3.org/2001/XMLSchema-instance}nil', 'true')
         return root
@@ -629,7 +630,7 @@ class Node(object):
 class LinkNode(Node):
     def __init__(self, path, uri_target, properties=None, capabilities=None,
                  owner=None, group_read=None, group_write=None, id=None):
-        super().__init__(path=path, properties=properties, capabilities=capabilities, node_type='vos:LinkNode',
+        super().__init__(path=path, properties=properties, capabilities=capabilities,
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
         self.node_uri_target = uri_target
 
@@ -640,6 +641,9 @@ class LinkNode(Node):
     @property
     def node_type(self):
         return NodeType.LinkNode
+
+    def node_type_text(self):
+        return 'vos:LinkNode'
 
     def __eq__(self, other):
         if not isinstance(other, LinkNode):
@@ -667,9 +671,9 @@ class LinkNode(Node):
 
 class DataNode(Node):
     def __init__(self, path, properties=None, capabilities=None,
-                 accepts=None, provides=None, busy=False, node_type='vos:DataNode',
+                 accepts=None, provides=None, busy=False,
                  owner=None, group_read=None, group_write=None, id=None):
-        super().__init__(path=path, properties=properties, capabilities=capabilities, node_type=node_type,
+        super().__init__(path=path, properties=properties, capabilities=capabilities,
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
         self._accepts = []
         self.accepts = accepts
@@ -685,6 +689,9 @@ class DataNode(Node):
     @property
     def node_type(self):
         return NodeType.DataNode
+
+    def node_type_text(self):
+        return 'vos:DataNode'
 
     def build_node(self, root):
         super().build_node(root)
@@ -767,7 +774,7 @@ class ContainerNode(DataNode):
                  accepts=None, provides=None, busy=False, owner=None,
                  group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
-                         accepts=accepts, provides=provides, busy=busy, node_type='vos:ContainerNode',
+                         accepts=accepts, provides=provides, busy=busy,
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
         self._nodes = OrderedDict()
         self.nodes = nodes
@@ -784,6 +791,9 @@ class ContainerNode(DataNode):
     @property
     def node_type(self):
         return NodeType.ContainerNode
+
+    def node_type_text(self):
+        return 'vos:ContainerNode'
 
     def build_node(self, root):
         super().build_node(root)
@@ -860,7 +870,7 @@ class ContainerNode(DataNode):
         for node in self.nodes:
             node_element = ET.SubElement(nodes_element, '{http://www.ivoa.net/xml/VOSpace/v2.1}node')
             node_element.set('uri', node.to_uri())
-            node_element.set("{http://www.w3.org/2001/XMLSchema-instance}type", node.node_type_text)
+            node_element.set("{http://www.w3.org/2001/XMLSchema-instance}type", node.node_type_text())
         return ET.tostring(root).decode("utf-8")
 
 
@@ -868,7 +878,7 @@ class UnstructuredDataNode(DataNode):
     def __init__(self, path, properties=None, capabilities=None, accepts=None, provides=None, busy=False,
                  owner=None, group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
-                         accepts=accepts, provides=provides, busy=busy, node_type='vos:UnstructuredDataNode',
+                         accepts=accepts, provides=provides, busy=busy,
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
 
     def __eq__(self, other):
@@ -880,6 +890,9 @@ class UnstructuredDataNode(DataNode):
     def node_type(self):
         return NodeType.UnstructuredDataNode
 
+    def node_type_text(self):
+        return 'vos:UnstructuredDataNode'
+
     def build_node(self, root):
         super().build_node(root)
 
@@ -889,7 +902,7 @@ class StructuredDataNode(DataNode):
                  accepts=None, provides=None, busy=False, owner=None,
                  group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
-                         accepts=accepts, provides=provides, busy=busy, node_type='vos:StructuredDataNode',
+                         accepts=accepts, provides=provides, busy=busy,
                          owner=owner, group_read=group_read, group_write=group_write, id=id)
 
     def __eq__(self, other):
@@ -900,6 +913,9 @@ class StructuredDataNode(DataNode):
     @property
     def node_type(self):
         return NodeType.StructuredDataNode
+
+    def node_type_text(self):
+        return 'vos:StructuredDataNode'
 
     def build_node(self, root):
         super().build_node(root)
@@ -928,9 +944,15 @@ class Transfer(object):
     def toxml(self):
         root = ET.Element("{http://www.ivoa.net/xml/VOSpace/v2.1}transfer", nsmap=Node.NS)
         target = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}target")
-        target.text = str(self.target)
+        if isinstance(self.target, ContainerNode):
+            target.text = f"{self.target.path}/"
+        else:
+            target.text = str(self.target)
         direction = ET.SubElement(root, "{http://www.ivoa.net/xml/VOSpace/v2.1}direction")
-        direction.text = str(self.direction)
+        if isinstance(self.direction, ContainerNode):
+            direction.text = f"{self.direction.path}/"
+        else:
+            direction.text = str(self.direction)
         return root
 
     def tomap(self):
@@ -942,18 +964,41 @@ class Transfer(object):
 
     @classmethod
     def create_transfer(cls, target, direction, keep_bytes):
+        if not target:
+            raise InvalidArgument('target is empty')
+        if not direction:
+            raise InvalidArgument('direction is empty')
+
         if direction == 'pushToVoSpace':
-            return PushToSpace(Node(target))
+            if target.endswith('/'):
+                node = ContainerNode(target)
+            else:
+                node = Node(target)
+            return PushToSpace(node)
         elif direction == 'pullFromVoSpace':
-            return PullFromSpace(Node(target))
+            if target.endswith('/'):
+                node = ContainerNode(target)
+            else:
+                node = Node(target)
+            return PullFromSpace(node)
         elif direction == 'pushFromVoSpace':
             raise NotImplementedError()
         elif direction == 'pullToVoSpace':
             raise NotImplementedError()
         else:
+            if target.endswith('/'):
+                tnode = ContainerNode(target)
+            else:
+                tnode = Node(target)
+
+            if direction.endswith('/'):
+                dnode = ContainerNode(direction)
+            else:
+                dnode = Node(direction)
+
             if keep_bytes:
-                return Copy(Node(target), Node(direction))
-            return Move(Node(target), Node(direction))
+                return Copy(tnode, dnode)
+            return Move(tnode, dnode)
 
     @classmethod
     def fromroot(cls, root):
