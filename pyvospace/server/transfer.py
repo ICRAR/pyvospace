@@ -6,7 +6,7 @@ from contextlib import suppress
 
 from pyvospace.core.exception import VOSpaceError, NodeDoesNotExistError, PermissionDenied, InvalidArgument
 from pyvospace.core.model import UWSPhase, UWSResult, NodeTransfer, ProtocolTransfer, PushToSpace, \
-    NodeType, DataNode, ContainerNode
+    NodeType, DataNode, ContainerNode, Node
 from pyvospace.server import fuzz
 from .database import NodeDatabase
 
@@ -92,10 +92,12 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
             assert isinstance(job.job_info, NodeTransfer) is True
             await app['executor'].set_executing(job.job_id)
 
+            target = job.job_info.target
+            direction = job.job_info.direction
             with suppress(asyncio.CancelledError):
                 await asyncio.shield(_move_nodes(app=app,
-                                                 target_path=job.job_info.target.path,
-                                                 direction_path=job.job_info.direction.path,
+                                                 target=target,
+                                                 direction=direction,
                                                  perform_copy=job.job_info.keep_bytes,
                                                  identity=identity))
 
@@ -119,69 +121,152 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
         raise VOSpaceError(500, str(e))
 
 
-async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
+async def _rename_file(app, target, direction, identity):
+    target_path = target.path
+    direction_path = direction.path
+    direction_path_parent = direction.dirname
+    space_id = app['space_id']
+
+    target_path_tree = NodeDatabase.path_to_ltree(target_path)
+    if not any(direction_path_parent in s for s in ['/', '//']):
+        direction_path_tree_parent = NodeDatabase.path_to_ltree(direction_path_parent)
+    else:
+        direction_path_tree_parent = ''
+
+    direction_path_tree = NodeDatabase.path_to_ltree(direction_path)
+
+    async with app['db_pool'].acquire() as conn:
+        async with conn.transaction():
+            target_record = None
+            dest_record = None
+
+            if direction_path_tree_parent:
+                results = await conn.fetch("select * from nodes where path=$1 or path<=$2 and space_id=$3 "
+                                           "order by path asc for update",
+                                           target_path_tree, direction_path_tree, space_id)
+                for result in results:
+                    if result['path'] == target_path_tree:
+                        target_record = result
+                    if result['path'] == direction_path_tree_parent:
+                        dest_record = result
+                    if target_record and dest_record:
+                        break
+
+                if target_record is None:
+                    raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
+
+                if target_record['type'] == NodeType.ContainerNode:
+                    raise VOSpaceError(400, f"Duplicate Node. {target_path} is a container.")
+
+                if dest_record is None:
+                    raise VOSpaceError(404, f"Node Not Found. {direction_path_parent} not found.")
+
+                if dest_record['type'] != NodeType.ContainerNode:
+                    raise VOSpaceError(400, f"Duplicate Node. {direction_path_parent} is not a container.")
+            else:
+                results = await conn.fetch("select * from nodes where path=$1 and space_id=$2 "
+                                           "order by path asc for update",
+                                           target_path_tree, space_id)
+                for result in results:
+                    if result['path'] == target_path_tree:
+                        target_record = result
+                        break
+
+                if target_record is None:
+                    raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
+
+                if target_record['type'] == NodeType.ContainerNode:
+                    raise VOSpaceError(400, f"Duplicate Node. {target_path} is a container.")
+
+            src = NodeDatabase.resultset_to_node_tree([target_record], [])
+            dest = copy.deepcopy(direction)
+            try:
+                await conn.execute("update nodes set name=$1, path=$2 where path=$3 and space_id=$4",
+                                   direction.name, direction_path_tree, target_path_tree, space_id)
+
+            except asyncpg.exceptions.UniqueViolationError as f:
+                raise VOSpaceError(409, f"Duplicate Node. {direction_path}")
+
+            await app['abstract_space'].move_storage_node(src, dest)
+
+
+async def _move_nodes(app, target, direction, perform_copy, identity):
+    target_path = target.path
+    direction_path = direction.path
+    direction_path_parent = direction.dirname
     space_id = app['space_id']
     try:
         target_path_tree = NodeDatabase.path_to_ltree(target_path)
-        # check if destination is the root of the filesystem which in not technically a node
-        if not any(direction_path in s for s in ['/', '//']):
-            destination_path_tree = NodeDatabase.path_to_ltree(direction_path)
+        direction_path_tree = NodeDatabase.path_to_ltree(direction_path)
+
+        if not any(direction_path_parent in s for s in ['/', '//']):
+            direction_path_parent_tree = NodeDatabase.path_to_ltree(direction_path_parent)
         else:
-            destination_path_tree = ''
+            direction_path_parent_tree = ''
 
         async with app['db_pool'].acquire() as conn:
             async with conn.transaction():
                 target_record = None
-                dest_record = None
+                direct_record = None
+                direct_parent_record = None
 
-                if destination_path_tree:
+                if direction_path_parent_tree:
+                    results = await conn.fetch("select *, path = subltree($2, 0, nlevel(path)) as common "
+                                               "from nodes where path <@ $1 or path <@ $3 and space_id=$4 "
+                                               "order by path asc for update",
+                                               target_path_tree, direction_path_tree,
+                                               direction_path_parent_tree, space_id)
+                    for result in results:
+                        if result['path'] == target_path_tree:
+                            target_record = result
+                        if result['path'] == direction_path_parent_tree:
+                            direct_parent_record = result
+                        if result['path'] == direction_path_tree:
+                            direct_record = result
+                        if target_record and direct_record:
+                            break
+                else:
                     results = await conn.fetch("select *, path = subltree($2, 0, nlevel(path)) as common "
                                                "from nodes where path <@ $1 or path <@ $2 and space_id=$3 "
                                                "order by path asc for update",
-                                               target_path_tree, destination_path_tree, space_id)
+                                               target_path_tree, direction_path_tree, space_id)
                     for result in results:
                         if result['path'] == target_path_tree:
                             target_record = result
-                            continue
-                        if result['path'] == destination_path_tree:
-                            dest_record = result
-                            continue
-                        if target_record and dest_record:
+                        if result['path'] == direction_path_tree:
+                            direct_record = result
+                        if target_record and direct_record:
                             break
 
-                    if target_record is None:
-                        raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
+                if target_record is None:
+                    raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
 
-                    if dest_record is None:
-                        raise VOSpaceError(404, f"Node Not Found. {direction_path} not found.")
+                target_type = target_record['type']
+                if target_type == NodeType.LinkNode:
+                    raise VOSpaceError(400, "Invalid URI. Target is a LinkNode")
 
-                    if dest_record['type'] != NodeType.ContainerNode:
-                        raise VOSpaceError(400, f"Duplicate Node. {direction_path} already exists "
-                                                f"and is not a container.")
+                if target_record['common'] is True and target_record['type'] == NodeType.ContainerNode:
+                    raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
+                                            f"is invalid.")
 
-                    if target_record['common'] is True and target_record['type'] == NodeType.ContainerNode:
-                        raise VOSpaceError(400, f"Invalid URI. Moving {target_path} -> {direction_path} "
-                                                f"is invalid.")
+                if direct_record:
+                    raise VOSpaceError(400, f"Duplicate Node. {direction_path}")
 
-                    dest = NodeDatabase.resultset_to_node_tree([dest_record], [])
-                else:
-                    results = await conn.fetch("select * from nodes where path <@ $1 and space_id=$2 "
-                                               "order by path asc for update",
-                                               target_path_tree, space_id)
-                    for result in results:
-                        if result['path'] == target_path_tree:
-                            target_record = result
-                            break
+                if direction_path_parent_tree and direct_parent_record is None:
+                    raise VOSpaceError(404, f"Node Not Found. Direction {direction_path_parent} not found.")
 
-                    if target_record is None:
-                        raise VOSpaceError(404, f"Node Not Found. {target_path} not found.")
-
-                    dest = ContainerNode('/', group_read=[identity])
+                if direction_path_parent_tree and direct_parent_record['type'] != NodeType.ContainerNode:
+                    raise VOSpaceError(400, f"Duplicate Node. Direction {direction_path_parent} not container.")
 
                 src = NodeDatabase.resultset_to_node_tree([target_record], [])
+                if direct_parent_record:
+                    dest_parent = NodeDatabase.resultset_to_node_tree([direct_parent_record], [])
+                else:
+                    dest_parent = ContainerNode('/')
+                dest = copy.deepcopy(direction)
 
                 if perform_copy:
-                    if not await app.permits(identity, 'copyNode', context=(src, dest)):
+                    if not await app.permits(identity, 'copyNode', context=(src, dest_parent)):
                         raise PermissionDenied('copyNode denied.')
 
                     prop_results = await conn.fetch("select properties.uri, properties.value, "
@@ -191,14 +276,14 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                                                     "nodes.path = properties.node_path and "
                                                     "nodes.space_id = properties.space_id "
                                                     "where nodes.path <@ $1 and nodes.space_id=$3",
-                                                    target_path_tree, destination_path_tree, space_id)
+                                                    target_path_tree, direction_path_parent_tree, space_id)
 
                     await conn.execute("insert into nodes(name, type, owner, groupread, groupwrite, "
                                        "space_id, link, path) "
                                        "(select name, type, owner, groupread, groupwrite, "
                                        "space_id, link, $2||subpath(path, nlevel($1)-1) as concat "
                                        "from nodes where path <@ $1 and space_id=$3)",
-                                       target_path_tree, destination_path_tree, space_id)
+                                       target_path_tree, direction_path_parent_tree, space_id)
 
                     user_props_insert = []
                     for prop in prop_results:
@@ -209,14 +294,22 @@ async def _move_nodes(app, target_path, direction_path, perform_copy, identity):
                                            user_props_insert)
 
                     await app['abstract_space'].copy_storage_node(src, dest)
-
                 else:
-                    if not await app.permits(identity, 'moveNode', context=(src, dest)):
+                    if not await app.permits(identity, 'moveNode', context=(src, dest_parent)):
                         raise PermissionDenied('moveNode denied.')
 
-                    await conn.execute("update nodes set path = $2 || subpath(path, nlevel($1)-1) "
-                                       "where path <@ $1 and space_id=$3",
-                                       target_path_tree, destination_path_tree, space_id)
+                    # Behave the same way as a linux mv command.
+                    # mv /test/test1 /test/test2 - rename test1 to test2
+                    # mv /test/test1 /test/dir/test1 - move file to /test/dir/
+                    # mv /test/test1 /test/dir/test2 - move file to /test/dir/ and rename to test2
+                    await conn.execute("update nodes set name = ("
+                                       "case when nlevel(subpath(path, nlevel($1)-1))=1 then $4 else name end), "
+                                       "path = $2||regexp_replace(subpath(path, nlevel($1)-1)::text, "
+                                       "subpath(subpath(path, nlevel($1)-1), 0, 1)::text||'*', "
+                                       "subpath($3, -1, 1)::text)::ltree "
+                                       "where path <@ $1 and space_id=$5",
+                                       target_path_tree, direction_path_parent_tree,
+                                       direction_path_tree, direction.name, space_id)
 
                     await app['abstract_space'].move_storage_node(src, dest)
 
