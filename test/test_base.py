@@ -62,7 +62,7 @@ class TestBase(unittest.TestCase):
                            reuse_address=True, reuse_port=True)
         self.loop.run_until_complete(site.start())
 
-        user = ['test', pbkdf2_sha256.hash('test'), [], [], 'posix', False]
+        user = ['test', pbkdf2_sha256.hash('test'), [], [], 'posix', True]
         self.loop.run_until_complete(self.create_user(self.app['db_pool'], *user))
         self.session = self.loop.run_until_complete(self._login('test', 'test'))
 

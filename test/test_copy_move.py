@@ -16,7 +16,7 @@ class TestCopyMove(TestBase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data2'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/data3'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/test1'))
-
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/newnode'))
         super().tearDown()
 
     def test_move_node(self):
@@ -55,7 +55,10 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
             node.remove_property('ivo://icrar.org/vospace/core#statfs')
 
             orig_node = ContainerNode('/root1/test2',
@@ -70,13 +73,16 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
             node.remove_property('ivo://icrar.org/vospace/core#statfs')
             orig_node = ContainerNode('/root2')
             self.assertEqual(node, orig_node)
 
             # Move tree from node1 to root2
-            mv = Move(node1, root2)
+            mv = Move(ContainerNode('/root1/test2'), ContainerNode('/root2/test2'))
             job = await self.transfer_node(mv)
 
             await self.change_job_state(job.job_id, 'PHASE=RUN')
@@ -89,7 +95,10 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
             node.remove_property('ivo://icrar.org/vospace/core#statfs')
             moved_node = ContainerNode('/root2/test2',
                                        properties=properties,
@@ -103,7 +112,10 @@ class TestCopyMove(TestBase):
             self.assertEqual(200, status, msg=response)
 
             node = Node.fromstring(response)
-            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
             node.remove_property('ivo://icrar.org/vospace/core#statfs')
             orig_node = ContainerNode('/root1')
             self.assertEqual(node, orig_node)
@@ -128,6 +140,31 @@ class TestCopyMove(TestBase):
             await self.change_job_state(job.job_id, 'PHASE=RUN')
             await self.poll_job(job.job_id, expected_status='ERROR')
             await self.get_error_summary(job.job_id, error_contains='Duplicate')
+
+        self.loop.run_until_complete(run())
+
+    def test_rename_node(self):
+        async def run():
+            node0 = Node('/data0')
+            await self.create_node(node0)
+
+            mv = Move(Node('/data0'), Node('/newnode'))
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='COMPLETED')
+
+            mv = Move(Node('/newnode'), Node('/newnode/newnode'))
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='ERROR')
+
+            node0 = ContainerNode('/data0')
+            await self.create_node(node0)
+
+            mv = Move(Node('/newnode'), Node('/data0/newnode'))
+            job = await self.transfer_node(mv)
+            await self.change_job_state(job.job_id, 'PHASE=RUN')
+            await self.poll_job(job.job_id, expected_status='COMPLETED')
 
         self.loop.run_until_complete(run())
 
@@ -157,7 +194,7 @@ class TestCopyMove(TestBase):
             await self.get_error_summary(job.job_id, "Node Not Found")
 
             # Destination node doesn't exist
-            mv = Move(Node('/data0'), Node('/doesnotexist'))
+            mv = Move(Node('/data0'), ContainerNode('/doesnotexist/data0'))
             job = await self.transfer_node(mv)
             await self.change_job_state(job.job_id, 'PHASE=RUN')
             await self.poll_job(job.job_id, expected_status='ERROR')
@@ -225,7 +262,7 @@ class TestCopyMove(TestBase):
             await self.create_node(node2)
 
             # Copy tree from node1 to root2
-            mv = Copy(node1, root2)
+            mv = Copy(ContainerNode('/root3/test1'), ContainerNode('/root4/test1'))
             job = await self.transfer_node(mv)
             await self.change_job_state(job.job_id, 'PHASE=RUN')
             await self.poll_job(job.job_id, expected_status='COMPLETED')
@@ -240,6 +277,11 @@ class TestCopyMove(TestBase):
             copy_node = ContainerNode('/root4/test1',
                                       properties=properties,
                                       nodes=[Node('/root4/test1/test2')])
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
+            node.remove_property('ivo://icrar.org/vospace/core#statfs')
             self.assertEqual(node, copy_node)
 
             # check original node is still there
@@ -248,7 +290,10 @@ class TestCopyMove(TestBase):
             orig_node = ContainerNode('/root3/test1',
                                       properties=properties,
                                       nodes=[Node('/root3/test1/test2')])
-            node.remove_property('ivo://icrar.org/vospace/core#getattr')
+            node.remove_property('ivo://ivoa.net/vospace/core#length')
+            node.remove_property('ivo://ivoa.net/vospace/core#btime')
+            node.remove_property('ivo://ivoa.net/vospace/core#ctime')
+            node.remove_property('ivo://ivoa.net/vospace/core#mtime')
             node.remove_property('ivo://icrar.org/vospace/core#statfs')
             self.assertEqual(node, orig_node)
 
