@@ -9,7 +9,7 @@ from abc import ABCMeta, abstractmethod
 from aiohttp_security.api import AUTZ_KEY
 from typing import List
 
-from pyvospace.core.exception import VOSpaceError, InvalidJobStateError
+from pyvospace.core.exception import VOSpaceError, InvalidJobStateError, InvalidArgument
 from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node
 
 from .view import get_node_request, delete_node_request, create_node_request, \
@@ -107,7 +107,8 @@ class SpaceServer(web.Application, SpacePermission):
         self.on_shutdown.append(self.shutdown)
 
     async def setup(self, abstract_space):
-        assert isinstance(abstract_space, AbstractSpace)
+        if not isinstance(abstract_space, AbstractSpace):
+            raise InvalidArgument("abstract_space is not an AbstractSpace")
         self['abstract_space'] = abstract_space
         self['space_host'] = self.config['Space']['host']
         self['space_port'] = int(self.config['Space']['port'])

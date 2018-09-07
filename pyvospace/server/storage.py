@@ -9,6 +9,7 @@ from aiohttp_security.api import AUTZ_KEY
 from abc import abstractmethod
 from aiojobs.aiohttp import create_scheduler, spawn
 
+from pyvospace.core.model import Storage
 from pyvospace.core.exception import VOSpaceError, PermissionDenied, NodeBusyError, InvalidJobError, \
     InvalidJobStateError, NodeDoesNotExistError
 from .auth import SpacePermission
@@ -28,10 +29,10 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         self.port = self.config.getint('Storage', 'port')
         self.parameters = json.loads(self.config.get('Storage', 'parameters'))
         self.space_id = None
-        self.storage_id = None
         self.db_pool = None
         self.executor = None
         self.heartbeat = None
+        self.storage = None
 
     async def setup(self):
         dsn = self.config.get('Space', 'dsn')
@@ -45,12 +46,14 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
                 self.space_id = space_result['id']
                 result = await conn.fetchrow("insert into storage (name, host, port, parameters, https) "
                                              "values ($1, $2, $3, $4, $5) on conflict (name, host, port) "
-                                             "do update set parameters=$4, https=$5 returning id",
+                                             "do update set parameters=$4, https=$5 returning *",
                                              self.name, self.host, self.port,
                                              json.dumps(self.parameters), self.https)
-                self.storage_id = result['id']
 
-        self.executor = StorageUWSJobPool(self.space_id, self.storage_id, self.db_pool,
+                self.storage = Storage(result['id'], result['name'], result['host'], result['port'],
+                                       result['parameters'], result['https'], result['enabled'])
+
+        self.executor = StorageUWSJobPool(self.space_id, self.storage, self.db_pool,
                                           self.config.get('Space', 'dsn'), self)
         await self.executor.setup()
         self['AIOJOBS_SCHEDULER'] = await create_scheduler()

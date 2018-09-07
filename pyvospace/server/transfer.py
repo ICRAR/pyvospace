@@ -6,7 +6,7 @@ from contextlib import suppress
 
 from pyvospace.core.exception import VOSpaceError, NodeDoesNotExistError, PermissionDenied, InvalidArgument
 from pyvospace.core.model import UWSPhase, UWSResult, NodeTransfer, ProtocolTransfer, PushToSpace, \
-    NodeType, DataNode, ContainerNode, Node
+    NodeType, DataNode, ContainerNode
 from pyvospace.server import fuzz
 from .database import NodeDatabase
 
@@ -30,7 +30,6 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
             async with db_pool.acquire() as conn:
                 async with conn.transaction():
                     _, child_row = await app['db']._get_node_and_parent(job.job_info.target.path, conn)
-
                     if isinstance(job.job_info, PushToSpace):
                         # If there is no Node at the target URI, then the service SHALL
                         # create a new Node using the uri and the default xsi:type for the space.
@@ -44,7 +43,7 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
                                 node.remove_properties()
                         else:
                             node = DataNode(path=job.job_info.target.path)
-                            await app['db'].insert(node=node, conn=conn, identity=identity)
+                            await app['db'].create(node=node, conn=conn, identity=identity)
                             await app['abstract_space'].create_storage_node(node)
 
                         '''import_views = app['accepts_views'].get(node.node_type_text, [])
@@ -78,7 +77,8 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
 
                     endpoint = None
                     if redirect:
-                        assert len(job.transfer.protocols) > 0, "Protocol endpoint not found."
+                        if len(job.transfer.protocols) <= 0:
+                            raise InvalidArgument("Protocol endpoint not found.")
                         endpoint = str(job.transfer.protocols[0].endpoint.url)
 
                     await fuzz()
@@ -89,7 +89,8 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
             if sync is True:
                 raise VOSpaceError(403, "Permission Denied. Move/Copy denied.")
 
-            assert isinstance(job.job_info, NodeTransfer) is True
+            if not isinstance(job.job_info, NodeTransfer):
+                raise InvalidArgument("job_info is not a NodeTransfer")
             await app['executor'].set_executing(job.job_id)
 
             target = job.job_info.target

@@ -213,11 +213,11 @@ class NodeProxy:
 
         root = self._proxied
         node_db = self._tr._job._storage_pool.node_db
-        await node_db.update_properties(root, self._tr._conn, root.owner, check_identity=False)
+        await node_db.update(root, self._tr._conn, root.owner, check_identity=False)
         if isinstance(root, ContainerNode):
             nodes = [node for node in Node.walk(root)]
             nodes.pop(0)
-            await node_db.insert_tree(nodes, self._tr._conn)
+            await node_db.create_tree(nodes, self._tr._conn)
 
 
 class StorageUWSJob(UWSJob):
@@ -270,18 +270,16 @@ class StorageUWSJob(UWSJob):
                 if job_result['phase'] != UWSPhase.Executing:
                     raise InvalidJobStateError('Invalid Job State')
 
-                if self._exclusive:
-                    node_results = await self._conn.fetch("select *, nlevel(path) from nodes "
-                                                          "where path <@ $1 and space_id=$2 "
-                                                          "order by nlevel(path) asc for update",
-                                                          job_result['node_path'],
-                                                          self._job._storage_pool.space_id)
-                else:
-                    node_results = await self._conn.fetch("select *, nlevel(path) from nodes "
-                                                          "where path <@ $1 and space_id=$2 "
-                                                          "order by nlevel(path) asc for share",
-                                                          job_result['node_path'],
-                                                          self._job._storage_pool.space_id)
+                query = f"""with node_cte as 
+                            (select * from nodes where path <@ $1 and space_id=$2 
+                            order by nlevel(path) asc for {'update' if self._exclusive else 'share'} of nodes)
+                            select node_cte.*, nlevel(node_cte.path), 
+                            storage.name as space_name, 
+                            storage.host, storage.port, storage.parameters, 
+                            storage.https, storage.enabled from node_cte 
+                            left join storage on node_cte.storage_id=storage.id"""
+
+                node_results = await self._conn.fetch(query, job_result['node_path'], self._job._storage_pool.space_id)
                 if not node_results:
                     raise NodeDoesNotExistError("target node does not exist.")
 
@@ -335,9 +333,9 @@ class StorageUWSJob(UWSJob):
 
 
 class StorageUWSJobPool(UWSJobPool):
-    def __init__(self, space_id, storage_id, db_pool, dsn, permission):
+    def __init__(self, space_id, storage, db_pool, dsn, permission):
         super().__init__(space_id, db_pool, permission)
-        self.storage_id = storage_id
+        self.storage = storage
         self.listener = None
         self.dsn = dsn
         self.node_db = NodeDatabase(space_id, db_pool, permission)
@@ -390,10 +388,16 @@ class StorageUWSJobPool(UWSJobPool):
                     raise PermissionDenied('runJob denied.')
 
                 try:
-                    node_results = await conn.fetch("select *, nlevel(path) from nodes "
-                                                    "where path <@ $1 and space_id=$2 "
-                                                    "order by nlevel(path) asc for update nowait;",
-                                                    job_result['node_path'], self.space_id)
+                    query = """with node_cte as 
+                               (select * from nodes where path <@ $1 and space_id=$2 
+                                order by nlevel(path) asc for update of nodes nowait)
+                               select node_cte.*, nlevel(node_cte.path), storage.name as space_name, 
+                               storage.host, storage.port, storage.parameters, 
+                               storage.https, storage.enabled from node_cte 
+                               left join storage on node_cte.storage_id=storage.id"""
+
+                    node_results = await conn.fetch(query, job_result['node_path'], self.space_id)
+
                 except asyncpg.exceptions.LockNotAvailableError:
                     raise NodeBusyError(f"Path: {NodeDatabase.ltree_to_path(job_result['node_path'])}")
 
@@ -471,5 +475,6 @@ class UWSJobExecutor(object):
             with suppress(Exception):
                 await job_tuple[0]
 
-        assert len(self.job_tasks) == 0
+        if len(self.job_tasks) > 0:
+            raise InvalidJobStateError('There are still job tasks')
 

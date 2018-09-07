@@ -82,7 +82,7 @@ async def create_node_request(request):
 
     async with request.app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            await request.app['db'].insert(node, conn, identity)
+            await request.app['db'].create(node, conn, identity)
             await request.app['abstract_space'].create_storage_node(node)
             node.accepts = request.app['abstract_space'].get_accept_views(node)
     return node
@@ -100,7 +100,7 @@ async def set_node_properties_request(request):
 
     async with request.app['db_pool'].acquire() as conn:
         async with conn.transaction():
-            node = await request.app['db'].update_properties(node, conn, identity)
+            node = await request.app['db'].update(node, conn, identity)
     return node
 
 
