@@ -5,7 +5,7 @@ import base64
 from pyvospace.core.exception import VOSpaceError, InvalidURI, NodeDoesNotExistError, PermissionDenied, \
     ContainerDoesNotExistError, DuplicateNodeError, InvalidArgument
 from pyvospace.core.model import Node, DataNode, UnstructuredDataNode, StructuredDataNode, LinkNode, ContainerNode, \
-    NodeType, Property, DeleteProperty, NodeTextLookup
+    NodeType, Property, DeleteProperty, NodeTextLookup, Storage
 
 
 class NodeDatabase(object):
@@ -59,7 +59,8 @@ class NodeDatabase(object):
         root_node_rows.pop(0)
         child_nodes = [NodeDatabase._create_node(node_row) for node_row in root_node_rows]
         if len(child_nodes) > 0:
-            assert node.node_type == NodeType.ContainerNode
+            if node.node_type != NodeType.ContainerNode:
+                raise InvalidArgument('Attempting to add child node to non-container.')
             node.nodes = child_nodes
         node.set_properties(NodeDatabase._resultset_to_properties(root_properties_row))
         return node
@@ -96,6 +97,10 @@ class NodeDatabase(object):
         node.group_read = node_row['groupread']
         node.group_write = node_row['groupwrite']
         node.path_modified = node_row['path_modified']
+        node.size = node_row['size']
+        if node_row['storage_id'] is not None:
+            node.storage = Storage(node_row['storage_id'], node_row['space_name'], node_row['host'], node_row['port'],
+                                   node_row['parameters'], node_row['https'], node_row['enabled'])
         return node
 
     async def _get_node_and_parent(self, path, conn):
@@ -107,9 +112,14 @@ class NodeDatabase(object):
         try:
             # share lock both node and parent, important so we
             # dont have a dead lock with move/copy/create
-            result = await conn.fetch("select * from nodes where path=$1 or path=$2 "
-                                      "and space_id=$3 order by path asc for update",
-                                      path_tree, path_parent_tree, self.space_id)
+            query = """with node_cte as 
+                       (select * from nodes where path=$1 or path=$2 and space_id=$3 order by path asc for update)
+                       select node_cte.*, storage.name as space_name, 
+                       storage.host, storage.port, storage.parameters, storage.https, storage.enabled 
+                       from node_cte left join storage on node_cte.storage_id=storage.id"""
+
+            result = await conn.fetch(query, path_tree, path_parent_tree, self.space_id)
+
         except asyncpg.exceptions.PostgresSyntaxError:
             raise InvalidURI(f"{path} contains invalid characters.")
 
@@ -118,7 +128,8 @@ class NodeDatabase(object):
             # If its just one result and we have a parent node
             # it can not be the child node. It has to be just the parent!
             if path_parent_tree:
-                assert result[0]['path'] == path_parent_tree
+                if result[0]['path'] != path_parent_tree:
+                    raise InvalidArgument(f"{result[0]['path']} != {path_parent_tree}")
                 return result[0], None
             # If the only result is the node then return it.
             # This assumes its a root node.
@@ -133,10 +144,15 @@ class NodeDatabase(object):
         path = os.path.normpath(path)
         if not any(path in s for s in ['/', '//']):
             path_tree = NodeDatabase.path_to_ltree(path)
-            results = await conn.fetch("select * from nodes where path <@ $1 and "
-                                       "nlevel(path)-nlevel($1)<=1 and space_id=$2 "
-                                       "order by path asc",
-                                       path_tree, self.space_id)
+
+            query = """with node_cte as 
+                       (select * from nodes where path <@ $1 and nlevel(path)-nlevel($1)<=1 and space_id=$2 
+                       order by path asc) 
+                       select node_cte.*, storage.name as space_name, 
+                       storage.host, storage.port, storage.parameters, storage.https, storage.enabled 
+                       from node_cte left join storage on node_cte.storage_id=storage.id"""
+
+            results = await conn.fetch(query, path_tree, self.space_id)
             if len(results) == 0:
                 raise NodeDoesNotExistError(f"{path} not found.")
 
@@ -147,9 +163,13 @@ class NodeDatabase(object):
             node = self._resultset_to_node(results, properties)
 
         else:
-            results = await conn.fetch("select * from nodes where nlevel(path) = 1 "
-                                       "and space_id=$1 order by path asc",
-                                       self.space_id)
+            query = """with node_cte as 
+                       (select * from nodes where nlevel(path)=1 and space_id=$1 order by path asc) 
+                       select node_cte.*, storage.name as space_name, 
+                       storage.host, storage.port, storage.parameters, storage.https, storage.enabled 
+                       from node_cte left join storage on node_cte.storage_id=storage.id"""
+
+            results = await conn.fetch(query, self.space_id)
             node = ContainerNode('/', group_read=[identity])
             for result in results:
                 node.insert_node_into_tree(NodeDatabase._create_node(result))
@@ -158,7 +178,7 @@ class NodeDatabase(object):
             raise PermissionDenied('getNode denied.')
         return node
 
-    async def insert(self, node, conn, identity):
+    async def create(self, node, conn, identity):
         try:
             # We can not have a target unless its a link node
             target = None
@@ -210,7 +230,7 @@ class NodeDatabase(object):
         except asyncpg.exceptions.PostgresSyntaxError as e:
             raise InvalidURI(f"{node.path} contains invalid characters.")
 
-    async def insert_tree(self, nodes, conn):
+    async def create_tree(self, nodes, conn):
         if not isinstance(nodes, list):
             raise InvalidArgument('nodes is not a list.')
         if not nodes:
@@ -223,17 +243,15 @@ class NodeDatabase(object):
                 raise InvalidArgument(f'{node} is not a Node.')
             path = NodeDatabase.path_to_ltree(node.path)
             node_row = [node.node_type, node.name, path, node.owner,
-                        node.group_read, node.group_write, node.id, self.space_id]
-            if isinstance(node, LinkNode):
-                node_row.append(node.target)
-            else:
-                node_row.append(None)
+                        node.group_read, node.group_write, node.id,
+                        node.size, node.storage.storage_id if node.storage else None,
+                        self.space_id, node.target if isinstance(node, LinkNode) else None]
             node_insert.append(node_row)
-
         if node_insert:
             await conn.executemany("insert into nodes (type, name, path, owner, groupread, groupwrite, "
-                                   "id, space_id, link) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
-                                   "on conflict (path, space_id) do nothing",
+                                   "id, size, storage_id, space_id, link) "
+                                   "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) "
+                                   "on conflict (path, space_id) do update set size=$8, storage_id=$9",
                                    node_insert)
 
         node_properties = []
@@ -248,12 +266,15 @@ class NodeDatabase(object):
                                    "do update set value=$2 where properties.value!=$2",
                                    node_properties)
 
-    async def update_properties(self, node, conn, identity, check_identity=True):
+    async def update(self, node, conn, identity, check_identity=True):
         node_path_tree = NodeDatabase.path_to_ltree(node.path)
 
-        results = await conn.fetchrow("select * from nodes where path=$1 "
-                                      "and type=$2 and space_id=$3 for update",
-                                      node_path_tree, node.node_type, self.space_id)
+        query = """with node_cte as
+                   (select * from nodes where path=$1 and type=$2 and space_id=$3 for update of nodes)
+                   select node_cte.*, storage.name as space_name,
+                   storage.host, storage.port, storage.parameters, storage.https, storage.enabled 
+                   from node_cte left join storage on node_cte.storage_id=storage.id"""
+        results = await conn.fetchrow(query, node_path_tree, node.node_type, self.space_id)
         if not results:
             raise NodeDoesNotExistError(f"{node.path} not found.")
 
@@ -277,8 +298,11 @@ class NodeDatabase(object):
                 else:
                     pass_through_properties.append(prop)
 
-        await conn.execute("update nodes set groupread=$1, groupwrite=$2 where path=$3 and space_id=$4",
-                           node.group_read, node.group_write, node_path_tree, self.space_id)
+        await conn.execute("update nodes set groupread=$1, groupwrite=$2, size=$3, storage_id=$4 "
+                           "where path=$5 and space_id=$6",
+                           node.group_read, node.group_write,
+                           node.size, node.storage.storage_id if node.storage else None,
+                           node_path_tree, self.space_id)
 
         if node_props_insert:
             # if a property already exists then update it
@@ -300,10 +324,13 @@ class NodeDatabase(object):
 
     async def delete(self, path, conn, identity):
         path_tree = NodeDatabase.path_to_ltree(path)
-        results = await conn.fetch("with delete_rows as "
+        results = await conn.fetch("with delete_cte as "
                                    "(delete from nodes where path <@ $1 and space_id=$2 returning *) "
-                                   "select *, nlevel(delete_rows.path) from delete_rows "
-                                   "order by nlevel(delete_rows.path) asc;",
+                                   "select delete_cte.*, nlevel(delete_cte.path), "
+                                   "storage.name as space_name, storage.host, "
+                                   "storage.port, storage.parameters, storage.https, storage.enabled from delete_cte "
+                                   "left join storage on delete_cte.storage_id=storage.id "
+                                   "order by nlevel(delete_cte.path) asc",
                                    path_tree, self.space_id)
         if not results:
             raise NodeDoesNotExistError(f"{path} not found.")

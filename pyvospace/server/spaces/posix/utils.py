@@ -144,11 +144,12 @@ async def send_file(request, file_name, file_path):
         await asyncio.shield(response.write_eof())
 
 
-def path_to_node_tree(directory, root_node_path, owner, group_read, group_write):
+def path_to_node_tree(directory, root_node_path, owner, group_read, group_write, storage):
     root_node = ContainerNode(root_node_path,
                               owner=owner,
                               group_read=group_read,
                               group_write=group_write)
+    root_node.storage = storage
 
     for root, dirs, files in os.walk(directory):
         dir_name = root
@@ -159,11 +160,12 @@ def path_to_node_tree(directory, root_node_path, owner, group_read, group_write)
                                  owner=owner,
                                  group_read=group_read,
                                  group_write=group_write)
+            node.storage = storage
             root_node.insert_node_into_tree(node)
 
         for file in files:
             name = f"{root}/{file}"
-            file_size = Property('ivo://ivoa.net/vospace/core#length', str(os.path.getsize(name)))
+            file_size = os.path.getsize(name)
             if name.startswith(directory):
                 name = name[len(directory):]
             node_name = os.path.normpath(name)
@@ -171,8 +173,9 @@ def path_to_node_tree(directory, root_node_path, owner, group_read, group_write)
             node = StructuredDataNode(f'{root_node_path}/{node_name}',
                                       owner=owner,
                                       group_read=group_read,
-                                      group_write=group_write,
-                                      properties=[file_size])
+                                      group_write=group_write)
+            node.storage = storage
+            node.size = file_size
             root_node.insert_node_into_tree(node)
     return root_node
 
@@ -185,7 +188,7 @@ def tar(input, output, arcname):
         tar.add(input, arcname=arcname)
 
 
-def untar(tar_name, extract_dir, target):
+def untar(tar_name, extract_dir, target, storage):
     with suppress(OSError):
         shutil.rmtree(extract_dir)
 
@@ -196,4 +199,4 @@ def untar(tar_name, extract_dir, target):
         tar.extractall(path=extract_dir)
 
     return path_to_node_tree(extract_dir, target.path, target.owner,
-                               target.group_read, target.group_write)
+                               target.group_read, target.group_write, storage)

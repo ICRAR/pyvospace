@@ -174,23 +174,19 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
             if any(i in [HTTPGet(), HTTPSGet()] for i in protocols) is False:
                 raise VOSpaceError(400, "Protocol Not Supported.")
 
-            async with self['db_pool'].acquire() as conn:
-                async with conn.transaction():
-                    results = await conn.fetch("select * from storage where name=$1", self.name)
+            storage = job.job_info.target.storage
+            if storage is None:
+                raise VOSpaceError(400, f"{job.job_info.target} not on any storage device.")
 
             if HTTPGet() in protocols:
-                for row in results:
-                    if row['https'] is False:
-                        endpoint = Endpoint(f'http://{row["host"]}:{row["port"]}/'
-                                            f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPGet(endpoint=endpoint, security_method=security_method))
+                endpoint = Endpoint(f'http://{storage.host}:{storage.port}/'
+                                    f'vospace/{job.job_info.direction}/{job.job_id}')
+                new_protocols.append(HTTPGet(endpoint=endpoint, security_method=security_method))
 
             if HTTPSGet() in protocols:
-                for row in results:
-                    if row['https'] is True:
-                        endpoint = Endpoint(f'https://{row["host"]}:{row["port"]}/'
-                                            f'vospace/{job.job_info.direction}/{job.job_id}')
-                        new_protocols.append(HTTPSGet(endpoint=endpoint, security_method=security_method))
+                endpoint = Endpoint(f'https://{storage.host}:{storage.port}/'
+                                    f'vospace/{job.job_info.direction}/{job.job_id}')
+                new_protocols.append(HTTPSGet(endpoint=endpoint, security_method=security_method))
 
         if not new_protocols:
             raise VOSpaceError(400, "Protocol Not Supported. No storage found")

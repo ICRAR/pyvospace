@@ -99,13 +99,6 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
 
             struct_lstat = await lstat(real_path)
             struct_statvfs = await statvfs(real_path)
-
-
-            '''struct_lstat_dict = dict((key, getattr(struct_lstat, key)) for key in ('st_atime', 'st_ctime',
-                                                                                   'st_gid', 'st_mode',
-                                                                                   'st_mtime', 'st_nlink',
-                                                                                   'st_size', 'st_uid'))'''
-
             struct_statvfs_dict = dict((key, getattr(struct_statvfs, key)) for key in ('f_bavail', 'f_bfree',
                                                                                        'f_blocks', 'f_bsize',
                                                                                        'f_favail', 'f_ffree',

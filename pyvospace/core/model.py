@@ -418,14 +418,18 @@ class Node(object):
         self.set_properties(properties)
         self.capabilities = capabilities
 
+        # =======================
+        # Server side properties
+        # =======================
+        self._id = id
+        if self._id is None:
+            self._id = uuid.uuid4()
         self.owner = owner
         self.group_read = group_read
         self.group_write = group_write
-        if id is None:
-            self._id = uuid.uuid4()
-        else:
-            self._id = id
         self.path_modified = 0
+        self.size = 0
+        self.storage = None
 
     def __lt__(self, other):
         return self.path < other.path
@@ -834,14 +838,16 @@ class ContainerNode(DataNode):
                 else:
                     if overwrite:
                         parent_node.add_node(node_to_insert)
-                        assert not path_split
+                        if path_split:
+                            raise InvalidArgument('path_split should be empty')
                         break
                     raise InvalidArgument(f'duplicate node {node_to_insert.path}')
             else:
                 # its a leaf
                 if len(path_split) == 0:
                     parent_node.add_node(node_to_insert)
-                    assert not path_split
+                    if path_split:
+                        raise InvalidArgument('path_split should be empty')
                     break
                 # there is no node in parent but the node is not a leaf, so there is no path
                 else:
@@ -1356,3 +1362,23 @@ class UWSJob(object):
         if error_summary_elem:
             error = error_summary_elem[0].text
         return UWSJob(job_id, phase, destruction, job_info, result_set, error)
+
+
+class Storage(object):
+
+    def __init__(self, storage_id, space_name, host, port, parameters, https, enabled):
+        if not storage_id:
+            raise InvalidArgument('storage_id is empty.')
+        self.storage_id = storage_id
+        if not space_name:
+            raise InvalidArgument('space_name is empty.')
+        self.space_name = space_name
+        if not host:
+            raise InvalidArgument('host is empty.')
+        self.host = host
+        if not port:
+            raise InvalidArgument('port is empty.')
+        self.port = port
+        self.parameters = parameters
+        self.https = https
+        self.enabled = enabled
