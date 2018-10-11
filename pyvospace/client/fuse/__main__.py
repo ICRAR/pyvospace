@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import os
 import json
 import stat
 import errno
@@ -17,17 +16,21 @@ from urllib.parse import urlparse
 
 
 class VOSpaceFS(Operations):
-    def __init__(self, host, port, username, password, mountpoint):
+    def __init__(self, host, port, username, password, mountpoint, ssl):
         self.host = host
         self.port = port
         self.conn = {}
         self.mountpoint = mountpoint
+        self.ssl = True if ssl == 1 else False
         self.session = requests.session()
-        url = f"http://{host}:{port}/login"
+        url = f"{self._ssl_url()}://{host}:{port}/login"
         with self.session.post(url, auth=HTTPBasicAuth(username, password), verify=True) as r:
             r.raise_for_status()
         cookie_str = self.session.cookies['PYVOSPACE_COOKIE']
         self.cookie_str = f'PYVOSPACE_COOKIE={cookie_str}'
+
+    def _ssl_url(self):
+        return "https" if self.ssl else "http"
 
     # Filesystem methods
 
@@ -42,7 +45,7 @@ class VOSpaceFS(Operations):
 
     def getattr(self, path, fh=None):
         try:
-            url = f'http://{self.host}:{self.port}/vospace/nodes/{path}'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/nodes/{path}'
             with self.session.get(url, params={'detail': 'max'}) as r:
                 if r.status_code == 403:
                     raise FuseOSError(errno.EACCES)
@@ -76,7 +79,7 @@ class VOSpaceFS(Operations):
 
     def readdir(self, path, fh):
         try:
-            url = f'http://{self.host}:{self.port}/vospace/nodes/{path}'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/nodes/{path}'
             with self.session.get(url, params={'detail': 'max'}) as r:
                 r.raise_for_status()
                 node = Node.fromstring(r.text)
@@ -97,7 +100,7 @@ class VOSpaceFS(Operations):
 
     def rmdir(self, path):
         try:
-            url = f'http://{self.host}:{self.port}/vospace/nodes/{path}'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/nodes/{path}'
             with self.session.delete(url) as r:
                 if r.status_code == 403:
                     raise FuseOSError(errno.EACCES)
@@ -110,7 +113,7 @@ class VOSpaceFS(Operations):
     def mkdir(self, path, mode):
         try:
             node = ContainerNode(path)
-            url = f'http://{self.host}:{self.port}/vospace/nodes/{node.path}'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/nodes/{node.path}'
             with self.session.put(url, data=node.tostring()) as r:
                 if r.status_code == 403:
                     raise FuseOSError(errno.EACCES)
@@ -122,7 +125,7 @@ class VOSpaceFS(Operations):
 
     def statfs(self, path):
         try:
-            url = f'http://{self.host}:{self.port}/vospace/nodes/{path}'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/nodes/{path}'
             with self.session.get(url, params={'detail': 'max'}) as r:
                 r.raise_for_status()
                 node = Node.fromstring(r.text)
@@ -139,7 +142,7 @@ class VOSpaceFS(Operations):
 
     def unlink(self, path):
         try:
-            url = f'http://{self.host}:{self.port}/vospace/nodes/{path}'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/nodes/{path}'
             with self.session.delete(url) as r:
                 if r.status_code == 403:
                     raise FuseOSError(errno.EACCES)
@@ -155,12 +158,12 @@ class VOSpaceFS(Operations):
     def rename(self, old, new):
         try:
             mv = Move(Node(old), Node(new))
-            url = f'http://{self.host}:{self.port}/vospace/transfers'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/transfers'
             with self.session.post(url, data=mv.tostring()) as r:
                 r.raise_for_status()
                 job = UWSJob.fromstring(r.text)
 
-            url = f'http://{self.host}:{self.port}/vospace/transfers/{job.job_id}/phase'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/transfers/{job.job_id}/phase'
             with self.session.post(url, data='PHASE=RUN') as r:
                 r.raise_for_status()
 
@@ -197,7 +200,7 @@ class VOSpaceFS(Operations):
             raise FuseOSError(errno.EACCES)
 
         try:
-            url = f'http://{self.host}:{self.port}/vospace/synctrans'
+            url = f'{self._ssl_url()}://{self.host}:{self.port}/vospace/synctrans'
             with self.session.post(url, data=transfer.tostring()) as resp:
                 if resp.status_code == 403:
                     raise FuseOSError(errno.EACCES)
@@ -278,9 +281,10 @@ def main():
     parser.add_argument("--username", type=str)
     parser.add_argument("--password", type=str)
     parser.add_argument("--mountpoint", type=str)
+    parser.add_argument("--usessl", type=int, default=0)
     args = parser.parse_args()
 
-    space = VOSpaceFS(args.host, args.port, args.username, args.password, args.mountpoint)
+    space = VOSpaceFS(args.host, args.port, args.username, args.password, args.mountpoint, args.usessl)
     FUSE(space, args.mountpoint, nothreads=True, foreground=True)
 
 if __name__ == '__main__':
