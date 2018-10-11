@@ -216,7 +216,10 @@ class VOSpaceFS(Operations):
         try:
             method = 'PUT'
             pr = urlparse(url)
-            conn = client.HTTPConnection(pr.netloc)
+            if self.ssl:
+                conn = client.HTTPSConnection(pr.netloc)
+            else:
+                conn = client.HTTPConnection(pr.netloc)
             if isinstance(transfer, PullFromSpace):
                 method = 'GET'
             conn.putrequest(method, pr.path)
