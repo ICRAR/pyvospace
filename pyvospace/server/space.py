@@ -10,7 +10,7 @@ from aiohttp_security.api import AUTZ_KEY
 from typing import List
 
 from pyvospace.core.exception import VOSpaceError, InvalidJobStateError, InvalidArgument
-from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node
+from pyvospace.core.model import Properties, Protocols, Protocol, Views, View, Node, UWSJob
 
 from .view import get_node_request, delete_node_request, create_node_request, \
     set_node_properties_request, create_transfer_request, sync_transfer_request, \
@@ -23,42 +23,116 @@ from .auth import SpacePermission
 class AbstractSpace(metaclass=ABCMeta):
     @abstractmethod
     def get_properties(self) -> Properties:
+        """
+        Return VOSpace Properties.
+
+        accepts: A list of identifiers for the Properties that the service accepts and understands.
+
+        provides: A list of identifiers for the Properties that the service provides.
+
+        contains: A list of identifiers for all the Properties currently used by Nodes within the service.
+
+        :returns: Properties object.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def get_protocols(self) -> Protocols:
+        """
+        Get a list of the transfer Protocols supported by the VOSpace service.
+
+        accepts: A list of Protocols that the service SHALL accept.
+
+        provides: A list of Protocols that the service SHALL provide.
+
+        :returns: Protocols object.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def get_views(self) -> Views:
+        """
+        Get a list of the Views and data formats supported by the VOSpace service.
+
+        :returns: Views object.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def get_accept_views(self, node: Node) -> List[View]:
+        """
+        A list Views that service will accept for that Node type.
+
+        :param node: Node object.
+        :returns: View of list.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def get_provide_views(self, node: Node) -> List[View]:
+        """
+        A list Views that service will provide for that Node type.
+
+        :param node: Node object.
+        :returns: View list.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     async def move_storage_node(self, src: Node, dest: Node):
+        """
+        Move storage node from src to dest.
+
+        :param src: Source Node.
+        :param dest: Destination Node.
+        :raises VOSpaceError: if move can not be completed.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     async def copy_storage_node(self, src: Node, dest: Node):
+        """
+        Copy storage node from src to dest.
+
+        :param src: Source Node.
+        :param dest: Destination Node.
+        :raises VOSpaceError: if copy can not be completed.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     async def create_storage_node(self, node: Node):
+        """
+        Create storage node when VOSpace node is created.
+
+        :param node: Node to be created.
+        :raises VOSpaceError: if creating the node can not be completed.
+        """
         raise NotImplementedError()
 
     @abstractmethod
     async def delete_storage_node(self, node: Node):
+        """
+        Delete storage node when VOSpace node is deleted.
+
+        If the node is the root of a tree, then the entire tree will be deleted.
+
+        :param node: Node to be created.
+        :raises VOSpaceError: if node can not be deleted.
+        """
         raise NotImplementedError()
 
     @abstractmethod
-    async def get_transfer_protocols(self, job) -> List[Protocol]:
+    async def get_transfer_protocols(self, job: UWSJob) -> List[Protocol]:
+        """
+        Get the transfer protocols for the job.
+
+        e.g. PushToSpace request returning a HTTPPut storage endpoint.
+
+        :param job: UWSJob
+        :returns: Protocol List.
+        :raises VOSpaceError: if protocol is not supported or no storage found.
+        """
         raise NotImplementedError()
 
 
@@ -82,6 +156,13 @@ async def register_space(db_pool, name, host, port, parameters):
 
 
 class SpaceServer(web.Application, SpacePermission):
+    """
+    HTTP based VOSpace metadata backend.
+
+    :param cfg_file: VOSpace configuration file.
+    :param args: unnamed arguments.
+    :param kwargs: named arguments.
+    """
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -107,6 +188,11 @@ class SpaceServer(web.Application, SpacePermission):
         self.on_shutdown.append(self.shutdown)
 
     async def setup(self, abstract_space):
+        """
+        Setup VOSpace metadata services.
+
+        :param abstract_space: :class:`AbstractSpace <pyvospace.server.space.AbstractSpace>`
+        """
         if not isinstance(abstract_space, AbstractSpace):
             raise InvalidArgument("abstract_space is not an AbstractSpace")
         self['abstract_space'] = abstract_space
@@ -128,6 +214,9 @@ class SpaceServer(web.Application, SpacePermission):
         self['db'] = NodeDatabase(space_id, db_pool, self)
 
     async def shutdown(self):
+        """
+        Shutdown VOSpace metadata services.
+        """
         pool = self.get('db_pool')
         if pool:
             await pool.close()

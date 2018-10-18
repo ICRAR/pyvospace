@@ -3,6 +3,7 @@ import os
 import uuid
 import asyncio
 import aiofiles
+import aiohttp
 
 from aiohttp import web
 from aiohttp_security import setup as setup_security
@@ -17,6 +18,7 @@ from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, move, 
 from pyvospace.server.storage import HTTPSpaceStorageServer
 from pyvospace.server import fuzz, fuzz01
 from pyvospace.server.spaces.posix.auth import DBUserNodeAuthorizationPolicy
+from pyvospace.server.uws import StorageUWSJob
 
 
 class PosixStorageServer(HTTPSpaceStorageServer):
@@ -64,7 +66,7 @@ class PosixStorageServer(HTTPSpaceStorageServer):
         await app.setup()
         return app
 
-    async def download(self, job, request):
+    async def download(self, job: StorageUWSJob, request: aiohttp.web.Request):
         root_dir = self.root_dir
         path_tree = job.transfer.target.path
         if job.transfer.target.node_type == NodeType.ContainerNode:
@@ -92,7 +94,7 @@ class PosixStorageServer(HTTPSpaceStorageServer):
             file_path = f'{root_dir}/{path_tree}'
             return await send_file(request, os.path.basename(path_tree), file_path)
 
-    async def upload(self, job, request):
+    async def upload(self, job: StorageUWSJob, request: aiohttp.web.Request):
         reader = request.content
         path_tree = job.transfer.target.path
         target_id = uuid.uuid4()
@@ -136,12 +138,12 @@ class PosixStorageServer(HTTPSpaceStorageServer):
                         await asyncio.shield(rmtree(f'{self.staging_dir}/{target_id}'))
             else:
                 async with job.transaction() as tr:
-                    node = tr.target
-                    node.size = size
-                    node.storage = self.storage
+                    node = tr.target # get the target node that is associated with the data
+                    node.size = size # set the size
+                    node.storage = self.storage # set the storage back end so it can be found
                     await asyncio.shield(fuzz01(2))
-                    await asyncio.shield(node.save())
-                    await asyncio.shield(move(stage_file_name, real_file_name))
+                    await asyncio.shield(node.save()) # save details to db
+                    await asyncio.shield(move(stage_file_name, real_file_name)) # move in single transaction
 
             return web.Response(status=200)
         except (asyncio.CancelledError, Exception):
