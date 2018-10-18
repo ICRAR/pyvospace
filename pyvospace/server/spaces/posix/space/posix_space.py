@@ -10,7 +10,7 @@ from typing import List
 from pyvospace.server.space import SpaceServer, AbstractSpace
 from pyvospace.core.model import Views, View, Protocols, \
     Node, NodeTextLookup, NodeType, Properties, Property, Protocol,\
-    PushToSpace, PullFromSpace, HTTPGet, HTTPSGet, HTTPPut, HTTPSPut, Endpoint, SecurityMethod
+    PushToSpace, PullFromSpace, HTTPGet, HTTPSGet, HTTPPut, HTTPSPut, Endpoint, SecurityMethod, UWSJob
 
 from pyvospace.server.spaces.posix.utils import move, copy, mkdir, remove, rmtree, exists, touch
 from pyvospace.server.spaces.posix.auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
@@ -143,7 +143,7 @@ class PosixSpaceServer(SpaceServer, AbstractSpace):
             if await exists(m_path):
                 await remove(m_path)
 
-    async def get_transfer_protocols(self, job) -> List[Protocol]:
+    async def get_transfer_protocols(self, job: UWSJob) -> List[Protocol]:
         new_protocols = []
         protocols = job.job_info.protocols
         security_method = SecurityMethod('ivo://ivoa.net/sso#cookie')

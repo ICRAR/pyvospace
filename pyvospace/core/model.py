@@ -49,6 +49,14 @@ def validate_property_uri(uri):
 
 
 class Parameter(object):
+    """
+    VOSpace Parameter.
+
+    :param uri: uri.
+    :param value: value.
+
+    e.g. ivo://ivoa.net/vospace/core#length value: 1024
+    """
     def __init__(self, uri, value):
         self.uri = uri
         self.value = value
@@ -84,6 +92,14 @@ class Parameter(object):
 
 
 class Property(object):
+    """
+    VOSpace Property.
+
+    :param uri: uri.
+    :param value: value.
+
+    e.g. uri: ivo://ivoa.net/vospace/core#length value: 1024
+    """
     def __init__(self, uri, value, read_only=True, persist=True):
         self.uri = uri
         self.value = value
@@ -145,6 +161,13 @@ class Capability(object):
 
 
 class SecurityMethod(object):
+    """
+    SecurityMethod required for PushToSpace or PullFromSpace.
+
+    :param url: url.
+
+    e.g. url: ivo://ivoa.net/sso#cookie
+    """
     def __init__(self, url):
         if url is None:
             raise InvalidArgument("SecurityMethod URI is None.")
@@ -159,6 +182,13 @@ class SecurityMethod(object):
 
 
 class Endpoint(object):
+    """
+    Storage Endpoint.
+
+    :param url: url.
+
+    e.g. url: https://localhost:8000/pushtospace/
+    """
     def __init__(self, url):
         if url is None:
             raise InvalidArgument("Endpoint URI is None.")
@@ -173,6 +203,9 @@ class Endpoint(object):
 
 
 class Protocol(object):
+    """
+    Baseclass for storage protocol.
+    """
     def __init__(self, uri, endpoint=None, security_method=None):
         self.uri = uri
         self._endpoint = None
@@ -242,6 +275,12 @@ class Protocol(object):
 
 
 class Protocols(object):
+    """
+    Protocols that a VOSpace accepts and provides.
+
+    :param accepts: list of :func:`Protocol <pyvospace.core.model.Protocol>` the space accepts.
+    :param provides: list of :func:`Protocol <pyvospace.core.model.Protocol>` the space provides.
+    """
     def __init__(self, accepts, provides):
         if not isinstance(accepts, list):
             raise InvalidArgument('invalid list')
@@ -276,6 +315,12 @@ class Protocols(object):
 
 
 class Properties(object):
+    """
+    Properties that the VOSpace accepts and provides.
+
+    :param accepts: list of :func:`Property <pyvospace.core.model.Property>` the space accepts.
+    :param provides: list of :func:`Property <pyvospace.core.model.Property>` the space provides.
+    """
     def __init__(self, accepts, provides):
         if not isinstance(accepts, list):
             raise InvalidArgument('invalid list')
@@ -316,30 +361,60 @@ class Properties(object):
 
 
 class HTTPPut(Protocol):
+    """
+    HTTPPut Protocol.
+
+    :param endpoint: :func:`Endpoint <pyvospace.core.model.Endpoint>`
+    :param security_method: :func:`SecurityMethod <pyvospace.core.model.SecurityMethod>`
+    """
     def __init__(self, endpoint=None, security_method=None):
         super().__init__(uri='ivo://ivoa.net/vospace/core#httpput',
                          endpoint=endpoint, security_method=security_method)
 
 
 class HTTPGet(Protocol):
+    """
+    HTTPGet Protocol.
+
+    :param endpoint: :func:`Endpoint <pyvospace.core.model.Endpoint>`
+    :param security_method: :func:`SecurityMethod <pyvospace.core.model.SecurityMethod>`
+    """
     def __init__(self, endpoint=None, security_method=None):
         super().__init__(uri='ivo://ivoa.net/vospace/core#httpget',
                          endpoint=endpoint, security_method=security_method)
 
 
 class HTTPSPut(Protocol):
+    """
+    HTTPSPut Protocol.
+
+    :param endpoint: :func:`Endpoint <pyvospace.core.model.Endpoint>`
+    :param security_method: :func:`SecurityMethod <pyvospace.core.model.SecurityMethod>`
+    """
     def __init__(self, endpoint=None, security_method=None):
         super().__init__(uri='ivo://ivoa.net/vospace/core#httpsput',
                          endpoint=endpoint, security_method=security_method)
 
 
 class HTTPSGet(Protocol):
+    """
+    HTTPSGet Protocol.
+
+    :param endpoint: :func:`Endpoint <pyvospace.core.model.Endpoint>`
+    :param security_method: :func:`SecurityMethod <pyvospace.core.model.SecurityMethod>`
+    """
     def __init__(self, endpoint=None, security_method=None):
         super().__init__(uri='ivo://ivoa.net/vospace/core#httpsget',
                          endpoint=endpoint, security_method=security_method)
 
 
 class Views(object):
+    """
+    Views into and out of the VOSpace.
+
+    :param accepts: list of :func:`View <pyvospace.core.model.View>` the space accepts.
+    :param provides: list of :func:`View <pyvospace.core.model.View>` the space provides.
+    """
     def __init__(self, accepts, provides):
         if not isinstance(accepts, list):
             raise InvalidArgument('invalid list')
@@ -374,6 +449,14 @@ class Views(object):
 
 
 class View(object):
+    """
+    VOSpace view.
+
+    :param uri: uri.
+
+    e.g. Using ivo://ivoa.net/vospace/core#tar
+    on a container node will tell the space the user wants a tar for that nodes tree.
+    """
     def __init__(self, uri):
         self.uri = uri
 
@@ -401,6 +484,18 @@ class View(object):
 
 
 class Node(object):
+    """
+    Node representation for the VOSpace.
+
+    :param path: space path. e.g. node/container/data1
+    :param properties: list of :func:`Property <pyvospace.core.model.Property>`
+    :param capabilities: capabilities of the space.
+    :param owner: Server side only property.
+    :param group_read: Server side only property.
+    :param group_write: Server side only property.
+    :param id: Server side only property.
+    """
+
     NS = {'vos': 'http://www.ivoa.net/xml/VOSpace/v2.1',
           'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
           'xs': 'http://www.w3.org/2001/XMLSchema-instance'}
@@ -409,7 +504,6 @@ class Node(object):
 
     def __init__(self, path, properties=None, capabilities=None,
                  owner=None, group_read=None, group_write=None, id=None):
-
         self._path = Node.uri_to_path(path)
         self.name = os.path.basename(self._path)
         self.dirname = os.path.dirname(self._path)
@@ -632,6 +726,17 @@ class Node(object):
 
 
 class LinkNode(Node):
+    """
+    LinkNode representation for the VOSpace.
+
+    :param path: space path. e.g. node/container/data1
+    :param properties: list of :func:`Property <pyvospace.core.model.Property>`
+    :param capabilities: capabilities of the space.
+    :param owner: server side only property.
+    :param group_read: server side only property.
+    :param group_write: server side only property.
+    :param id: server side only property.
+    """
     def __init__(self, path, uri_target, properties=None, capabilities=None,
                  owner=None, group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
@@ -674,6 +779,20 @@ class LinkNode(Node):
 
 
 class DataNode(Node):
+    """
+    DataNode representation for the VOSpace.
+
+    :param path: space path. e.g. node/container/data1
+    :param properties: list of :func:`Property <pyvospace.core.model.Property>`
+    :param capabilities: capabilities of the space.
+    :param accepts: list of :func:`View <pyvospace.core.model.View>`
+    :param provides: list of :func:`View <pyvospace.core.model.View>`
+    :param busy: set node to busy.
+    :param owner: server side only property.
+    :param group_read: server side only property.
+    :param group_write: server side only property.
+    :param id: server side only property.
+    """
     def __init__(self, path, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False,
                  owner=None, group_read=None, group_write=None, id=None):
@@ -774,6 +893,22 @@ class DataNode(Node):
 
 
 class ContainerNode(DataNode):
+    """
+    ContainerNode representation for the VOSpace.
+    This Node can contain other :func:`Node <pyvospace.core.model.Node>` which can represent a tree structure.
+
+    :param path: space path. e.g. node/container/data1
+    :param nodes: list of :func:`Node <pyvospace.core.model.Node>`
+    :param properties: list of :func:`Property <pyvospace.core.model.Property>`
+    :param capabilities: capabilities of the space.
+    :param accepts: list of :func:`View <pyvospace.core.model.View>`
+    :param provides: list of :func:`View <pyvospace.core.model.View>`
+    :param busy: set node to busy.
+    :param owner: server side only property.
+    :param group_read: server side only property.
+    :param group_write: server side only property.
+    :param id: server side only property.
+    """
     def __init__(self, path, nodes=None, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, owner=None,
                  group_read=None, group_write=None, id=None):
@@ -881,6 +1016,20 @@ class ContainerNode(DataNode):
 
 
 class UnstructuredDataNode(DataNode):
+    """
+    UnstructuredDataNode representation for the VOSpace.
+
+    :param path: space path. e.g. node/container/data1
+    :param properties: list of :func:`Property <pyvospace.core.model.Property>`
+    :param capabilities: capabilities of the space.
+    :param accepts: list of :func:`View <pyvospace.core.model.View>`
+    :param provides: list of :func:`View <pyvospace.core.model.View>`
+    :param busy: set node to busy.
+    :param owner: server side only property.
+    :param group_read: server side only property.
+    :param group_write: server side only property.
+    :param id: server side only property.
+    """
     def __init__(self, path, properties=None, capabilities=None, accepts=None, provides=None, busy=False,
                  owner=None, group_read=None, group_write=None, id=None):
         super().__init__(path=path, properties=properties, capabilities=capabilities,
@@ -904,6 +1053,20 @@ class UnstructuredDataNode(DataNode):
 
 
 class StructuredDataNode(DataNode):
+    """
+    StructuredDataNode representation for the VOSpace.
+
+    :param path: space path. e.g. node/container/data1
+    :param properties: list of :func:`Property <pyvospace.core.model.Property>`
+    :param capabilities: capabilities of the space.
+    :param accepts: list of :func:`View <pyvospace.core.model.View>`
+    :param provides: list of :func:`View <pyvospace.core.model.View>`
+    :param busy: set node to busy.
+    :param owner: server side only property.
+    :param group_read: server side only property.
+    :param group_write: server side only property.
+    :param id: server side only property.
+    """
     def __init__(self, path, properties=None, capabilities=None,
                  accepts=None, provides=None, busy=False, owner=None,
                  group_read=None, group_write=None, id=None):
@@ -928,6 +1091,9 @@ class StructuredDataNode(DataNode):
 
 
 class Transfer(object):
+    """
+    Base class for a VOSpace Transfer request.
+    """
     def __init__(self, target, direction):
         self.target = target
         self._direction = direction
@@ -1033,6 +1199,12 @@ class Transfer(object):
 
 
 class NodeTransfer(Transfer):
+    """
+    Base class for a VOSpace node transfer request (Copy or Move).
+
+    :param target: source :func:`Node <pyvospace.core.model.Node>`
+    :param direction: target :func:`Node <pyvospace.core.model.Node>`
+    """
     def __init__(self, target, direction, keep_bytes):
         super().__init__(target, direction)
         self._keep_bytes = keep_bytes
@@ -1053,6 +1225,12 @@ class NodeTransfer(Transfer):
 
 
 class Copy(NodeTransfer):
+    """
+    Copy for VOSpace request.
+
+    :param target: source :func:`Node <pyvospace.core.model.Node>`
+    :param direction: target :func:`Node <pyvospace.core.model.Node>`
+    """
     def __init__(self, target, direction):
         super().__init__(target=target,
                          direction=direction,
@@ -1063,6 +1241,12 @@ class Copy(NodeTransfer):
 
 
 class Move(NodeTransfer):
+    """
+    Move for VOSpace request.
+
+    :param target: source :func:`Node <pyvospace.core.model.Node>`
+    :param direction: target :func:`Node <pyvospace.core.model.Node>`
+    """
     def __init__(self, target, direction):
         super().__init__(target=target,
                          direction=direction,
@@ -1073,6 +1257,15 @@ class Move(NodeTransfer):
 
 
 class ProtocolTransfer(Transfer):
+    """
+    Base class for VOSpace protocol transfer request.
+
+    :param target: push data to :func:`Node <pyvospace.core.model.Node>`
+    :param direction: pushToVoSpace or pullFromVoSpace string
+    :param protocols:  :func:`Protocol <pyvospace.core.model.Protocol>` to use for transfer
+    :param view: :func:`View <pyvospace.core.model.View>`
+    :param params: list of :func:`Parameter <pyvospace.core.model.Parameter>`
+    """
     def __init__(self, target, direction, protocols=None, view=None, params=None):
         super().__init__(target=target, direction=direction)
         self._protocols = []
@@ -1198,12 +1391,28 @@ class ProtocolTransfer(Transfer):
 
 
 class PushToSpace(ProtocolTransfer):
+    """
+    Push to VOSpace transfer request.
+
+    :param target: push data to :func:`Node <pyvospace.core.model.Node>`
+    :param protocols:  :func:`Protocol <pyvospace.core.model.Protocol>` to use for transfer
+    :param view: :func:`View <pyvospace.core.model.View>`
+    :param params: list of :func:`Parameter <pyvospace.core.model.Parameter>`
+    """
     def __init__(self, target, protocols=None, view=None, params=None):
         super().__init__(target=target, direction='pushToVoSpace',
                          protocols=protocols, view=view, params=params)
 
 
 class PullFromSpace(ProtocolTransfer):
+    """
+    Pull from VOSpace transfer request.
+
+    :param target: pull data from :func:`Node <pyvospace.core.model.Node>`
+    :param protocols: :func:`Protocol <pyvospace.core.model.Protocol>` to use for transfer
+    :param view: :func:`View <pyvospace.core.model.View>`
+    :param params: list of :func:`Parameter <pyvospace.core.model.Parameter>`
+    """
     def __init__(self, target, protocols=None, view=None, params=None, redirect=True):
         super().__init__(target=target, direction='pullFromVoSpace',
                          protocols=protocols, view=view, params=params)
@@ -1265,6 +1474,16 @@ class UWSResult(object):
 
 
 class UWSJob(object):
+    """
+    UWS Job representation.
+
+    :param job_id: job id.
+    :param phase: job :func:`Phase <pyvospace.core.model.UWSPhase>`
+    :param destruction: distruction time.
+    :param job_info: job info :func:`Transfer <pyvospace.core.model.Transfer>`.
+    :param results: job :func:`Result <pyvospace.core.model.UWSResult>`
+    :param error: job errors.
+    """
 
     NS = {'uws': 'http://www.ivoa.net/xml/UWS/v1.0',
           'xsi': 'http://www.w3.org/2001/XMLSchema-instance',

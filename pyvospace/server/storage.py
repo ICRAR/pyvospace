@@ -1,6 +1,7 @@
 import json
 import asyncio
 import asyncpg
+import aiohttp
 import configparser
 
 from aiohttp import web
@@ -13,10 +14,17 @@ from pyvospace.core.model import Storage
 from pyvospace.core.exception import VOSpaceError, PermissionDenied, NodeBusyError, InvalidJobError, \
     InvalidJobStateError, NodeDoesNotExistError
 from .auth import SpacePermission
-from .uws import StorageUWSJobPool
+from .uws import StorageUWSJobPool, StorageUWSJob
 
 
 class HTTPSpaceStorageServer(web.Application, SpacePermission):
+    """
+    Abstract HTTP based storage backend.
+
+    :param cfg_file: Storage configuration file.
+    :param args: unnamed arguments.
+    :param kwargs: named arguments.
+    """
     def __init__(self, cfg_file, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = configparser.ConfigParser()
@@ -35,6 +43,9 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         self.storage = None
 
     async def setup(self):
+        """
+        Setup HTTP based storage backend.
+        """
         dsn = self.config.get('Space', 'dsn')
         self.db_pool = await asyncpg.create_pool(dsn=dsn)
         async with self.db_pool.acquire() as conn:
@@ -60,11 +71,23 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         self.set_router()
 
     @abstractmethod
-    async def download(self, job, request):
+    async def download(self, job: StorageUWSJob, request: aiohttp.web.Request):
+        """
+        PullFromSpace request to download data from a node.
+
+        :param job: StorageUWSJob.
+        :param request: client reference to request.
+        """
         raise NotImplementedError()
 
     @abstractmethod
-    async def upload(self, job, request):
+    async def upload(self, job: StorageUWSJob, request: aiohttp.web.Request):
+        """
+        PushToSpace request to upload data to a node.
+
+        :param job: StorageUWSJob.
+        :param request: client reference to request.
+        """
         raise NotImplementedError()
 
     def set_router(self):
@@ -88,6 +111,9 @@ class HTTPSpaceStorageServer(web.Application, SpacePermission):
         return await autz_policy.permits(identity, permission, context)
 
     async def shutdown(self):
+        """
+        Shutdown HTTP based storage backend.
+        """
         await self['AIOJOBS_SCHEDULER'].close()
         await self.executor.close()
         await self.db_pool.close()
