@@ -277,7 +277,8 @@ class StorageUWSJob(UWSJob):
                             storage.name as space_name, 
                             storage.host, storage.port, storage.parameters, 
                             storage.https, storage.enabled from node_cte 
-                            left join storage on node_cte.storage_id=storage.id"""
+                            left join storage on node_cte.storage_id=storage.id 
+                            order by nlevel(node_cte.path) asc"""
 
                 node_results = await self._conn.fetch(query, job_result['node_path'], self._job._storage_pool.space_id)
                 if not node_results:
@@ -394,7 +395,8 @@ class StorageUWSJobPool(UWSJobPool):
                                select node_cte.*, nlevel(node_cte.path), storage.name as space_name, 
                                storage.host, storage.port, storage.parameters, 
                                storage.https, storage.enabled from node_cte 
-                               left join storage on node_cte.storage_id=storage.id"""
+                               left join storage on node_cte.storage_id=storage.id 
+                               order by nlevel(node_cte.path) asc"""
 
                     node_results = await conn.fetch(query, job_result['node_path'], self.space_id)
 
