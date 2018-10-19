@@ -32,6 +32,7 @@ class TestPushPull(TestBase):
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/datanode'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode'))
         self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/syncdatanode1.fits'))
+        self.loop.run_until_complete(self.delete('http://localhost:8080/vospace/nodes/root/mytar.tar.gz'))
         self.loop.run_until_complete(self.posix_runner.shutdown())
         self.loop.run_until_complete(self.posix_runner.cleanup())
         super().tearDown()
@@ -74,8 +75,6 @@ class TestPushPull(TestBase):
             transfer = await self.sync_transfer_node(pull)
             pull_end = transfer.protocols[0].endpoint.url
             await self.pull_from_space(pull_end, '/tmp/download/')
-
-            await self.delete('http://localhost:8080/vospace/nodes/root/mytar.tar.gz')
 
         self.loop.run_until_complete(run())
 
@@ -292,7 +291,8 @@ class TestPushPull(TestBase):
             finished, unfinished = await asyncio.wait(tasks)
             self.assertEqual(len(finished), 2)
             for i in finished:
-                result.append((await i)[0])
+                r = await i
+                result.append(r[0])
 
             self.assertIn(200, result)
             self.assertIn(400, result)

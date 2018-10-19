@@ -81,7 +81,7 @@ async def _perform_transfer_job(job, app, identity, sync, redirect):
                             raise InvalidArgument("Protocol endpoint not found.")
                         endpoint = str(job.transfer.protocols[0].endpoint.url)
 
-                    await fuzz()
+                    await fuzz(2)
                     job.phase = UWSPhase.Executing
                     await app['executor']._update_uws_job(job, conn)
                     return endpoint

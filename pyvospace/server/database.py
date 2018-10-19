@@ -116,7 +116,8 @@ class NodeDatabase(object):
                        (select * from nodes where path=$1 or path=$2 and space_id=$3 order by path asc for update)
                        select node_cte.*, storage.name as space_name, 
                        storage.host, storage.port, storage.parameters, storage.https, storage.enabled 
-                       from node_cte left join storage on node_cte.storage_id=storage.id"""
+                       from node_cte left join storage on node_cte.storage_id=storage.id 
+                       order by node_cte.path asc"""
 
             result = await conn.fetch(query, path_tree, path_parent_tree, self.space_id)
 
@@ -150,7 +151,8 @@ class NodeDatabase(object):
                        order by path asc) 
                        select node_cte.*, storage.name as space_name, 
                        storage.host, storage.port, storage.parameters, storage.https, storage.enabled 
-                       from node_cte left join storage on node_cte.storage_id=storage.id"""
+                       from node_cte left join storage on node_cte.storage_id=storage.id 
+                       order by node_cte.path asc"""
 
             results = await conn.fetch(query, path_tree, self.space_id)
             if len(results) == 0:
@@ -167,7 +169,8 @@ class NodeDatabase(object):
                        (select * from nodes where nlevel(path)=1 and space_id=$1 order by path asc) 
                        select node_cte.*, storage.name as space_name, 
                        storage.host, storage.port, storage.parameters, storage.https, storage.enabled 
-                       from node_cte left join storage on node_cte.storage_id=storage.id"""
+                       from node_cte left join storage on node_cte.storage_id=storage.id 
+                       order by node_cte.path asc"""
 
             results = await conn.fetch(query, self.space_id)
             node = ContainerNode('/', group_read=[identity])

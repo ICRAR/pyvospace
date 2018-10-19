@@ -61,8 +61,6 @@ class TestCreate(TestBase):
                 node = Node(f'/test1/{i}')
                 await self.create_node(node)
 
-            await self.delete('http://localhost:8080/vospace/nodes/test1')
-
         self.loop.run_until_complete(run())
 
     def test_get_protocol(self):
