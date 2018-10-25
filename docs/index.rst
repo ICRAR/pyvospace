@@ -12,15 +12,15 @@ VOSpace implementation in Python3.
 
 - Python3.6 or greater.
 - Docker Support.
-- FUSE filesystem modules.
+- FUSE filesystem modules (including fusepy)
 
 **Quick Start Guide**
 
 Quick start guide to building and running a posix backed vospace.
 
-Create and start database environment::
+From the root of the repository, create and start database environment::
 
-   cd pyvospace/pyvospace/server/deploy
+   cd pyvospace/server/deploy
    docker-compose build
    docker-compose up
 
@@ -29,10 +29,10 @@ Create Virtual Environment::
    python3 -m venv venv
    source venv/bin/activate
 
-Install pyvospace modules::
+From the root of the repository, install pyvospace modules::
 
-   python setup install
-
+   pip install -U pip setuptools wheel
+   pip install .
 
 Create basic configuration::
 
@@ -58,15 +58,19 @@ Confirm deployment::
 
    python -m unittest discover test
 
-All the tests should pass
+All the tests should pass. Note: Ignore any ConnectionResetError warnings as it's part of a test.
 
 Start vospace metadata server::
 
-   posix_space --cfg config.ini
+   posix_space --cfg test_vo.ini
 
 Start vospace posix storage server::
 
    posix_storage --cfg test_vo.ini
+
+Install appropriate FUSE libraries for your platform, then install fusepy::
+
+   pip install fusepy
 
 Start FUSE posix client::
 
@@ -74,6 +78,7 @@ Start FUSE posix client::
 
 Test FUSE posix client::
 
+   mkdir /tmp/fuse
    cd /tmp/fuse
    mkdir newdir
    cd newdir
