@@ -43,6 +43,8 @@ class VOSpaceFS(Operations):
         self.mountpoint = mountpoint
         self.ssl = True if ssl == 1 else False
         self.session = requests.session()
+        self.uid = os.getuid()
+        self.gid = os.getgid()
         url = f"{self._ssl_url()}://{host}:{port}/login"
         with self.session.post(url, auth=HTTPBasicAuth(username, password), verify=True) as r:
             r.raise_for_status()
@@ -79,18 +81,17 @@ class VOSpaceFS(Operations):
             ctime = node_props.get('ivo://ivoa.net/vospace/core#ctime')
             mtime = node_props.get('ivo://ivoa.net/vospace/core#mtime')
 
-            mode = 0o755
-            link = 2
             if node.node_type == NodeType.ContainerNode:
-                mode = mode | stat.S_IFDIR
+                link = 2
+                mode = 0o755 | stat.S_IFDIR
             else:
-                link = 0
-                mode = mode | stat.S_IFREG
+                link = 1
+                mode = 0o644 | stat.S_IFREG
 
             a = {'st_atime': float(mtime.value), 'st_ctime': float(ctime.value),
-                 'st_gid': 0, 'st_mode': mode,
+                 'st_gid': self.gid, 'st_mode': mode,
                  'st_mtime': float(mtime.value), 'st_nlink': link,
-                 'st_size': int(length.value), 'st_uid': 0}
+                 'st_size': int(length.value), 'st_uid': self.uid}
             return a
         except FuseOSError:
             raise
@@ -213,9 +214,13 @@ class VOSpaceFS(Operations):
     def open(self, path, flags):
         node = DataNode(path)
         if flags == os.O_RDONLY:
-            transfer = PullFromSpace(node, [HTTPGet()])
+            transfer = PullFromSpace(node, [HTTPSGet() if self.ssl else HTTPGet()])
         elif flags == os.O_WRONLY:
-            transfer = PushToSpace(node, [HTTPPut()])
+            transfer = PushToSpace(node, [HTTPSPut() if self.ssl else HTTPPut()])
+        elif flags == 32768:
+            transfer = PullFromSpace(node, [HTTPSGet() if self.ssl else HTTPGet()])
+        elif flags == 32769:
+            transfer = PushToSpace(node, [HTTPSPut() if self.ssl else HTTPPut()])
         else:
             raise FuseOSError(errno.EACCES)
 
@@ -308,7 +313,7 @@ def main():
     args = parser.parse_args()
 
     space = VOSpaceFS(args.host, args.port, args.username, args.password, args.mountpoint, args.usessl)
-    FUSE(space, args.mountpoint, nothreads=True, foreground=True)
+    FUSE(space, args.mountpoint, nothreads=True, foreground=True, allow_other=True)
 
 if __name__ == '__main__':
     main()
