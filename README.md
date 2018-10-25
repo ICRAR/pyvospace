@@ -36,7 +36,7 @@ pip install .
 
 Create basic configuration
 
-`vim config.ini`
+`vim test_vo.ini`
 
 ```
 [Space]
