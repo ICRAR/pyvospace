@@ -79,14 +79,13 @@ pip install fusepy
 
 Start FUSE posix client.
 ```
-
+mkdir /tmp/fuse
 python -m pyvospace.client.fuse --host localhost --port 8080 --username test --password test --mountpoint /tmp/fuse/
 ```
 
 Test FUSE posix client
 
 ```
-mkdir /tmp/fuse
 cd /tmp/fuse
 mkdir newdir
 cd newdir
