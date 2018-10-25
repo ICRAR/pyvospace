@@ -65,7 +65,9 @@ class TestBase(unittest.TestCase):
                                'dsn': 'postgres://vos_user:vos_user@localhost:5435/vospace',
                                'parameters': '{}',
                                'secret_key': 'ZlmNyXdQgRhhrC2Wwy-gLZj7Wv6ZtoKH',
-                               'domain': 'localhost'}
+                               'domain': 'localhost',
+                               'use_ssl': 0
+                               }
 
             config['Storage'] = {'name': 'posix',
                                  'host': 'localhost',
