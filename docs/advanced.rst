@@ -80,6 +80,9 @@ Ref by :py:class:`pyvospace.server.space.SpaceServer`
     * uri: uri base for the space.
     * dsn: connection string to the database.
     * parameters: any customs parameters defined by the implementor of the space (json string)
+    * use_ssl: use https (1: yes, 0: no)
+    * cert_file: SSL certificate file.
+    * key_file = SSL key file.
 
 **[Storage]**
 
@@ -90,6 +93,8 @@ Ref by :py:class:`pyvospace.server.storage.HTTPSpaceStorageServer`
     * name: name of the space (unique).
     * parameters: any customs parameters defined by the implementor of the space (json string)
     * use_ssl: use https (1: yes, 0: no)
+    * cert_file: SSL certificate file.
+    * key_file = SSL key file.
 
 Configuration Example::
 
@@ -100,6 +105,7 @@ Configuration Example::
    uri = icrar.org
    dsn = postgres://vos_user:vos_user@localhost:5435/vospace
    parameters = {}
+   use_ssl = 0
 
    [Storage]
    name = posix
