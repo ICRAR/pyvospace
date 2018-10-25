@@ -70,7 +70,8 @@ class TestBase(unittest.TestCase):
             config['Storage'] = {'name': 'posix',
                                  'host': 'localhost',
                                  'port': 8081,
-                                 'parameters': storage_details
+                                 'parameters': storage_details,
+                                 'use_ssl': 0
                                 }
 
             with open(self.config_filename, 'w') as conf:
