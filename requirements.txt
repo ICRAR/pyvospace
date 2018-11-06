@@ -1,0 +1,17 @@
+aiohttp
+aiohttp_jinja2
+aiohttp_security
+aiohttp-session
+asyncpg
+cryptography
+aio_pika
+passlib
+uvloop
+aiofiles
+riprova
+lxml
+cchardet
+aiodns
+aiojobs
+requests
+fusepy
