@@ -11,6 +11,8 @@ VOSpace implementation in Python3.
 
 Quick start guide to building and running a posix backed vospace.
 
+Refer to [full documentation](https://pyvospace.readthedocs.io) for more information. 
+
 From the root of the repository, create and start database environment
 
 ```
