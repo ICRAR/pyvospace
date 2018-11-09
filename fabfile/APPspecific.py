@@ -173,7 +173,7 @@ def sysinitstart_APP_and_check_status():
     with settings(user=nuser):
         with cd('{0}/pyvospace/server/deploy'.format(APP_source_dir())):
                 virtualenv('docker-compose build')
-                virtualenv('docker run -p 5435:5432 pyvospace/pyvospace-db  -h 0.0.0.0')
+                virtualenv('docker run -d -p 5435:5432 pyvospace/pyvospace-db  -h 0.0.0.0')
         with cd('{0}'.format(APP_source_dir())):
             run('python -m unittest discover test')
 
