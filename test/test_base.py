@@ -82,8 +82,12 @@ class TestBase(unittest.TestCase):
         self.app = self.loop.run_until_complete(PosixSpaceServer.create(self.config_filename))
         self.runner = web.AppRunner(self.app)
         self.loop.run_until_complete(self.runner.setup())
+        if not hasattr(socket, 'SO_REUSEPORT'):
+            reuse_port = False
+        else:
+            reuse_port = True
         site = web.TCPSite(self.runner, 'localhost', 8080,
-                           reuse_address=True, reuse_port=True)
+                           reuse_address=True, reuse_port=reuse_port)
         self.loop.run_until_complete(site.start())
 
         user = ['test', pbkdf2_sha256.hash('test'), [], [], 'posix', True]
