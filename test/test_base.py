@@ -31,6 +31,7 @@ import unittest
 import configparser
 import xml.etree.ElementTree as ET
 import requests
+import socket
 import tarfile
 
 from aiohttp import web
