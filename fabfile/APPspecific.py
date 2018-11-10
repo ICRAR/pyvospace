@@ -65,7 +65,7 @@ env.APP_ROOT_DIR_NAME = env.APP_NAME.upper()
 env.APP_INSTALL_DIR_NAME = env.APP_NAME.lower() + '_rt'
 
 # Version of Python required for the Application
-env.APP_PYTHON_VERSION = '3.6'
+env.APP_PYTHON_VERSION = '3.7'
 
 # URL to download the correct Python version
 env.APP_PYTHON_URL = 'https://www.python.org/ftp/python/3.7.0/Python-3.7.0.tgz'
@@ -152,10 +152,27 @@ def start_APP_and_check_status():
     Starts the APP daemon process and checks that the server is up and running
     then it shuts down the server
     """
-    ###>>> 
-    # Provide the actual implementation here if required.
-    ###<<<
-    success('{0} help is working...'.format(env.APP_NAME))
+    with cd('{0}/pyvospace/server/deploy'.format(APP_source_dir())):
+            # >>>> Darwin docker shows a permission issue with keychain access <<<<
+            if env.linux_flavor != 'Darwin':
+                virtualenv('docker-compose build')
+            else:
+                info('>>>> Darwin reuqires to build docker container manually')
+                info('>>>> docker-compose build')
+            virtualenv(
+            'docker run -d -p 5435:5432 pyvospace/pyvospace-db  -h 0.0.0.0')
+            time.sleep(10)
+    with cd('{0}'.format(APP_source_dir())):
+        virtualenv('python -m unittest discover test')
+#     run('mkdir -p /tmp/fuse')
+#     virtualenv('posix_space --cfg test_vo.ini > /tmp/space.log 2>&1')
+#     time.sleep(2)
+#     virtualenv('posix_storage --cfg test_vo.ini > /tmp/storage.log 2>&1')
+#     time.sleep(2)
+#     virtualenv('python -m pyvospace.client.fuse --host localhost --port 8080 --username test --password test --mountpoint /tmp/fuse/`` > /tmp/fusemnt.log 2>&1')
+#     time.sleep(2)
+# run("cd /tmp/fuse && mkdir -p newdir && cd newdir && echo 'Hello World!' >> data && cat data")
+    success('{0} is working...'.format(env.APP_NAME))
 
 def sysinitstart_APP_and_check_status():
     """
@@ -163,50 +180,42 @@ def sysinitstart_APP_and_check_status():
     then it shuts down the server
     """
     ###>>> 
-    # The following just runs the DB in a docker container
+    # The following just runs the DB in a docker container and runs the tests
     ###<<<
     print ">>>>> Installing docker-compose <<<<<<<<"
     sudo('curl -L "https://github.com/docker/compose/releases/download/1.23.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose')
     sudo('chmod +x /usr/local/bin/docker-compose')
     sudo('usermod -aG docker pyvospace')
     sudo('service docker start')
+    time.sleep(5)
     sudo("sudo sed -ie 's/# user_allow_other/user_allow_other/g' /etc/fuse.conf")
     nuser = APP_user()
     with settings(user=nuser):
         with cd('{0}/pyvospace/server/deploy'.format(APP_source_dir())):
                 virtualenv('docker-compose build')
                 virtualenv('docker run -d -p 5435:5432 pyvospace/pyvospace-db  -h 0.0.0.0')
-                time.sleep(2)
+                time.sleep(10)
         with cd('{0}'.format(APP_source_dir())):
-            run('python -m unittest discover test')
-            run('mkdir /tmp/fuse')
-            run('posix_space --cfg test_vo.ini > /tmp/space.log 2>&1')
-            time.sleep(2)
-            run('posix_storage --cfg test_vo.ini > /tmp/storage.log 2>&1')
-            time.sleep(2)
-            run('python -m pyvospace.client.fuse --host localhost --port 8080 --username test --password test --mountpoint /tmp/fuse/`` > /tmp/fusemnt.log 2>&1')
-            time.sleep(2)
-        run("cd /tmp/fuse && mkdir newdir && cd newdir && echo 'hello' >> data && cat data")
+            virtualenv('python -m unittest discover test')
+        #     run('mkdir -p /tmp/fuse')
+        #     virtualenv('posix_space --cfg test_vo.ini > /tmp/space.log 2>&1')
+        #     time.sleep(2)
+        #     virtualenv('posix_storage --cfg test_vo.ini > /tmp/storage.log 2>&1')
+        #     time.sleep(2)
+        #     virtualenv('python -m pyvospace.client.fuse --host localhost --port 8080 --username test --password test --mountpoint /tmp/fuse/`` > /tmp/fusemnt.log 2>&1')
+        #     time.sleep(2)
+        # run("cd /tmp/fuse && mkdir -p newdir && cd newdir && echo 'Hello World!' >> data && cat data")
+    success("{0} successfully tested!".format(env.APP_NAME))
 
 
 def APP_build_cmd():
 
-    # The installation of the bsddb package (needed by ngamsCore) is in
-    # particular difficult because it requires some flags to be passed on
-    # (particularly if using MacOSX's port
-    # >>>> NOTE: This function potentially needs heavy customisation <<<<<<
     build_cmd = [
             'pip install .',
             'cd pyvospace/server/deploy',
 #            'docker-compose build',
 #            'docker-compose up'
             ]
-    # linux_flavor = get_linux_flavor()
-
-    ###>>> 
-    # Provide the actual implementation here if required.
-    ###<<<
-
     return ' && '.join(build_cmd)
 
 
