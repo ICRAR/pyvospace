@@ -27,6 +27,7 @@ NOTE: This requires modifications for the specific application where this
 fabfile is used. Please make sure not to use it without those modifications.
 """
 import os, sys
+import time
 from fabric.state import env
 from fabric.colors import red
 from fabric.operations import local
@@ -169,13 +170,23 @@ def sysinitstart_APP_and_check_status():
     sudo('chmod +x /usr/local/bin/docker-compose')
     sudo('usermod -aG docker pyvospace')
     sudo('service docker start')
+    sudo("sudo sed -ie 's/# user_allow_other/user_allow_other/g' /etc/fuse.conf")
     nuser = APP_user()
     with settings(user=nuser):
         with cd('{0}/pyvospace/server/deploy'.format(APP_source_dir())):
                 virtualenv('docker-compose build')
                 virtualenv('docker run -d -p 5435:5432 pyvospace/pyvospace-db  -h 0.0.0.0')
+                time.sleep(2)
         with cd('{0}'.format(APP_source_dir())):
             run('python -m unittest discover test')
+            run('mkdir /tmp/fuse')
+            run('posix_space --cfg test_vo.ini > /tmp/space.log 2>&1')
+            time.sleep(2)
+            run('posix_storage --cfg test_vo.ini > /tmp/storage.log 2>&1')
+            time.sleep(2)
+            run('python -m pyvospace.client.fuse --host localhost --port 8080 --username test --password test --mountpoint /tmp/fuse/`` > /tmp/fusemnt.log 2>&1')
+            time.sleep(2)
+        run("cd /tmp/fuse && mkdir newdir && cd newdir && echo 'hello' >> data && cat data")
 
 
 def APP_build_cmd():
