@@ -13,6 +13,35 @@ Quick start guide to building and running a posix backed vospace.
 
 Refer to [full documentation](https://pyvospace.readthedocs.io) for more information. 
 
+***Fabric Installation***
+
+pyvospace comes with a fabric based installation mechanism, which supports remote and local automatic installations
+on a variety of platforms and in a flexible way. This will install all the dependencies and the
+complete environment with a single command line. It requires fabric<2 to be installed in your
+local python environment. There are a number of issues with fabric versions smaller than 2 and python3 and
+thus the python version running fabric needs to be a python2.7 version. Note that the fabric installation will
+still install Python3.6 or Python3.7 for pyvospace into a dedicated virtual environment.
+
+***Installation of fabric***
+Make sure that you have a suitable python version on your path and install fabric
+
+```
+python -V
+>>> Python 2.7.15
+pip install fabric<2
+```
+From the root of the repository execute the fabric installation
+
+```
+fab hl.user_deploy -H localhost
+```
+
+This will install pyvospace into a dedicated virtual environment into your home directory and test the installation.
+The fabric script is very versatile and has many options, including installations on AWS and parallel installations
+on multiple hosts.
+
+***Manual Installation***
+
 From the root of the repository, create and start database environment
 
 ```
