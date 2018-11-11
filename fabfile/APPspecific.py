@@ -65,7 +65,7 @@ env.APP_ROOT_DIR_NAME = env.APP_NAME.upper()
 env.APP_INSTALL_DIR_NAME = env.APP_NAME.lower() + '_rt'
 
 # Version of Python required for the Application
-env.APP_PYTHON_VERSION = '3.7'
+env.APP_PYTHON_VERSION = '3.6'
 
 # URL to download the correct Python version
 env.APP_PYTHON_URL = 'https://www.python.org/ftp/python/3.7.0/Python-3.7.0.tgz'
@@ -154,7 +154,7 @@ def start_APP_and_check_status():
     """
     with cd('{0}/pyvospace/server/deploy'.format(APP_source_dir())):
             # >>>> Darwin docker shows a permission issue with keychain access <<<<
-            if env.linux_flavor != 'Darwin':
+            if get_linux_flavor() != 'Darwin':
                 virtualenv('docker-compose build')
             else:
                 info('>>>> Darwin reuqires to build docker container manually')
@@ -182,13 +182,6 @@ def sysinitstart_APP_and_check_status():
     ###>>> 
     # The following just runs the DB in a docker container and runs the tests
     ###<<<
-    print ">>>>> Installing docker-compose <<<<<<<<"
-    sudo('curl -L "https://github.com/docker/compose/releases/download/1.23.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose')
-    sudo('chmod +x /usr/local/bin/docker-compose')
-    sudo('usermod -aG docker pyvospace')
-    sudo('service docker start')
-    time.sleep(5)
-    sudo("sudo sed -ie 's/# user_allow_other/user_allow_other/g' /etc/fuse.conf")
     nuser = APP_user()
     with settings(user=nuser):
         with cd('{0}/pyvospace/server/deploy'.format(APP_source_dir())):
@@ -265,8 +258,19 @@ def cleanup():
     ###<<<
     pass
 
+def install_docker_compose():
+    print(">>>>> Installing docker-compose <<<<<<<<")
+    sudo('curl -L "https://github.com/docker/compose/releases/download/1.23.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose')
+    sudo('chmod +x /usr/local/bin/docker-compose')
+    sudo('usermod -aG docker pyvospace')
+    sudo('service docker start')
+    time.sleep(5)
+    sudo("sudo sed -ie 's/# user_allow_other/user_allow_other/g' /etc/fuse.conf")
+    
+
 env.build_cmd = APP_build_cmd
 env.APP_init_install_function = install_sysv_init_script
 env.APP_start_check_function = start_APP_and_check_status
 env.sysinitAPP_start_check_function = sysinitstart_APP_and_check_status
 env.prepare_APP_data_dir = prepare_APP_data_dir
+env.APP_extra_sudo_function = install_docker_compose
