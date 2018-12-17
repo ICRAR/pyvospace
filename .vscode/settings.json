@@ -1,6 +1,6 @@
 {
-    "python.linting.enabled": true,
-    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": false,
+    "python.linting.pylintEnabled": false,
     "python.pythonPath": "/Users/awicenec/.virtualenvs/mypy2.7/bin/python",
     "python.linting.flake8Enabled": false
 }
