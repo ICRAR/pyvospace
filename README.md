@@ -17,21 +17,25 @@ Refer to [full documentation](https://pyvospace.readthedocs.io) for more informa
 
 pyvospace comes with a fabric based installation mechanism, which supports remote and local automatic installations
 on a variety of platforms and in a flexible way. This will install all the dependencies and the
-complete environment with a single command line. It requires fabric<2 to be installed in your
-local python environment. There are a number of issues with fabric versions smaller than 2 and python3 and
-thus the python version running fabric needs to be a python2.7 version. Note that the fabric installation will
-still install Python3.6 or Python3.7 for pyvospace into a dedicated virtual environment.
+complete environment with a single command line. It requires fabric3 to be installed in your
+local python environment. This is compatible with both Python2 and Python3.
 
 ***Installation of fabric***
 
 Make sure that you have a suitable python version on your path and install fabric
 
 ```
-python -V
->>> Python 2.7.15
-pip install fabric<2
+pip install fabric3
 ```
-From the root of the repository execute the fabric installation
+From the root of the cloned repository execute the fabric installation.
+
+You will also need to install the fabricTemplate into your local python environment:
+
+```
+pip install git+https://github.com/ICRAR/fabfileTemplate
+```
+
+Then change into the root folder of the cloned pyvospace repository and execute:
 
 ```
 fab hl.user_deploy -H localhost
@@ -39,7 +43,12 @@ fab hl.user_deploy -H localhost
 
 This will install pyvospace into a dedicated virtual environment into your home directory and test the installation.
 The fabric script is very versatile and has many options, including installations on AWS and parallel installations
-on multiple hosts.
+on multiple hosts. For a brief description of the multitude of options please run
+
+```
+fab --list
+```
+in the root directory of the cloned repository of pyvospace.
 
 ***Manual Installation***
 
