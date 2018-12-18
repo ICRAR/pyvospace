@@ -43,7 +43,7 @@ fab hl.user_deploy -H localhost
 
 This will install pyvospace into a dedicated virtual environment into your home directory and test the installation.
 The fabric script is very versatile and has many options, including installations on AWS and parallel installations
-on multiple hosts. For a brief description of the multitude of options please run
+on multiple hosts. For a brief description of the multitude of options of the fabric installation please run:
 
 ```
 fab --list
