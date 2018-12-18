@@ -36,7 +36,6 @@ from fabric.context_managers import settings, cd
 from fabric.contrib.files import exists, sed
 from fabric.utils import abort
 from fabric.contrib.console import confirm
-import urllib2
 
 # >>> All the settings below are kept in the special fabric environment
 # >>> dictionary called env. Don't change the names, only adjust the
