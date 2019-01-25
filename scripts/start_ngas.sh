@@ -1,1 +1,1 @@
-ngamsServer -cfg /home/toby/Pelagos/Projects/ICRAR/ngas_vo/NGAS/cfg/ngamsServer.conf -v 4 -autoonline
+ngamsServer -cfg ${NGAS_STORAGE_DIR}/cfg/ngamsServer.conf -v 4 -autoonline
