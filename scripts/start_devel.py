@@ -20,15 +20,17 @@ def run_ngas():
     cmd.append("-cfg")
     cmd.append(os.path.join(os.environ["NGAS_STORAGE_DIR"],"cfg","ngamsServer.conf"))
     cmd.append("-v 4 -autoonline")
-    while open(logfile, "w") as fd:
+    with open(logfile, "w") as fd:
         subprocess.call(cmd, stdout=fd, stderr=fd)
 
-def exit_fun():
-    #os.killpg(p_docker.pid, signal.SIGTERM)
-    p_docker.terminate()
-    p_ngas.terminate()
+#def exit_fun():
+#    #os.killpg(p_docker.pid, signal.SIGTERM)
+#    p_docker.terminate()
+#    p_ngas.terminate()
 
 # Open two processes
-atexit.register(exit_fun)
+#atexit.register(exit_fun)
 p_docker=mp.Process(run_docker)
+p_docker.start()
 p_ngas=mp.Process(run_ngas)
+p_ngas.start()
