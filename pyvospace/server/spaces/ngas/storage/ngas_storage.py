@@ -124,6 +124,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             return await send_file(request, os.path.basename(path_tree), file_path)
 
     async def upload(self, job: StorageUWSJob, request: aiohttp.web.Request):
+        # Upload files to the server
         reader = request.content
         path_tree = job.transfer.target.path
         target_id = uuid.uuid4()

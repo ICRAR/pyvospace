@@ -52,7 +52,7 @@ class TestBase(unittest.TestCase):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(None)
 
-        self.config_filename = 'test_vo.ini'
+        self.config_filename = 'test_vo_posix.ini'
         config = configparser.ConfigParser()
         if not os.path.exists(self.config_filename):
             storage_details = json.dumps(
