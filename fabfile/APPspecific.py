@@ -164,9 +164,9 @@ def start_APP_and_check_status():
     with cd('{0}'.format(APP_source_dir())):
         virtualenv('python -m unittest discover test')
 #     run('mkdir -p /tmp/fuse')
-#     virtualenv('posix_space --cfg test_vo.ini > /tmp/space.log 2>&1')
+#     virtualenv('posix_space --cfg test_vo_posix.ini > /tmp/space.log 2>&1')
 #     time.sleep(2)
-#     virtualenv('posix_storage --cfg test_vo.ini > /tmp/storage.log 2>&1')
+#     virtualenv('posix_storage --cfg test_vo_posix.ini > /tmp/storage.log 2>&1')
 #     time.sleep(2)
 #     virtualenv('python -m pyvospace.client.fuse --host localhost --port 8080 --username test --password test --mountpoint /tmp/fuse/`` > /tmp/fusemnt.log 2>&1')
 #     time.sleep(2)
@@ -186,9 +186,9 @@ def sysinitstart_APP_and_check_status():
         with cd('{0}'.format(APP_source_dir())):
         #    virtualenv('python -m unittest discover test')
         #     run('mkdir -p /tmp/fuse')
-        #     virtualenv('posix_space --cfg test_vo.ini > /tmp/space.log 2>&1')
+        #     virtualenv('posix_space --cfg test_vo_posix.ini > /tmp/space.log 2>&1')
         #     time.sleep(2)
-        #     virtualenv('posix_storage --cfg test_vo.ini > /tmp/storage.log 2>&1')
+        #     virtualenv('posix_storage --cfg test_vo_posix.ini > /tmp/storage.log 2>&1')
         #     time.sleep(2)
         #     virtualenv('python -m pyvospace.client.fuse --host localhost --port 8080 --username test --password test --mountpoint /tmp/fuse/`` > /tmp/fusemnt.log 2>&1')
         #     time.sleep(2)
