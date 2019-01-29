@@ -99,6 +99,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         root_dir = self.root_dir
         path_tree = job.transfer.target.path
         if job.transfer.target.node_type == NodeType.ContainerNode:
+            # Checking if request wants a tar file
             if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
                 return web.Response(status=400, text=f'Unsupported Container View. '
                                                      f'View: {job.transfer.view}')
@@ -110,6 +111,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                 await copy(real_path, stage_path)
 
             try:
+                # Tarring up the sources, I might need to ask the database for all
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(self.process_executor, tar,
                                            stage_path, tar_file, os.path.basename(path_tree))
@@ -125,13 +127,20 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
     async def upload(self, job: StorageUWSJob, request: aiohttp.web.Request):
         # Upload files to the server
+
+        # Stream on the content
         reader = request.content
         path_tree = job.transfer.target.path
+        # UUID is created here?
         target_id = uuid.uuid4()
+        # Base name of the file
         base_name = f'{target_id}_{os.path.basename(path_tree)}'
+        # File name without UUID?
         real_file_name = f'{self.root_dir}/{path_tree}'
+        # File name with UUID
         stage_file_name = f'{self.staging_dir}/{base_name}'
         try:
+            # Read from buffer to temporary file
             size = 0
             async with aiofiles.open(stage_file_name, 'wb') as f:
                 while True:
@@ -143,6 +152,8 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                     size += len(buffer)
 
             if job.transfer.target.node_type == NodeType.ContainerNode:
+                # Check if the upload is a tar file?
+                # What do I do about directory structures?
                 if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
                     return web.Response(status=400, text=f'Unsupported Container View. '
                                                          f'View: {job.transfer.view}')
@@ -150,6 +161,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                 try:
 
                     loop = asyncio.get_event_loop()
+                    # Untarring process
                     root_node = await loop.run_in_executor(self.process_executor,
                                                            untar,
                                                            stage_file_name,
@@ -175,9 +187,12 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                     await asyncio.shield(node.save()) # save details to db
                     await asyncio.shield(move(stage_file_name, real_file_name)) # move in single transaction
 
+            # What's this reponse?
             return web.Response(status=200)
         except (asyncio.CancelledError, Exception):
+            # Handle a cancellation
             raise
         finally:
+            # Remove stage file name no matter what
             with suppress(Exception):
                 await asyncio.shield(remove(stage_file_name))
