@@ -27,8 +27,7 @@ from aiohttp import web
 from pyvospace.core.model import *
 from pyvospace.server import set_fuzz, set_busy_fuzz
 from pyvospace.server.spaces.ngas.storage.ngas_storage import NGASStorageServer
-from test.test_base import TestBase
-
+from test_base import TestBase
 
 class TestPushPull(TestBase):
 
@@ -39,7 +38,7 @@ class TestPushPull(TestBase):
 
         self.ngas_runner = web.AppRunner(ngas_server)
         self.loop.run_until_complete(self.ngas_runner.setup())
-        self.ngas_site = web.TCPSite(self.ngas_runner, 'localhost', 8081)
+        self.ngas_site = web.TCPSite(self.ngas_runner, 'localhost', 8083)
         self.loop.run_until_complete(self.ngas_site.start())
 
     async def _setup(self):
@@ -60,6 +59,13 @@ class TestPushPull(TestBase):
 
     def test_push_to_node(self):
         async def run():
+            node = DataNode('/root/mytar.tar.gz',
+                properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True)])
+            await self.create_node(node)
+
+            security_method = SecurityMethod('ivo://ivoa.net/sso#cookie')
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
 
 
         self.loop.run_until_complete(run())

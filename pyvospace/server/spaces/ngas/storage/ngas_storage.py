@@ -110,7 +110,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         session = await get_session(request)
 
         # Get the UUID on the transaction
-        space_id=job.transfer.target.space_id
+        uuid=job.transfer.target.id
 
         # Filename to be used with the NGAS object store
         base_name=os.path.basename(path_tree)
@@ -139,7 +139,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             # Prepare the connection
             await resp_client.prepare(request)
 
-            # Read and write to buffers
+            # Read from source and and write destination in buffers
             async for chunk in resp_ngas.content.iter_chunked(io.DEFAULT_BUFFER_SIZE):
                 if chunk:
                     await resp_client.write(chunk)
@@ -149,9 +149,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             return(resp_client)
 
         except Exception:
-            # Question, should I raise an exception or send a response to the client
             raise
-            #return web.Response(status=400, text="Sorry, server failed to retrieve file {} from NGAS server".format(base_name))
 
 
         # Handling connection errors?
