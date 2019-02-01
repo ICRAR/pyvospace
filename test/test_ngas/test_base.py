@@ -38,7 +38,7 @@ from aiohttp import web
 from urllib.parse import urlencode
 from passlib.hash import pbkdf2_sha256
 
-from pyvospace.server.spaces.ngas import NGASSpaceServer
+from pyvospace.server.spaces.ngas.space.ngas_space import NGASSpaceServer
 from pyvospace.core.model import *
 
 
@@ -60,7 +60,7 @@ class TestBase(unittest.TestCase):
                  'staging_dir': '/tmp/ngas/staging/'})
 
             config['Space'] = {'host': 'localhost',
-                               'port': 8080,
+                               'port': 8082,
                                'name': 'ngas',
                                'uri': 'icrar.org',
                                'dsn': 'postgres://vos_user:vos_user@localhost:5435/vospace',
@@ -72,10 +72,10 @@ class TestBase(unittest.TestCase):
 
             config['Storage'] = {'name': 'ngas',
                                  'host': 'localhost',
-                                 'port': 8081,
+                                 'port': 8083,
                                  'parameters': storage_details,
-                                 'use_ssl': 0
-                                }
+                                 'use_ssl': 0,
+                                 'ngas_servers' : ['http://localhost:7777']}
 
             with open(self.config_filename, 'w') as conf:
                 config.write(conf)
