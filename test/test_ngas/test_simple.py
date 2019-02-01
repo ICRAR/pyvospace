@@ -59,6 +59,9 @@ class TestPushPull(TestBase):
 
     def test_push_to_node(self):
         async def run():
+            root_node = ContainerNode('/root')
+            await self.create_node(root_node)
+
             node = DataNode('/root/mytar.tar.gz',
                 properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True)])
             await self.create_node(node)
