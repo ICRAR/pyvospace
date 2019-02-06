@@ -1,1 +1,1 @@
-from pyvospace.server.spaces.posix.space.posix_space import *
+from pyvospace.server.spaces.ngas.space.ngas_space import *
