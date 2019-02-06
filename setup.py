@@ -21,7 +21,7 @@ setup(name='pyvospace',
                         'requests'],
       entry_points={'console_scripts': [
           'posix_space = pyvospace.server.spaces.posix.space.__main__:main',
-          'posix_storage = pyvospace.server.spaces.posix.storage.__main__:main'
+          'posix_storage = pyvospace.server.spaces.posix.storage.__main__:main',
           'ngas_space = pyvospace.server.spaces.ngas.space.__main__:main',
           'ngas_storage = pyvospace.server.spaces.ngas.storage.__main__:main']
       })
