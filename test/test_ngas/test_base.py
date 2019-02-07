@@ -75,7 +75,9 @@ class TestBase(unittest.TestCase):
                                  'port': 8083,
                                  'parameters': storage_details,
                                  'use_ssl': 0,
-                                 'ngas_servers' : ['http://localhost:7777']}
+                                 'ngas_servers' : 'http://localhost:7777'
+                                                  'http://localhost:7777'
+                                 }
 
             with open(self.config_filename, 'w') as conf:
                 config.write(conf)

@@ -26,11 +26,12 @@ import asyncio
 import aiofiles
 import aiohttp
 import numpy as np
+import multiprocessing as mp
 
 from aiohttp import web
 from aiohttp_security import setup as setup_security
 from aiohttp_security import SessionIdentityPolicy
-from aiohttp_session import setup as setup_session, get_session
+from aiohttp_session import setup as setup_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from contextlib import suppress
 from concurrent.futures import ProcessPoolExecutor
@@ -54,9 +55,11 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
         # Choose an NGAS server, initially at random,
         # there is probably a more elegant implementation
-        self.ngas_server_strings=self.config['Space']['ngas_servers']
-        server_index=np.random.choice([n for n in range(0,len(self.ngas_servers))],1)
-        self.ngas_server_string=self.ngas_servers[server_index]
+        self.ngas_server_strings=self.config['Storage']['ngas_servers'].replace("\'","").replace("\"","").split("\n")
+        self.logger.debug(self.ngas_server_strings)
+        server_index=int(np.random.choice([n for n in range(0,len(self.ngas_server_strings))],1))
+        self.ngas_server_string=self.ngas_server_strings[server_index]
+        self.ngas_session = aiohttp.ClientSession()
 
         # Do I need a root_dir, probably not.
         self.root_dir = self.parameters['root_dir']
@@ -77,6 +80,8 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         loop = asyncio.get_event_loop()
         await super().shutdown()
         await loop.run_in_executor(None, self.process_executor.shutdown)
+        # Close the NGAS session
+        await self.ngas_session.close()
 
     async def setup(self):
         await super().setup()
@@ -95,6 +100,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                        SessionIdentityPolicy(),
                        DBUserNodeAuthorizationPolicy(self.name, self.db_pool, self.root_dir))
 
+
     @classmethod
     async def create(cls, cfg_file, *args, **kwargs):
         app = NGASStorageServer(cfg_file, *args, **kwargs)
@@ -106,15 +112,15 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         root_dir = self.root_dir
         path_tree = job.transfer.target.path
 
-        # Get the session of a request? Is this the best way to do it?
-        session = await get_session(request)
-
         # Get the UUID on the transaction
-        uuid=job.transfer.target.id
+        id=job.transfer.target.id
+
+        print(id)
+        #self.logger.debug(str(id))
 
         # Filename to be used with the NGAS object store
         base_name=os.path.basename(path_tree)
-        filename_ngas=base_name
+        filename_ngas=base_name+"_"+str(id)
 
         # URL for retrieval from NGAS
         url_ngas=self.ngas_server_string+"/RETRIEVE"
@@ -125,32 +131,31 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
         # I suspect this streams content from the NGAS request to the client
         # In a non-blocking way, but I am not sure
-        try:
-            # Connect to NGAS
-            resp_ngas = await session.get(url_ngas, params=params)
-            assert(resp_ngas.status==200), "Couldn't find file on NGAS server"
 
-            # Otherwise create the client
-            resp_client=web.StreamResponse()
+        # Connect to NGAS
+        resp_ngas = await self.ngas_session.get(url_ngas, params=params)
 
-            # Do we need to do anything here with headers?
-            resp_client.headers=resp_ngas.headers
+        # Rudimentry error checking on the NGAS connection
+        if resp_ngas.status!=200:
+            raise aiohttp.web.HTTPServerError(reason="Error in connecting to NGAS server")
 
-            # Prepare the connection
-            await resp_client.prepare(request)
+        # Otherwise create the client
+        resp_client=web.StreamResponse()
 
-            # Read from source and and write destination in buffers
-            async for chunk in resp_ngas.content.iter_chunked(io.DEFAULT_BUFFER_SIZE):
-                if chunk:
-                    await resp_client.write(chunk)
+        # Do we need to do anything here with headers?
+        resp_client.headers=resp_ngas.headers
 
-            # Finish the stream
-            await resp_client.write_eof()
-            return(resp_client)
+        # Prepare the connection
+        await resp_client.prepare(request)
 
-        except Exception:
-            raise
+        # Read from source and and write destination in buffers
+        async for chunk in resp_ngas.content.iter_chunked(io.DEFAULT_BUFFER_SIZE):
+            if chunk:
+                await resp_client.write(chunk)
 
+        # Finish the stream
+        await resp_client.write_eof()
+        return(resp_client)
 
         # Handling connection errors?
 
@@ -189,50 +194,64 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
         # Get the path tree
         path_tree = job.transfer.target.path
+        path_tree = job.transfer.target.path
 
-        # Get the session of a request? Is this the best way to do it?
-        session = await get_session(request)
-
-        # Get the UUID for the transaction
-        space_id = job.transfer.target.space_id
+        # Get the UUID for the node
+        id = job.transfer.target.id
 
         # Make up the URL for the retrieval from NGAS
         url_ngas = self.ngas_server_string + "/ARCHIVE"
 
         # Create the filename that is to be used with the NGAS object store
         base_name=os.path.basename(path_tree)
-        filename_ngas=base_name
+        filename_ngas=base_name+"_"+str(id)
 
         # Make up the filename for upload to NGAS
-        params = {"filename": filename_ngas}
+        params = {"filename": filename_ngas,
+                  "mime_type": "application/octet-stream"}
 
-        # Stream content from the user to NGAS in a streaming manner
-        try:
-            resp_ngas= await session.post(url_ngas, params=params)
+        self.logger.debug(self.ngas_server_string)
+        self.logger.debug(url_ngas)
+        self.logger.debug(filename_ngas)
+
+        # Stream reader to capture the size, think about putting this in utils
+        async def stream_sender(reader):
             size=0
             async for buffer in reader.iter_chunked(io.DEFAULT_BUFFER_SIZE):
+                # Increment size of the buffer being transferred
+                size += len(buffer)
+                yield buffer
+
+        #  Size of the transfer
+        #resp_ngas=await self.ngas_session.post(url_ngas,
+        #                                       params=params,
+        #                                       data={"filename": stream_sender(reader)})
+
+        size=0
+        async with self.ngas_session.post(url_ngas, params=params) as ngas_resp:
+            async for buffer in reader.iter_chunked(io.DEFAULT_BUFFER_SIZE):
+                # Increment size of the buffer being transferred
                 if buffer:
-                    size+=len(buffer)
-                    await resp_ngas.write(buffer)
-            await resp_ngas.write_eof()
+                    size += len(buffer)
+                    ngas_resp.write(buffer)
+            ngas_resp.write_eof()
 
-            assert(resp_ngas.status==200)
+        self.logger.debug("size of transfer was {}".format(size))
 
-            # Let the client know the transaction was successful
-            return web.Response(status=200)
+        # Rudimentry error checking on the NGAS connection
+        if resp_ngas.status!=200:
+            raise aiohttp.web.HTTPServerError(reason="Error in connecting to NGAS server")
 
-            # Inform the database of new data
-            async with job.transaction() as tr:
-                node = tr.target # get the target node that is associated with the data
-                node.size = size # set the size
-                node.storage = self.storage # set the storage back end so it can be found
-                await asyncio.shield(fuzz01(2))
-                await asyncio.shield(node.save()) # save details to db
+        # Let the client know the transaction was successful
+        return web.Response(status=200)
 
-        except (asyncio.CancelledError, Exception):
-            # Handle a cancellation error
-            raise
-
+        # Inform the database of new data
+        async with job.transaction() as tr:
+            node = tr.target # get the target node that is associated with the data
+            node.size = size # set the size
+            node.storage = self.storage # set the storage back end so it can be found
+            await asyncio.shield(fuzz01(2))
+            await asyncio.shield(node.save()) # save details to db
 
         # # Stream on the content
         # reader = request.content

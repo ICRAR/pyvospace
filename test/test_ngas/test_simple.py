@@ -21,6 +21,7 @@
 
 import unittest
 import asyncio
+import logging
 
 from aiohttp import web
 
@@ -32,9 +33,13 @@ from test_base import TestBase
 class TestPushPull(TestBase):
 
     def setUp(self):
+
+        logger=logging.getLogger("aiohttp.web")
+        logger.setLevel(logging.DEBUG)
+
         super().setUp()
         self.loop.run_until_complete(self._setup())
-        ngas_server = self.loop.run_until_complete(NGASStorageServer.create(self.config_filename))
+        ngas_server = self.loop.run_until_complete(NGASStorageServer.create(self.config_filename, logger=logger))
 
         self.ngas_runner = web.AppRunner(ngas_server)
         self.loop.run_until_complete(self.ngas_runner.setup())
@@ -63,10 +68,14 @@ class TestPushPull(TestBase):
             await self.create_node(root_node)
 
             node = DataNode('/root/mytar.tar.gz',
-                properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True)])
+                properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True),
+                            Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
             await self.create_node(node)
 
-            security_method = SecurityMethod('ivo://ivoa.net/sso#cookie')
+            #         # push to leaf node
+            push = PushToSpace(node, [HTTPPut()], params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
+            #
+            transfer = await self.sync_transfer_node(push)
             put_end = transfer.protocols[0].endpoint.url
             await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
 
