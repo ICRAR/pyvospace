@@ -2,7 +2,12 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="690d5752-2169-44b7-bf45-576905af2743" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/setup.py" beforeDir="false" afterPath="$PROJECT_DIR$/setup.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/start_ngas.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/start_ngas.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_base.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_simple.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_simple.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_vo_ngas.ini" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_vo_ngas.ini" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -12,11 +17,70 @@
   </component>
   <component name="FileEditorManager">
     <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-      <file pinned="false" current-in-tab="true">
+      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/test/test_ngas/test_simple.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="179">
-              <caret line="24" column="23" lean-forward="true" selection-start-line="24" selection-start-column="23" selection-end-line="24" selection-end-column="23" />
+            <state relative-caret-position="-5100">
+              <caret line="6" column="31" selection-start-line="6" selection-start-column="31" selection-end-line="6" selection-end-column="31" />
+              <folding>
+                <element signature="e#964#979#0" expanded="true" />
+              </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="109">
+              <caret line="222" column="21" selection-start-line="222" selection-start-column="21" selection-end-line="222" selection-end-column="21" />
+              <folding>
+                <element signature="e#964#973#0" expanded="true" />
+              </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/../ngas_tutorial/test_ngas.py">
+          <provider selected="true" editor-type-id="text-editor" />
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/pyvospace/server/storage.py">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="320">
+              <caret line="25" column="10" selection-start-line="25" selection-start-column="10" selection-end-line="25" selection-end-column="10" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/test/test_ngas/test_vo_ngas.ini">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="420">
+              <caret line="21" selection-start-line="21" selection-end-line="21" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="420">
+              <caret line="77" column="55" selection-start-line="77" selection-start-column="55" selection-end-line="77" selection-end-column="55" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/../ngas_tutorial/test_ngas_aiohttp.py">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="240">
+              <caret line="12" column="50" selection-start-line="12" selection-start-column="12" selection-end-line="12" selection-end-column="50" />
+              <folding>
+                <element signature="e#33#47#0" expanded="true" />
+              </folding>
             </state>
           </provider>
         </entry>
@@ -36,7 +100,6 @@
       <find>get_trans</find>
       <find>get_transfer_pro</find>
       <find>job</find>
-      <find>setup_session</find>
       <find>send_file</find>
       <find>process</find>
       <find>target</find>
@@ -46,9 +109,12 @@
       <find>uri</find>
       <find>self.storage</find>
       <find>path</find>
-      <find>space_id</find>
       <find>Posix</find>
       <find>posix</find>
+      <find>push_</find>
+      <find>PushToSpace</find>
+      <find>setup_session</find>
+      <find>space_id</find>
     </findStrings>
     <replaceStrings>
       <replace>NGAS</replace>
@@ -72,22 +138,23 @@
         <option value="$PROJECT_DIR$/../ngas_tutorial/test_configparser.py" />
         <option value="$PROJECT_DIR$/test_vo_ngas.ini" />
         <option value="$PROJECT_DIR$/../ngas_tutorial/test_ngas_aiohttp.py" />
-        <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" />
         <option value="$PROJECT_DIR$/../ngas_tutorial/test_async.py" />
         <option value="$PROJECT_DIR$/test/test_ngas/test_push_pull.py" />
         <option value="$PROJECT_DIR$/test/test_ngas/test_abort.py" />
-        <option value="$PROJECT_DIR$/test/test_ngas/test_base.py" />
-        <option value="$PROJECT_DIR$/test/test_ngas/test_simple.py" />
         <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/__init__.py" />
         <option value="$PROJECT_DIR$/setup.py" />
+        <option value="$PROJECT_DIR$/test/test_ngas/test_simple.py" />
+        <option value="$PROJECT_DIR$/test/test_ngas/test_base.py" />
+        <option value="$PROJECT_DIR$/test/test_ngas/test_vo_ngas.ini" />
+        <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" />
       </list>
     </option>
   </component>
   <component name="ProjectFrameBounds">
-    <option name="x" value="2231" />
-    <option name="y" value="71" />
-    <option name="width" value="1488" />
-    <option name="height" value="977" />
+    <option name="x" value="1805" />
+    <option name="y" value="49" />
+    <option name="width" value="1717" />
+    <option name="height" value="969" />
   </component>
   <component name="ProjectLevelVcsManager">
     <ConfirmationsSetting value="1" id="Add" />
@@ -97,47 +164,13 @@
       <foldersAlwaysOnTop value="true" />
     </navigator>
     <panes>
+      <pane id="Scope" />
       <pane id="ProjectPane">
         <subPane>
           <expand>
             <path>
               <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
               <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="server" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="server" type="462c0819:PsiDirectoryNode" />
-              <item name="spaces" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="server" type="462c0819:PsiDirectoryNode" />
-              <item name="spaces" type="462c0819:PsiDirectoryNode" />
-              <item name="ngas" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="server" type="462c0819:PsiDirectoryNode" />
-              <item name="spaces" type="462c0819:PsiDirectoryNode" />
-              <item name="ngas" type="462c0819:PsiDirectoryNode" />
-              <item name="space" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
               <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
@@ -158,7 +191,6 @@
           <select />
         </subPane>
       </pane>
-      <pane id="Scope" />
     </panes>
   </component>
   <component name="PropertiesComponent">
@@ -340,11 +372,10 @@
     <servers />
   </component>
   <component name="ToolWindowManager">
-    <frame x="2231" y="71" width="1488" height="977" extended-state="0" />
-    <editor active="true" />
+    <frame x="1805" y="49" width="1717" height="969" extended-state="0" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" side_tool="true" visible="true" weight="0.27152777" />
-      <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" side_tool="true" visible="true" weight="0.23786698" />
+      <window_info id="Structure" order="1" side_tool="true" weight="0.24985021" />
       <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
       <window_info active="true" anchor="bottom" id="Find" order="1" visible="true" weight="0.32882884" />
@@ -390,12 +421,6 @@
     <option name="LAST_COMMIT_MESSAGE" value="Latest" />
   </component>
   <component name="editorHistoryManager">
-    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/.idea/encodings.xml">
-      <provider selected="true" editor-type-id="text-editor" />
-    </entry>
-    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/.idea/misc.xml">
-      <provider selected="true" editor-type-id="text-editor" />
-    </entry>
     <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/.idea/modules.xml">
       <provider selected="true" editor-type-id="text-editor" />
     </entry>
@@ -525,16 +550,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/pyvospace/server/storage.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="320">
-          <caret line="56" column="63" selection-start-line="56" selection-start-column="63" selection-end-line="56" selection-end-column="63" />
-          <folding>
-            <element signature="e#964#975#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/posix/utils.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="200">
@@ -548,16 +563,6 @@
           <caret line="117" column="35" selection-start-line="117" selection-start-column="35" selection-end-line="117" selection-end-column="35" />
           <folding>
             <element signature="e#964#973#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/../ngas_tutorial/test_ngas_aiohttp.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="220">
-          <caret line="25" column="55" selection-start-line="25" selection-start-column="55" selection-end-line="25" selection-end-column="55" />
-          <folding>
-            <element signature="e#33#47#0" expanded="true" />
           </folding>
         </state>
       </provider>
@@ -620,23 +625,6 @@
           <folding>
             <element signature="e#964#975#0" expanded="true" />
           </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="2060">
-          <caret line="126" column="42" selection-start-line="126" selection-start-column="42" selection-end-line="126" selection-end-column="42" />
-          <folding>
-            <element signature="e#964#973#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="3213">
-          <caret line="316" column="26" selection-start-line="316" selection-start-column="26" selection-end-line="316" selection-end-column="26" />
         </state>
       </provider>
     </entry>
@@ -706,10 +694,57 @@
     <entry file="file://$PROJECT_DIR$/pyvospace/__init__.py">
       <provider selected="true" editor-type-id="text-editor" />
     </entry>
+    <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="420">
+          <caret line="77" column="55" selection-start-line="77" selection-start-column="55" selection-end-line="77" selection-end-column="55" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/pyvospace/server/storage.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="320">
+          <caret line="25" column="10" selection-start-line="25" selection-start-column="10" selection-end-line="25" selection-end-column="10" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/../ngas_tutorial/test_ngas.py">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
     <entry file="file://$PROJECT_DIR$/test/test_ngas/test_simple.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="179">
-          <caret line="24" column="23" lean-forward="true" selection-start-line="24" selection-start-column="23" selection-end-line="24" selection-end-column="23" />
+        <state relative-caret-position="-5100">
+          <caret line="6" column="31" selection-start-line="6" selection-start-column="31" selection-end-line="6" selection-end-column="31" />
+          <folding>
+            <element signature="e#964#979#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/../ngas_tutorial/test_ngas_aiohttp.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="240">
+          <caret line="12" column="50" selection-start-line="12" selection-start-column="12" selection-end-line="12" selection-end-column="50" />
+          <folding>
+            <element signature="e#33#47#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/test/test_ngas/test_vo_ngas.ini">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="420">
+          <caret line="21" selection-start-line="21" selection-end-line="21" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="109">
+          <caret line="222" column="21" selection-start-line="222" selection-start-column="21" selection-end-line="222" selection-end-column="21" />
+          <folding>
+            <element signature="e#964#973#0" expanded="true" />
+          </folding>
         </state>
       </provider>
     </entry>
