@@ -214,33 +214,45 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         self.logger.debug(url_ngas)
         self.logger.debug(filename_ngas)
 
+        self.logger.debug(request.raw_headers)
+        self.logger.debug(request.headers)
+
         # Stream reader to capture the size, think about putting this in utils
-        async def stream_sender(reader):
+        async def stream_sender(reader,stream):
             size=0
             async for buffer in reader.iter_chunked(io.DEFAULT_BUFFER_SIZE):
                 # Increment size of the buffer being transferred
                 size += len(buffer)
-                yield buffer
+                stream.feed_data(buffer)
+
+            return size
+
+        self.logger.debug("Got to here1")
 
         #  Size of the transfer
         #resp_ngas=await self.ngas_session.post(url_ngas,
         #                                       params=params,
         #                                       data={"filename": stream_sender(reader)})
 
-        size=0
-        async with self.ngas_session.post(url_ngas, params=params) as ngas_resp:
-            async for buffer in reader.iter_chunked(io.DEFAULT_BUFFER_SIZE):
-                # Increment size of the buffer being transferred
-                if buffer:
-                    size += len(buffer)
-                    ngas_resp.write(buffer)
-            ngas_resp.write_eof()
+        # Create a stream manually
+        stream=aiohttp.streams.StreamReader(asyncio.protocols.BaseProtocol)
+        self.logger.debug("Got to here2")
 
-        self.logger.debug("size of transfer was {}".format(size))
+        resp_ngas = await self.ngas_session.post(url_ngas, params=params, data={"filename": stream})
+#            async for buffer in reader.iter_chunked(io.DEFAULT_BUFFER_SIZE):
+#                # Increment size of the buffer being transferred
+#                if buffer:
+#                    size += len(buffer)
+#                    ngas_resp.write(buffer)
+#            ngas_resp.write_eof()
 
         # Rudimentry error checking on the NGAS connection
         if resp_ngas.status!=200:
             raise aiohttp.web.HTTPServerError(reason="Error in connecting to NGAS server")
+
+        size=await stream_sender(reader, stream)
+
+        self.logger.debug("size of transfer was {}".format(size))
 
         # Let the client know the transaction was successful
         return web.Response(status=200)
