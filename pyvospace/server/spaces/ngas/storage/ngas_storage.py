@@ -39,7 +39,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pyvospace.core.model import NodeType, View
 
 # Not sure if I need these
-from pyvospace.server.spaces.ngas.utils import mkdir, remove, send_file, move, copy, rmtree, tar, untar
+from pyvospace.server.spaces.ngas.utils import mkdir, remove, send_file, move, copy, rmtree, tar, untar, send_stream_to_ngas
 from pyvospace.server.storage import HTTPSpaceStorageServer
 from pyvospace.server import fuzz, fuzz01
 from pyvospace.server.spaces.ngas.auth import DBUserNodeAuthorizationPolicy
@@ -207,7 +207,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         ngas_filename=base_name+"_"+str(id)
 
         # Send the whole stream to NGAS, count bytes and let the client know the transaction was successful
-        size=await upload_stream_to_ngas(request, self.ngas_hostname,
+        size=await send_stream_to_ngas(request, self.ngas_hostname,
                                          self.ngas_port, ngas_filename, self.logger)
 
         # Inform the database of new data
