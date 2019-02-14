@@ -59,6 +59,9 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         self.logger.debug(self.ngas_server_strings)
         server_index=int(np.random.choice([n for n in range(0,len(self.ngas_server_strings))],1))
         self.ngas_server_string=self.ngas_server_strings[server_index]
+        temp=self.ngas_server_string.rpartition(":")
+        self.ngas_hostname=temp[0]
+        self.ngas_port=int(temp[2])
         self.ngas_session = aiohttp.ClientSession()
 
         # Do I need a root_dir, probably not.
@@ -199,63 +202,13 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         # Get the UUID for the node
         id = job.transfer.target.id
 
-        # Make up the URL for the retrieval from NGAS
-        url_ngas = self.ngas_server_string + "/ARCHIVE"
-
         # Create the filename that is to be used with the NGAS object store
         base_name=os.path.basename(path_tree)
-        filename_ngas=base_name+"_"+str(id)
+        ngas_filename=base_name+"_"+str(id)
 
-        # Make up the filename for upload to NGAS
-        params = {"filename": filename_ngas,
-                  "mime_type": "application/octet-stream"}
-
-        self.logger.debug(self.ngas_server_string)
-        self.logger.debug(url_ngas)
-        self.logger.debug(filename_ngas)
-
-        self.logger.debug(request.raw_headers)
-        self.logger.debug(request.headers)
-
-        # Stream reader to capture the size, think about putting this in utils
-        async def stream_sender(reader,stream):
-            size=0
-            async for buffer in reader.iter_chunked(io.DEFAULT_BUFFER_SIZE):
-                # Increment size of the buffer being transferred
-                size += len(buffer)
-                stream.feed_data(buffer)
-
-            return size
-
-        self.logger.debug("Got to here1")
-
-        #  Size of the transfer
-        #resp_ngas=await self.ngas_session.post(url_ngas,
-        #                                       params=params,
-        #                                       data={"filename": stream_sender(reader)})
-
-        # Create a stream manually
-        stream=aiohttp.streams.StreamReader(asyncio.protocols.BaseProtocol)
-        self.logger.debug("Got to here2")
-
-        resp_ngas = await self.ngas_session.post(url_ngas, params=params, data={"filename": stream})
-#            async for buffer in reader.iter_chunked(io.DEFAULT_BUFFER_SIZE):
-#                # Increment size of the buffer being transferred
-#                if buffer:
-#                    size += len(buffer)
-#                    ngas_resp.write(buffer)
-#            ngas_resp.write_eof()
-
-        # Rudimentry error checking on the NGAS connection
-        if resp_ngas.status!=200:
-            raise aiohttp.web.HTTPServerError(reason="Error in connecting to NGAS server")
-
-        size=await stream_sender(reader, stream)
-
-        self.logger.debug("size of transfer was {}".format(size))
-
-        # Let the client know the transaction was successful
-        return web.Response(status=200)
+        # Send the whole stream to NGAS, count bytes and let the client know the transaction was successful
+        size=await upload_stream_to_ngas(request, self.ngas_hostname,
+                                         self.ngas_port, ngas_filename, self.logger)
 
         # Inform the database of new data
         async with job.transaction() as tr:
@@ -264,6 +217,9 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             node.storage = self.storage # set the storage back end so it can be found
             await asyncio.shield(fuzz01(2))
             await asyncio.shield(node.save()) # save details to db
+
+        # Let the client know the transaction was successful
+        return web.Response(status=200)
 
         # # Stream on the content
         # reader = request.content

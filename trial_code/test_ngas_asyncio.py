@@ -54,15 +54,17 @@ async def upload(hostname, port, filename_ngas, filename_local):
 
     # Read any response
     print("\nMoving to response:\n")
-    while True:
-        buffer = await reader.read(1024)
-        if buffer:
-            print(buffer.decode())
-        else:
-            break
 
-    #reader.close()
-    # Keep the writer open
+    # Look for ok Message in the first column
+    firstline = (await reader.readline()).decode().split(" ")
+
+    if '200' not in firstline:
+        # Do we let the client know?
+        raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+    else:
+        # Do we do something here?
+        pass
+
     writer.close()
 
 async def download(session, filename_ngas, filename_local, ngas_server):

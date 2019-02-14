@@ -26,6 +26,7 @@ import aiohttp
 import aiofiles
 import shutil
 import tarfile
+import urllib
 
 from pathlib import Path
 from aiofiles.os import stat
@@ -164,6 +165,82 @@ async def send_file(request, file_name, file_path):
         return response
     finally:
         await asyncio.shield(response.write_eof())
+
+
+async def send_stream_to_ngas(request: aiohttp.web.Request,
+                                hostname,
+                                port,
+                                filename_ngas,
+                                logger):
+
+    """Send a binary file from a request directly to an NGAS server"""
+    size=0
+    try:
+
+        params={"filename": filename_ngas,
+                "file_id" : filename_ngas,
+                "mime_type":"application/octet-stream"}
+
+        encoded_parms=urllib.parse.urlencode(params)
+        ngas_string="ngas_storage"
+
+        # Get the number of bytes in a file
+        nbytes=request.content_length
+        content_type=request.content_type
+
+        # Open a HTTP connection to the NGAS server in a similar fashion to the
+        # Way Curl does it, nothing else seems elegant
+        # Make up HTTP Post header
+        raw_header= f"POST /ARCHIVE?{encoded_parms} HTTP/1.1\r\n" \
+                    f"Host: {hostname}:{port}\r\n" \
+                    f"Accept: */*\r\n" \
+                    f"User-Agent: {ngas_string}\r\n" \
+                    f"Content-Type: {content_type}\r\n" \
+                    f"Content-Length: {nbytes}\r\n" \
+                    f"Expect: 100-continue\r\n" \
+                    f"\r\n"
+
+        # Encode the raw header
+        logger.debug(raw_header)
+        raw_header=raw_header.encode("utf-8")
+        (reader, writer) = await asyncio.open_connection(host=hostname, port=port)
+
+        while True:
+            buffer=await request.content.read(io.DEFAULT_BUFFER_SIZE)
+            if buffer:
+                size+=len(buffer)
+                writer.write(buffer)
+                await writer.drain()
+            else:
+                break
+
+        # Not sure why we have to shield write_eof...
+        await asyncio.shield(writer.write_eof())
+        await writer.drain()
+
+        # Look for ok Message in the first column
+        firstline = (await reader.readline()).decode().split(" ")
+        if '200' not in firstline:
+            # Do we let the client know?
+            raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+        else:
+            # Do we do something here to let the client know?
+            pass
+
+        # Drain the rest of reader? Not sure if we need to do this
+        while True:
+            buffer=await reader.read(io.DEFAULT_BUFFER_SIZE)
+            if not buffer:
+                break
+
+        # Close the connection to NGAS
+        writer.close()
+
+    except Exception as e:
+        # We can do things, otherwise raise the Exception for now
+        raise e
+
+    return(size)
 
 
 def path_to_node_tree(directory, root_node_path, owner, group_read, group_write, storage):
