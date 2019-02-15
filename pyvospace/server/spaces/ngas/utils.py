@@ -38,18 +38,20 @@ from pyvospace.core.model import ContainerNode, StructuredDataNode, Property
 
 class ChunkedByteCounter:
     """A wrapper class to count the number of bytes being sent from a stream"""
-    def __init__(self, stream):
-        self._stream=stream
+    def __init__(self, content):
+        self._content=content
         self._size=0
+        self._iter=None
 
     def __aiter__(self):
-        self._iter=self._stream.iter_chunked(io.DEFAULT_BUFFER_SIZE)
-        return self._iter
+        #self._iter=self._content.__aiter__()
+        self._iter=self._content.iter_chunked(io.DEFAULT_BUFFER_SIZE)
+        return self
 
     async def __anext__(self):
         buffer=await self._iter.__anext__()
         self._size+=len(buffer)
-        return(buffer)
+        return buffer
 
 def copytree(src, dst, symlinks=False, ignore=None):
     if not os.path.exists(dst):
@@ -182,7 +184,7 @@ async def send_file(request, file_name, file_path):
 
 
 async def send_stream_to_ngas_rawhttp(request: aiohttp.web.Request,
-                                hostname, port, filename_ngas):
+                                hostname, port, filename_ngas, logger):
 
     """Send a binary file from a request directly to an NGAS server
     using raw and potentially unsafe http requests"""
@@ -190,7 +192,6 @@ async def send_stream_to_ngas_rawhttp(request: aiohttp.web.Request,
     try:
 
         params={"filename": filename_ngas,
-                "file_id" : filename_ngas,
                 "mime_type":"application/octet-stream"}
 
         encoded_parms=urllib.parse.urlencode(params)
@@ -235,6 +236,7 @@ async def send_stream_to_ngas_rawhttp(request: aiohttp.web.Request,
         if '200' not in firstline:
             # Do we let the client know?
             raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+            logger.debug("Error in reply from NGAS server")
         else:
             # Do we do something here to let the client know?
             pass
@@ -256,27 +258,32 @@ async def send_stream_to_ngas_rawhttp(request: aiohttp.web.Request,
 
 
 async def send_stream_to_ngas_aiohttp(request: aiohttp.web.Request,
-                                      session, hostname, port, filename_ngas):
-
+                                      session, hostname, port, filename_ngas, logger):
     """More elegant solution of using a ChunkedByteCounter """
     try:
 
         # Create parameters for the upload
         params = {"filename": filename_ngas,
-                  "file_id": filename_ngas,
                   "mime_type": "application/octet-stream"}
 
         # The URL to contact the NGAS server
-        url=str(hostname)+":"+str(port)+"/ARCHIVE"
+        url="http://"+str(hostname)+":"+str(port)+"/ARCHIVE"
 
         # Create a bytecounter from the post request content
         bytecounter=ChunkedByteCounter(request.content)
 
+        logger.debug(f"url is {url}")
+
+        import pdb
+        pdb.set_trace()
+
         # Connect to the NGAS server and upload
-        resp = await session.post(url, params=params, data={filename_ngas: bytecounter})
+        resp = await session.post(url, params=params, data=bytecounter)
 
         if resp.status!=200:
             raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+
+        logger.debug(f"bytcounter size is {bytecounter._size}")
 
         return(bytecounter._size)
 

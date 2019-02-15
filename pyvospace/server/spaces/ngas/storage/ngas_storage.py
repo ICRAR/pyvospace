@@ -59,8 +59,10 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         self.ngas_server_strings=self.config['Storage']['ngas_servers'].replace("\'","").replace("\"","").split("\n")
         server_index=int(np.random.choice([n for n in range(0,len(self.ngas_server_strings))],1))
         self.ngas_server_string=self.ngas_server_strings[server_index]
+
+        # Extract hostname and port
         temp=self.ngas_server_string.rpartition(":")
-        self.ngas_hostname=temp[0]
+        self.ngas_hostname=temp[0].rpartition("/")[2]
         self.ngas_port=int(temp[2])
         self.ngas_session = aiohttp.ClientSession()
 
@@ -128,8 +130,12 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             base_name=os.path.basename(path_tree)
             filename_ngas=base_name+"_"+str(id)
 
+            self.logger.debug(f"Pulling file {ngas_filename}")
+
             # URL for retrieval from NGAS
             url_ngas=self.ngas_server_string+"/RETRIEVE"
+
+            self.logger.debug(filename_ngas)
 
             # Make up the filename for retrieval from NGAS
             # How can I get the uuid from the database?
@@ -149,7 +155,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             resp_client=web.StreamResponse()
 
             # Do we need to do anything here with headers?
-            resp_client.headers=resp_ngas.headers
+            #resp_client.headers=resp_ngas.headers
 
             # Prepare the connection
             await resp_client.prepare(request)
@@ -212,12 +218,17 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             id = job.transfer.target.id
             ngas_filename=base_name+"_"+str(id)
 
-            # Send the whole stream to NGAS, count bytes and let the client know the transaction was successful
-            size=await send_stream_to_ngas_aiohttp(request, self.ngas_session, self.ngas_hostname,
-                                             self.ngas_port, ngas_filename)
+            self.logger.debug(f"Pushing file {ngas_filename}")
 
-            #size = await send_stream_to_ngas_rawhttp(request, self.ngas_hostname,
-            #                                         self.ngas_port, ngas_filename)
+            # Send the whole stream to NGAS, count bytes and let the client know the transaction was successful
+            size=await send_stream_to_ngas_rawhttp(request, self.ngas_hostname,
+                                             self.ngas_port, ngas_filename, self.logger)
+
+            #size = await send_stream_to_ngas_aiohttp(request, self.ngas_session, self.ngas_hostname,
+            #                                         self.ngas_port, ngas_filename, self.logger)
+
+            # Get the size
+            self.logger.debug(f"Upload file size is {size}")
 
             # Inform the database of new data
             async with job.transaction() as tr:
