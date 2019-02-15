@@ -82,6 +82,18 @@ class TestPushPull(TestBase):
 
         self.loop.run_until_complete(run())
 
+    def test_pull_from_node(self):
+        async def run():
+            node = DataNode('/root/mytar.tar.gz',
+                            properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True),
+                                        Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
+            self.create_node(node)
+
+            # Pull the node from the space
+            pull = PullFromSpace(node, [HTTPGet()])
+            transfer = await self.sync_transfer_node(pull)
+            pull_end = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(pull_end, '/tmp/download/')
 
     # def test_push_to_container(self):
     #     async def run():

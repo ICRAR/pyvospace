@@ -36,6 +36,20 @@ from contextlib import suppress
 from pyvospace.server import fuzz
 from pyvospace.core.model import ContainerNode, StructuredDataNode, Property
 
+class ChunkedByteCounter:
+    """A wrapper class to count the number of bytes being sent from a stream"""
+    def __init__(self, stream):
+        self._stream=stream
+        self._size=0
+
+    def __aiter__(self):
+        self._iter=self._stream.iter_chunked(io.DEFAULT_BUFFER_SIZE)
+        return self._iter
+
+    async def __anext__(self):
+        buffer=await self._iter.__anext__()
+        self._size+=len(buffer)
+        return(buffer)
 
 def copytree(src, dst, symlinks=False, ignore=None):
     if not os.path.exists(dst):
@@ -167,13 +181,11 @@ async def send_file(request, file_name, file_path):
         await asyncio.shield(response.write_eof())
 
 
-async def send_stream_to_ngas(request: aiohttp.web.Request,
-                                hostname,
-                                port,
-                                filename_ngas,
-                                logger):
+async def send_stream_to_ngas_rawhttp(request: aiohttp.web.Request,
+                                hostname, port, filename_ngas):
 
-    """Send a binary file from a request directly to an NGAS server"""
+    """Send a binary file from a request directly to an NGAS server
+    using raw and potentially unsafe http requests"""
     size=0
     try:
 
@@ -241,6 +253,36 @@ async def send_stream_to_ngas(request: aiohttp.web.Request,
         raise e
 
     return(size)
+
+
+async def send_stream_to_ngas_aiohttp(request: aiohttp.web.Request,
+                                      session, hostname, port, filename_ngas):
+
+    """More elegant solution of using a ChunkedByteCounter """
+    try:
+
+        # Create parameters for the upload
+        params = {"filename": filename_ngas,
+                  "file_id": filename_ngas,
+                  "mime_type": "application/octet-stream"}
+
+        # The URL to contact the NGAS server
+        url=str(hostname)+":"+str(port)+"/ARCHIVE"
+
+        # Create a bytecounter from the post request content
+        bytecounter=ChunkedByteCounter(request.content)
+
+        # Connect to the NGAS server and upload
+        resp = await session.post(url, params=params, data={filename_ngas: bytecounter})
+
+        if resp.status!=200:
+            raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+
+        return(bytecounter._size)
+
+    except Exception as e:
+        # Do we do anything here?
+        raise e
 
 
 def path_to_node_tree(directory, root_node_path, owner, group_read, group_write, storage):
