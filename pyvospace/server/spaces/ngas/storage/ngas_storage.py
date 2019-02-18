@@ -40,7 +40,7 @@ from pyvospace.core.model import NodeType, View
 
 # Not sure if I need these
 from pyvospace.server.spaces.ngas.utils import mkdir, remove, send_file, move, copy, rmtree, tar, untar
-from pyvospace.server.spaces.ngas.utils import send_stream_to_ngas_aiohttp, send_stream_to_ngas_rawhttp
+from pyvospace.server.spaces.ngas.utils import send_stream_to_ngas, send_file_to_ngas
 from pyvospace.server.storage import HTTPSpaceStorageServer
 from pyvospace.server import fuzz, fuzz01
 from pyvospace.server.spaces.ngas.auth import DBUserNodeAuthorizationPolicy
@@ -121,10 +121,8 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             raise NotImplementedError("Container support coming soon")
         else:
 
-            # Get the UUID on the transaction
+            # Get the UUID on the transaction from the database
             id=job.transfer.target.id
-
-            print(id)
 
             # Filename to be used with the NGAS object store
             base_name=os.path.basename(path_tree)
@@ -140,9 +138,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             # Make up the filename for retrieval from NGAS
             # How can I get the uuid from the database?
             params={"file_id" : filename_ngas}
-
-            # I suspect this streams content from the NGAS request to the client
-            # In a non-blocking way, but I am not sure
 
             # Connect to NGAS
             resp_ngas = await self.ngas_session.get(url_ngas, params=params)
@@ -206,10 +201,16 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         # Get the path tree
         path_tree = job.transfer.target.path
 
+        # Check for content length in the headers of the incoming request
+        # This will inform the user how we respond to the request
+        if 'content-length' in request.headers:
+            content_length=request.headers['content-length']
+        else:
+            content_length=None
+
         if job.transfer.target.node_type == NodeType.ContainerNode:
             raise NotImplementedError("Container support coming soon")
-            # Untar the file?
-
+            # Stream to file
         else:
             # Create the filename that is to be used with the NGAS object store
             base_name=os.path.basename(path_tree)
@@ -220,12 +221,50 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
             self.logger.debug(f"Pushing file {ngas_filename}")
 
-            # Send the whole stream to NGAS, count bytes and let the client know the transaction was successful
-            size=await send_stream_to_ngas_rawhttp(request, self.ngas_hostname,
-                                             self.ngas_port, ngas_filename, self.logger)
+            if content_length is not None:
+                # We can forward the stream straight to NGAS
+                size = await send_stream_to_ngas(request, self.ngas_session, self.ngas_hostname,
+                                                            self.ngas_port, ngas_filename, self.logger)
+            else:
+                # Stream to file and upload it
 
-            #size = await send_stream_to_ngas_aiohttp(request, self.ngas_session, self.ngas_hostname,
-            #                                         self.ngas_port, ngas_filename, self.logger)
+                # Make up a uuid for the staging of a file
+                reader=request.content
+
+                # Temporary uuid for the upload of a file
+                target_id = uuid.uuid4()
+                base_name = f'{target_id}_{os.path.basename(path_tree)}'
+
+                # Temporary file to stage to
+                stage_file_name = f'{self.staging_dir}/{base_name}'
+
+                try:
+                    # Need to read in a specific number of bytes?
+                    async with aiofiles.open(stage_file_name, 'wb') as f:
+                        # We have checked that content-length must exist,
+                        # Only read content-length bytes from the stream
+                        bytes_read = 0
+                        while bytes_read<content_length:
+                            bytes_to_read = min(io.DEFAULT_BUFFER_SIZE, content_length - bytes_read)
+                            buffer = await reader.read(bytes_to_read)
+                            if not buffer:
+                                break
+                                await fuzz()
+                                await f.write(buffer)
+                                bytes_read += len(buffer)
+
+                    # Now the file is on disk, send it
+                    size = send_file_to_ngas(self.ngas_session, self.ngas_hostname, self.ngas_port,
+                                                        ngas_filename, stage_file_name,
+                                                        self.logger)
+
+                except Exception as e:
+                    raise e
+                finally:
+                    # Remove the staged file no matter what
+                    with suppress(Exception):
+                        await asyncio.shield(remove(stage_file_name))
+
 
             # Get the size
             self.logger.debug(f"Upload file size is {size}")

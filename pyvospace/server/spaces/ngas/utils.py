@@ -59,6 +59,7 @@ def copytree(src, dst, symlinks=False, ignore=None):
         shutil.copystat(src, dst)
 
     byte_copy = False
+    # Checking if on the same volume
     src_id = int(os.stat(src).st_dev >> 8 & 0xff)
     dst_id = int(os.stat(dst).st_dev >> 8 & 0xff)
     if src_id != dst_id:
@@ -256,10 +257,40 @@ async def send_stream_to_ngas_rawhttp(request: aiohttp.web.Request,
 
     return(size)
 
+async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_local, logger):
 
-async def send_stream_to_ngas_aiohttp(request: aiohttp.web.Request,
-                                      session, hostname, port, filename_ngas, logger):
-    """More elegant solution of using a ChunkedByteCounter """
+    """Send a single file to an NGAS server"""
+    try:
+
+        # Create parameters for the upload
+        params = {"filename": filename_ngas,
+                  "mime_type": "application/octet-stream"}
+
+        # The URL to contact the NGAS server
+        url="http://"+str(hostname)+":"+str(port)+"/ARCHIVE"
+
+        # Get the size of the file for content-length
+        file_size = (await stat(filename_local)).st_size
+
+        async with aiofiles.open(filename_local, 'rb') as fd:
+            # Connect to the NGAS server and upload the file
+            # Should I be using sendfile from Python?
+            resp = await session.post(url, params=params,
+                                    data=fd,
+                                    headers={"content-length" : str(file_size)})
+
+            if resp.status!=200:
+                raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+
+        return(file_size)
+
+    except Exception as e:
+        # Do we do anything here?
+        raise e
+
+async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, port, filename_ngas, logger):
+
+    """If a request has the content-length, send a stream direct to NGAS"""
     try:
 
         # Create parameters for the upload
@@ -274,11 +305,19 @@ async def send_stream_to_ngas_aiohttp(request: aiohttp.web.Request,
 
         logger.debug(f"url is {url}")
 
-        import pdb
-        pdb.set_trace()
+        # Test for content-length
+        if 'content-length' not in request.headers:
+            raise aiohttp.ServerConnectionError("No content-length in header")
+
+        # Test for proper implementation
+        if 'transfer-encoding' in request.headers:
+            if request.headers['transfer-encoding']=="chunked":
+                raise aiohttp.ServerConnectionError("Error, content length defined but transfer-encoding is chunked")
 
         # Connect to the NGAS server and upload
-        resp = await session.post(url, params=params, data=bytecounter)
+        resp = await session.post(url, params=params,
+                                    data=bytecounter,
+                                    headers={"content-length" : request.headers['content-length']})
 
         if resp.status!=200:
             raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
@@ -290,7 +329,6 @@ async def send_stream_to_ngas_aiohttp(request: aiohttp.web.Request,
     except Exception as e:
         # Do we do anything here?
         raise e
-
 
 def path_to_node_tree(directory, root_node_path, owner, group_read, group_write, storage):
     root_node = ContainerNode(root_node_path,
