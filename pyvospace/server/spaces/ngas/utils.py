@@ -36,7 +36,7 @@ from contextlib import suppress
 from pyvospace.server import fuzz
 from pyvospace.core.model import ContainerNode, StructuredDataNode, Property
 
-class ChunkedByteCounter:
+class CountedReader:
     """A wrapper class to count the number of bytes being sent from a stream"""
     def __init__(self, content):
         self._content=content
@@ -52,6 +52,31 @@ class ChunkedByteCounter:
         buffer=await self._iter.__anext__()
         self._size+=len(buffer)
         return buffer
+
+class ControlledReader:
+    """A wrapper class to limit the number of bytes returned from a stream
+    to exactly content_length bytes"""
+
+    def __init__(self, content, content_length):
+        self._content = content
+        self._content_length=content_length
+        self._bytes_read = 0
+        self._iter = None
+
+    def __aiter__(self):
+        # self._iter=self._content.__aiter__()
+        #self._iter = self._content.iter_chunked(io.DEFAULT_BUFFER_SIZE)
+        return self
+
+    async def __anext__(self):
+        # What is the minimum number of bytes to read?
+        bytes_to_read = min(io.DEFAULT_BUFFER_SIZE, self._content_length - self._bytes_read)
+        if bytes_to_read <= 0:
+            raise StopAsyncIteration
+        else:
+            buffer = await self._content.readexactly(bytes_to_read)
+            self._bytes_read+=bytes_to_read
+            return buffer
 
 def copytree(src, dst, symlinks=False, ignore=None):
     if not os.path.exists(dst):
@@ -184,79 +209,6 @@ async def send_file(request, file_name, file_path):
         await asyncio.shield(response.write_eof())
 
 
-async def send_stream_to_ngas_rawhttp(request: aiohttp.web.Request,
-                                hostname, port, filename_ngas, logger):
-
-    """Send a binary file from a request directly to an NGAS server
-    using raw and potentially unsafe http requests"""
-    size=0
-    try:
-
-        params={"filename": filename_ngas,
-                "mime_type":"application/octet-stream"}
-
-        encoded_parms=urllib.parse.urlencode(params)
-        ngas_string="ngas_storage"
-
-        # Get the number of bytes in a file
-        nbytes=request.content_length
-        content_type=request.content_type
-
-        # Open a HTTP connection to the NGAS server in a similar fashion to the
-        # Way Curl does it, nothing else seems elegant
-        # Make up HTTP Post header
-        raw_header= f"POST /ARCHIVE?{encoded_parms} HTTP/1.1\r\n" \
-                    f"Host: {hostname}:{port}\r\n" \
-                    f"Accept: */*\r\n" \
-                    f"User-Agent: {ngas_string}\r\n" \
-                    f"Content-Type: {content_type}\r\n" \
-                    f"Content-Length: {nbytes}\r\n" \
-                    f"Expect: 100-continue\r\n" \
-                    f"\r\n"
-
-        # Encode the raw header
-        logger.debug(raw_header)
-        raw_header=raw_header.encode("utf-8")
-        (reader, writer) = await asyncio.open_connection(host=hostname, port=port)
-
-        while True:
-            buffer=await request.content.read(io.DEFAULT_BUFFER_SIZE)
-            if buffer:
-                size+=len(buffer)
-                writer.write(buffer)
-                await writer.drain()
-            else:
-                break
-
-        # Not sure why we have to shield write_eof...
-        await asyncio.shield(writer.write_eof())
-        await writer.drain()
-
-        # Look for ok Message in the first column
-        firstline = (await reader.readline()).decode().split(" ")
-        if '200' not in firstline:
-            # Do we let the client know?
-            raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
-            logger.debug("Error in reply from NGAS server")
-        else:
-            # Do we do something here to let the client know?
-            pass
-
-        # Drain the rest of reader? Not sure if we need to do this
-        while True:
-            buffer=await reader.read(io.DEFAULT_BUFFER_SIZE)
-            if not buffer:
-                break
-
-        # Close the connection to NGAS
-        writer.close()
-
-    except Exception as e:
-        # We can do things, otherwise raise the Exception for now
-        raise e
-
-    return(size)
-
 async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_local, logger):
 
     """Send a single file to an NGAS server"""
@@ -269,8 +221,15 @@ async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_loc
         # The URL to contact the NGAS server
         url="http://"+str(hostname)+":"+str(port)+"/ARCHIVE"
 
+        # Make sure a the file exists
+        if filename_local is None or not os.path.isfile(filename_local):
+            raise FileNotFoundError
+
         # Get the size of the file for content-length
         file_size = (await stat(filename_local)).st_size
+
+        if file_size==0:
+            raise ValueError
 
         async with aiofiles.open(filename_local, 'rb') as fd:
             # Connect to the NGAS server and upload the file
@@ -300,14 +259,20 @@ async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, p
         # The URL to contact the NGAS server
         url="http://"+str(hostname)+":"+str(port)+"/ARCHIVE"
 
-        # Create a bytecounter from the post request content
-        bytecounter=ChunkedByteCounter(request.content)
-
-        logger.debug(f"url is {url}")
-
         # Test for content-length
         if 'content-length' not in request.headers:
             raise aiohttp.ServerConnectionError("No content-length in header")
+
+        content_length=int(request.headers['Content-Length'])
+
+        if content_length==0:
+            raise ValueError
+
+        # Create a bytecounter from the post request content
+        # reader=CountedReader(request.content)
+        # Make a reader that reads exactly content_length
+        # Bytes from file
+        reader=ControlledReader(request.content, content_length)
 
         # Test for proper implementation
         if 'transfer-encoding' in request.headers:
@@ -316,15 +281,13 @@ async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, p
 
         # Connect to the NGAS server and upload
         resp = await session.post(url, params=params,
-                                    data=bytecounter,
-                                    headers={"content-length" : request.headers['content-length']})
+                                    data=reader,
+                                    headers={"content-length" : content_length})
 
         if resp.status!=200:
             raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
 
-        logger.debug(f"bytcounter size is {bytecounter._size}")
-
-        return(bytecounter._size)
+        return(content_length)
 
     except Exception as e:
         # Do we do anything here?

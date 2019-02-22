@@ -119,6 +119,10 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
         if job.transfer.target.node_type == NodeType.ContainerNode:
             raise NotImplementedError("Container support coming soon")
+
+            # Gather the files from NGAS, tar and send to client
+            # Streaming creation of the tarfile?
+
         else:
 
             # Get the UUID on the transaction from the database
@@ -128,12 +132,8 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             base_name=os.path.basename(path_tree)
             filename_ngas=base_name+"_"+str(id)
 
-            self.logger.debug(f"Pulling file {ngas_filename}")
-
             # URL for retrieval from NGAS
             url_ngas=self.ngas_server_string+"/RETRIEVE"
-
-            self.logger.debug(filename_ngas)
 
             # Make up the filename for retrieval from NGAS
             # How can I get the uuid from the database?
@@ -149,8 +149,11 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             # Otherwise create the client
             resp_client=web.StreamResponse()
 
-            # Do we need to do anything here with headers?
-            #resp_client.headers=resp_ngas.headers
+            # Update the headers
+            resp_client.headers.update(resp_ngas.headers)
+
+            # Change the filename?
+            resp_client.headers['Content-Disposition']=f'attachment; filename=\"{base_name}\"'
 
             # Prepare the connection
             await resp_client.prepare(request)
@@ -196,7 +199,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             #     return await send_file(request, os.path.basename(path_tree), file_path)
 
     async def upload(self, job: StorageUWSJob, request: aiohttp.web.Request):
-        # Upload a stream request to the NGAS server
+        # Upload file/s to the NGAS server
 
         # Get the path tree
         path_tree = job.transfer.target.path
@@ -219,14 +222,12 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             id = job.transfer.target.id
             ngas_filename=base_name+"_"+str(id)
 
-            self.logger.debug(f"Pushing file {ngas_filename}")
-
             if content_length is not None:
-                # We can forward the stream straight to NGAS
-                size = await send_stream_to_ngas(request, self.ngas_session, self.ngas_hostname,
+                # Content length exists, we can forward the stream straight to the NGAS server
+                nbytes_transfer = await send_stream_to_ngas(request, self.ngas_session, self.ngas_hostname,
                                                             self.ngas_port, ngas_filename, self.logger)
             else:
-                # Stream to file and upload it
+                # Send the stream to a file and upload it
 
                 # Make up a uuid for the staging of a file
                 reader=request.content
@@ -236,49 +237,40 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                 base_name = f'{target_id}_{os.path.basename(path_tree)}'
 
                 # Temporary file to stage to
-                stage_file_name = f'{self.staging_dir}/{base_name}'
+                stage_file_name = f'{self.staging_dir}{base_name}'
 
-                try:
-                    # Need to read in a specific number of bytes?
-                    async with aiofiles.open(stage_file_name, 'wb') as f:
-                        # We have checked that content-length must exist,
-                        # Only read content-length bytes from the stream
-                        bytes_read = 0
-                        while bytes_read<content_length:
-                            bytes_to_read = min(io.DEFAULT_BUFFER_SIZE, content_length - bytes_read)
-                            buffer = await reader.read(bytes_to_read)
-                            if not buffer:
-                                break
-                                await fuzz()
-                                await f.write(buffer)
-                                bytes_read += len(buffer)
 
-                    # Now the file is on disk, send it
-                    size = send_file_to_ngas(self.ngas_session, self.ngas_hostname, self.ngas_port,
+                # Need to read in a specific number of bytes?
+                async with aiofiles.open(stage_file_name, 'wb') as fd:
+                    # We have checked that content-length must exist.
+                    while True:
+                        buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
+                        if buffer:
+                            await fuzz()
+                            await fd.write(buffer)
+                        else:
+                            break
+
+                # Now the file is on disk, send it
+                nbytes_transfer = await send_file_to_ngas(self.ngas_session, self.ngas_hostname, self.ngas_port,
                                                         ngas_filename, stage_file_name,
                                                         self.logger)
 
-                except Exception as e:
-                    raise e
-                finally:
-                    # Remove the staged file no matter what
-                    with suppress(Exception):
-                        await asyncio.shield(remove(stage_file_name))
+                # Remove the staged file if it exists
+                with suppress(Exception):
+                    await asyncio.shield(remove(stage_file_name))
 
-
-            # Get the size
-            self.logger.debug(f"Upload file size is {size}")
-
-            # Inform the database of new data
+            # Inform the database of new data if size
             async with job.transaction() as tr:
-                node = tr.target # get the target node that is associated with the data
-                node.size = size # set the size
-                node.storage = self.storage # set the storage back end so it can be found
-                await asyncio.shield(fuzz01(2))
-                await asyncio.shield(node.save()) # save details to db
+                if nbytes_transfer:
+                    node = tr.target # get the target node that is associated with the data
+                    node.size = nbytes_transfer # set the size
+                    node.storage = self.storage # set the storage back end so it can be found
+                    await asyncio.shield(fuzz01(2))
+                    await asyncio.shield(node.save()) # save details to db
 
-            # Let the client know the transaction was successful
-            return web.Response(status=200)
+                    # Let the client know the transaction was successful
+                    return web.Response(status=200)
 
         # # Stream on the content
         # reader = request.content
