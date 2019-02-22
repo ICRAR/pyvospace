@@ -64,8 +64,6 @@ class ControlledReader:
         self._iter = None
 
     def __aiter__(self):
-        # self._iter=self._content.__aiter__()
-        #self._iter = self._content.iter_chunked(io.DEFAULT_BUFFER_SIZE)
         return self
 
     async def __anext__(self):
@@ -183,9 +181,8 @@ async def touch(path):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, sync_touch, path)
 
-
 async def send_file(request, file_name, file_path):
-    # Re-implement this?
+    # Send a file to a request
     response = web.StreamResponse()
     try:
         file_size = (await stat(file_path)).st_size
@@ -229,11 +226,10 @@ async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_loc
         file_size = (await stat(filename_local)).st_size
 
         if file_size==0:
-            raise ValueError
+            raise ValueError(f"file {filename_local} has 0 size")
 
         async with aiofiles.open(filename_local, 'rb') as fd:
             # Connect to the NGAS server and upload the file
-            # Should I be using sendfile from Python?
             resp = await session.post(url, params=params,
                                     data=fd,
                                     headers={"content-length" : str(file_size)})
@@ -249,7 +245,7 @@ async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_loc
 
 async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, port, filename_ngas, logger):
 
-    """If a request has the content-length, send a stream direct to NGAS"""
+    """If an incoming POST request has the content-length, send a stream direct to NGAS"""
     try:
 
         # Create parameters for the upload
@@ -268,10 +264,7 @@ async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, p
         if content_length==0:
             raise ValueError
 
-        # Create a bytecounter from the post request content
-        # reader=CountedReader(request.content)
-        # Make a reader that reads exactly content_length
-        # Bytes from file
+        # Create a ControlledReader from the content
         reader=ControlledReader(request.content, content_length)
 
         # Test for proper implementation
@@ -282,7 +275,7 @@ async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, p
         # Connect to the NGAS server and upload
         resp = await session.post(url, params=params,
                                     data=reader,
-                                    headers={"content-length" : content_length})
+                                    headers={"content-length" : str(content_length)})
 
         if resp.status!=200:
             raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")

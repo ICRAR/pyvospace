@@ -276,6 +276,14 @@ class TestBase(unittest.TestCase):
                 response = await resp.text()
                 self.assertEqual(resp.status, expected_status, msg=response)
 
+    async def push_to_space_with_content_length(self, url, file_path, expected_status=200):
+        async with aiohttp.ClientSession(cookie_jar=self.session.cookie_jar) as session:
+            async with session.put(url,
+                                    data=self.file_sender(file_name=file_path),
+                                    headers={'Content-Length': str(os.path.getsize(file_path))}) as resp:
+                response = await resp.text()
+                self.assertEqual(resp.status, expected_status, msg=response)
+
     async def push_to_space_defer_error(self, url, file_path):
         async with aiohttp.ClientSession(cookie_jar=self.session.cookie_jar) as session:
             async with session.put(url, data=self.file_sender(file_name=file_path)) as resp:

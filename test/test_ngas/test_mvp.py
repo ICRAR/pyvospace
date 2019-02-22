@@ -66,7 +66,7 @@ class TestPushPull(TestBase):
         self.loop.run_until_complete(self.ngas_runner.cleanup())
         super().tearDown()
 
-    def test_push_to_node(self):
+    def test_push_pull_simple_chunked(self):
         async def run():
             root_node = ContainerNode('/root')
             await self.create_node(root_node)
@@ -102,46 +102,44 @@ class TestPushPull(TestBase):
 
             self.assertEqual(result, True, msg="Downloaded file not the same as uploaded file")
 
-        self.loop.run_until_complete(run())
+    def test_push_pull_simple_with_content_length(self):
+        async def run():
+            root_node = ContainerNode('/root')
+            await self.create_node(root_node)
 
-    # def test_pull_from_node(self):
-    #     async def run():
-    #         root_node = ContainerNode('/root')
-    #         await self.create_node(root_node)
-    #
-    #         node = DataNode('/root/datafile.dat',
-    #             properties=[Property('ivo://ivoa.net/vospace/core#title', "datafile.dat", True),
-    #                         Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
-    #         await self.create_node(node)
-    #
-    #         # Pull from leaf node
-    #         pull = PullFromSpace(node, [HTTPGet()])
-    #         transfer = await self.sync_transfer_node(pull)
-    #         pull_end = transfer.protocols[0].endpoint.url
-    #         print(f"pull_end is {pull_end}")
-    #         await self.pull_from_space(pull_end, '/tmp/download/')
-    #
-    #         # # Make some hashes
-    #         # sha1_orig = hashlib.sha1()
-    #         # # Verify the files are the same
-    #         # async with aiofiles.open("/tmp/mytar.tar.gz", "rb") as fd:
-    #         #     while True:
-    #         #         buffer = fd.read(io.DEFAULT_BUFFER_SIZE)
-    #         #         if not buffer:
-    #         #             break
-    #         #         sha1_orig.update(buffer)
-    #         #
-    #         # sha1_ngas = hashlib.sha1()
-    #         # async with aiofiles.open("/tmp/download/mytar.tar.gz", "rb") as fd:
-    #         #     while True:
-    #         #         buffer = fd.read(io.DEFAULT_BUFFER_SIZE)
-    #         #         if not buffer:
-    #         #             break
-    #         #         sha1_ngas.update(buffer)
-    #         #
-    #         # self.assertEqual(sha1_ngas, sha1_orig, msg="Downloaded file not the same as uploaded file")
-    #
-    #     self.loop.run_until_complete(run())
+            # Make a file with content in it
+            test_file = "/tmp/datafile.dat"
+            test_basename = os.path.basename(test_file)
+
+            test_bytes = 1234
+            with open(test_file, "wb") as fd:
+                fd.write(os.urandom(test_bytes))
+
+            node = DataNode('/root/datafile.dat',
+                            properties=[Property('ivo://ivoa.net/vospace/core#title', test_basename, True),
+                                        Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
+            await self.create_node(node)
+
+            # Push to leaf node
+            push = PushToSpace(node, [HTTPPut()],
+                               params=[Parameter("ivo://ivoa.net/vospace/core#length", test_bytes)])
+            #
+            transfer = await self.sync_transfer_node(push)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space_with_content_length(put_end, test_file, expected_status=200)
+
+            # # Pull from leaf node
+            pull = PullFromSpace(node, [HTTPGet()])
+            transfer = await self.sync_transfer_node(pull)
+            pull_end = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(pull_end, '/tmp/download/')
+
+            # Compare the two files
+            result = filecmp.cmp(test_file, '/tmp/download/' + test_basename)
+
+            self.assertEqual(result, True, msg="Downloaded file not the same as uploaded file")
+
+        self.loop.run_until_complete(run())
 
 if __name__ == '__main__':
     unittest.main()
