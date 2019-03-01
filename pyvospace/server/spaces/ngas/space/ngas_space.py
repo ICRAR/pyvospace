@@ -65,9 +65,9 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         self.name = self.config['Storage']['name']
         self.storage_parameters = json.loads(self.config['Storage']['parameters'])
 
-        self.root_dir = self.storage_parameters['root_dir']
-        if not self.root_dir:
-            raise Exception('root_dir not found.')
+        #self.root_dir = self.storage_parameters['root_dir']
+        #if not self.root_dir:
+        #    raise Exception('root_dir not found.')
 
         self.staging_dir = self.storage_parameters['staging_dir']
         if not self.staging_dir:
@@ -79,7 +79,7 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         await super().setup(self)
 
         # Needed?
-        await mkdir(self.root_dir)
+        #await mkdir(self.root_dir)
         await mkdir(self.staging_dir)
 
         setup_session(self,
@@ -133,37 +133,43 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         return PROVIDES_VIEWS[NodeTextLookup[node.node_type]]
 
     async def move_storage_node(self, src, dest):
-        s_path = f"{self.root_dir}/{src.path}"
-        d_path = f"{self.root_dir}/{dest.path}"
-        await move(s_path, d_path)
+        #raise NotImplementedError
+        pass
+        #s_path = f"{self.root_dir}/{src.path}"
+        #d_path = f"{self.root_dir}/{dest.path}"
+        #await move(s_path, d_path)
 
     async def copy_storage_node(self, src, dest):
-        s_path = f"{self.root_dir}/{src.path}"
-        d_path = f"{self.root_dir}/{dest.path}"
-        await copy(s_path, d_path)
+        raise NotImplementedError
+        #s_path = f"{self.root_dir}/{src.path}"
+        #d_path = f"{self.root_dir}/{dest.path}"
+        #await copy(s_path, d_path)
 
     async def create_storage_node(self, node: Node):
-        m_path = f"{self.root_dir}/{node.path}"
+        pass
+        #m_path = f"{self.root_dir}/{node.path}"
         # Remove what may be left over from a failed xfer.
         # The only way this could happen if the storage server was
         # shutdown forcibly during an upload leaving a partial file.
-        with suppress(Exception):
-            await remove(m_path)
-        if node.node_type == NodeType.ContainerNode:
-            await mkdir(m_path)
-        else:
-            await touch(m_path)
+        #with suppress(Exception):
+        #    await remove(m_path)
+        #if node.node_type == NodeType.ContainerNode:
+        #    await mkdir(m_path)
+        #else:
+        #    await touch(m_path)
 
-    async def delete_storage_node(self, node):
-        m_path = f"{self.root_dir}/{node.path}"
-        if node.node_type == NodeType.ContainerNode:
-            # The directory should always exists unless
-            # it has been deleted under us.
-            await rmtree(m_path)
-        else:
-            # File may or may not exist as the user may not have upload
-            if await exists(m_path):
-                await remove(m_path)
+    async def delete_storage_node(self, node : Node):
+        # Need to implement this?
+        raise NotImplementedError()
+#        m_path = f"{self.root_dir}/{node.path}"
+#        if node.node_type == NodeType.ContainerNode:
+#            # The directory should always exists unless
+#            # it has been deleted under us.
+#            await rmtree(m_path)
+#        else:
+#            # File may or may not exist as the user may not have upload
+#            if await exists(m_path):
+#                await remove(m_path)
 
     async def get_transfer_protocols(self, job: UWSJob) -> List[Protocol]:
         new_protocols = []

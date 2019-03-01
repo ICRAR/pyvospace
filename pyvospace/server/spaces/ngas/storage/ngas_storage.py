@@ -67,10 +67,10 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         self.ngas_session = aiohttp.ClientSession()
 
         # Do I need a root_dir, probably not.
-        self.root_dir = self.parameters['root_dir']
-        if not self.root_dir:
+        #self.root_dir = self.parameters['root_dir']
+        #if not self.root_dir:
             # Default way of raising an exception
-            raise Exception('root_dir not found.')
+        #    raise Exception('root_dir not found.')
 
         # Do I need a staging directory?
         self.staging_dir = self.parameters['staging_dir']
@@ -91,7 +91,10 @@ class NGASStorageServer(HTTPSpaceStorageServer):
     async def setup(self):
         await super().setup()
 
-        await mkdir(self.root_dir)
+        # await mkdir(self.root_dir)
+        # Probably don't need to make the root directory
+
+        # Need a staging directory
         await mkdir(self.staging_dir)
 
         setup_session(self,
