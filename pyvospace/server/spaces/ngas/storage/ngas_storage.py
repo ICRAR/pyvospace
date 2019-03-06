@@ -223,7 +223,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
             # Get the UUID for the node
             id = job.transfer.target.id
-            ngas_filename=base_name+"_"+str(id)
+            ngas_filename=f"{base_name}_{id}"
 
             if content_length is not None:
                 # Content length exists, we can forward the stream straight to the NGAS server
@@ -256,8 +256,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
                 # Now the file is on disk, send it
                 nbytes_transfer = await send_file_to_ngas(self.ngas_session, self.ngas_hostname, self.ngas_port,
-                                                        ngas_filename, stage_file_name,
-                                                        self.logger)
+                                                        ngas_filename, stage_file_name)
 
                 # Remove the staged file if it exists
                 with suppress(Exception):

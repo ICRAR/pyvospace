@@ -206,7 +206,7 @@ async def send_file(request, file_name, file_path):
         await asyncio.shield(response.write_eof())
 
 
-async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_local, logger):
+async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_local):
 
     """Send a single file to an NGAS server"""
     try:
