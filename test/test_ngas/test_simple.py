@@ -66,80 +66,116 @@ class TestPushPull(TestBase):
         self.loop.run_until_complete(self.ngas_runner.cleanup())
         super().tearDown()
 
-    def test_push_pull_simple_chunked(self):
+    # def test_push_pull_simple_chunked(self):
+    #     async def run():
+    #         root_node = ContainerNode('/root')
+    #         await self.create_node(root_node)
+    #
+    #         # Make a file with content in it
+    #         test_file="/tmp/datafile.dat"
+    #         test_basename=os.path.basename(test_file)
+    #
+    #         test_bytes=1234
+    #         with open(test_file,"wb") as fd:
+    #             fd.write(os.urandom(test_bytes))
+    #
+    #         node = DataNode('/root/datafile.dat',
+    #             properties=[Property('ivo://ivoa.net/vospace/core#title', test_basename, True),
+    #                         Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
+    #         await self.create_node(node)
+    #
+    #         # Push to leaf node
+    #         push = PushToSpace(node, [HTTPPut()], params=[Parameter("ivo://ivoa.net/vospace/core#length", test_bytes)])
+    #         #
+    #         transfer = await self.sync_transfer_node(push)
+    #         put_end = transfer.protocols[0].endpoint.url
+    #         await self.push_to_space(put_end, test_file, expected_status=200)
+    #
+    #         # # Pull from leaf node
+    #         pull = PullFromSpace(node, [HTTPGet()])
+    #         transfer = await self.sync_transfer_node(pull)
+    #         pull_end = transfer.protocols[0].endpoint.url
+    #         await self.pull_from_space(pull_end, '/tmp/download/')
+    #
+    #         # Compare the two files
+    #         result=filecmp.cmp(test_file, '/tmp/download/'+test_basename)
+    #
+    #         self.assertEqual(result, True, msg="Downloaded file not the same as uploaded file")
+    #
+    #     self.loop.run_until_complete(run())
+    #
+    #
+    # def test_push_pull_simple_with_content_length(self):
+    #     async def run():
+    #         root_node = ContainerNode('/root')
+    #         await self.create_node(root_node)
+    #
+    #         # Make a file with content in it
+    #         test_file = "/tmp/datafile.dat"
+    #         test_basename = os.path.basename(test_file)
+    #
+    #         test_bytes = 1234
+    #         with open(test_file, "wb") as fd:
+    #             fd.write(os.urandom(test_bytes))
+    #
+    #         node = DataNode('/root/datafile.dat',
+    #                         properties=[Property('ivo://ivoa.net/vospace/core#title', test_basename, True),
+    #                                     Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
+    #         await self.create_node(node)
+    #
+    #         # Push to leaf node
+    #         push = PushToSpace(node, [HTTPPut()],
+    #                            params=[Parameter("ivo://ivoa.net/vospace/core#length", test_bytes)])
+    #         #
+    #         transfer = await self.sync_transfer_node(push)
+    #         put_end = transfer.protocols[0].endpoint.url
+    #         await self.push_to_space_with_content_length(put_end, test_file, expected_status=200)
+    #
+    #         # # Pull from leaf node
+    #         pull = PullFromSpace(node, [HTTPGet()])
+    #         transfer = await self.sync_transfer_node(pull)
+    #         pull_end = transfer.protocols[0].endpoint.url
+    #         await self.pull_from_space(pull_end, '/tmp/download/')
+    #
+    #         # Compare the two files
+    #         result = filecmp.cmp(test_file, '/tmp/download/' + test_basename)
+    #
+    #         self.assertEqual(result, True, msg="Downloaded file not the same as uploaded file")
+    #
+    #     self.loop.run_until_complete(run())
+
+    def test_push_to_container(self):
         async def run():
+
             root_node = ContainerNode('/root')
             await self.create_node(root_node)
 
-            # Make a file with content in it
-            test_file="/tmp/datafile.dat"
-            test_basename=os.path.basename(test_file)
-
-            test_bytes=1234
-            with open(test_file,"wb") as fd:
-                fd.write(os.urandom(test_bytes))
-
-            node = DataNode('/root/datafile.dat',
-                properties=[Property('ivo://ivoa.net/vospace/core#title', test_basename, True),
-                            Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
+            node = DataNode('/root/mytar.tar.gz',
+                            properties=[Property('ivo://ivoa.net/vospace/core#title', "mytar.tar.gz", True)])
             await self.create_node(node)
 
-            # Push to leaf node
-            push = PushToSpace(node, [HTTPPut()], params=[Parameter("ivo://ivoa.net/vospace/core#length", test_bytes)])
-            #
-            transfer = await self.sync_transfer_node(push)
+            security_method = SecurityMethod('ivo://ivoa.net/sso#cookie')
+
+            # push tar to node
+            container_push = PushToSpace(node, [HTTPPut(security_method=security_method)],
+                                         view=View('ivo://ivoa.net/vospace/core#tar'),
+                                         params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
+
+            transfer = await self.sync_transfer_node(container_push)
             put_end = transfer.protocols[0].endpoint.url
-            await self.push_to_space(put_end, test_file, expected_status=200)
+            await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
 
-            # # Pull from leaf node
-            pull = PullFromSpace(node, [HTTPGet()])
-            transfer = await self.sync_transfer_node(pull)
-            pull_end = transfer.protocols[0].endpoint.url
-            await self.pull_from_space(pull_end, '/tmp/download/')
+            # push to container node
+            container_push = PushToSpace(root_node, [HTTPPut(security_method=security_method)],
+                                         view=View('ivo://ivoa.net/vospace/core#tar'),
+                                         params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
 
-            # Compare the two files
-            result=filecmp.cmp(test_file, '/tmp/download/'+test_basename)
-
-            self.assertEqual(result, True, msg="Downloaded file not the same as uploaded file")
-
-    def test_push_pull_simple_with_content_length(self):
-        async def run():
-            root_node = ContainerNode('/root')
-            await self.create_node(root_node)
-
-            # Make a file with content in it
-            test_file = "/tmp/datafile.dat"
-            test_basename = os.path.basename(test_file)
-
-            test_bytes = 1234
-            with open(test_file, "wb") as fd:
-                fd.write(os.urandom(test_bytes))
-
-            node = DataNode('/root/datafile.dat',
-                            properties=[Property('ivo://ivoa.net/vospace/core#title', test_basename, True),
-                                        Property('ivo://ivoa.net/vospace/core#contributor', "dave", True)])
-            await self.create_node(node)
-
-            # Push to leaf node
-            push = PushToSpace(node, [HTTPPut()],
-                               params=[Parameter("ivo://ivoa.net/vospace/core#length", test_bytes)])
-            #
-            transfer = await self.sync_transfer_node(push)
+            transfer = await self.sync_transfer_node(container_push)
             put_end = transfer.protocols[0].endpoint.url
-            await self.push_to_space_with_content_length(put_end, test_file, expected_status=200)
-
-            # # Pull from leaf node
-            pull = PullFromSpace(node, [HTTPGet()])
-            transfer = await self.sync_transfer_node(pull)
-            pull_end = transfer.protocols[0].endpoint.url
-            await self.pull_from_space(pull_end, '/tmp/download/')
-
-            # Compare the two files
-            result = filecmp.cmp(test_file, '/tmp/download/' + test_basename)
-
-            self.assertEqual(result, True, msg="Downloaded file not the same as uploaded file")
+            await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
 
         self.loop.run_until_complete(run())
+
 
 if __name__ == '__main__':
     unittest.main()

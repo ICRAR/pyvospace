@@ -37,6 +37,8 @@ from pyvospace.server.spaces.ngas.utils import move, copy, mkdir, remove, rmtree
 from pyvospace.server.spaces.ngas.auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 from pyvospace.core.exception import VOSpaceError
 
+import pdb
+
 
 ACCEPTS_VIEWS = {
     'vos:Node': [View('ivo://ivoa.net/vospace/core#anyview')],
@@ -65,7 +67,7 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         self.name = self.config['Storage']['name']
         self.storage_parameters = json.loads(self.config['Storage']['parameters'])
 
-        #self.root_dir = self.storage_parameters['root_dir']
+        self.root_dir = self.storage_parameters['root_dir']
         #if not self.root_dir:
         #    raise Exception('root_dir not found.')
 
@@ -89,6 +91,7 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
                           domain=self.domain))
 
         self.authentication = DBUserAuthentication(self['space_name'], self['db_pool'])
+
         setup_security(self,
                        SessionIdentityPolicy(),
                        DBUserNodeAuthorizationPolicy(self['space_name'], self['db_pool'], self.root_dir))
