@@ -26,9 +26,9 @@ import asyncio
 import aiofiles
 import aiohttp
 import numpy as np
-import multiprocessing as mp
 import pdb
 import traceback
+import json
 
 from aiohttp import web
 from aiohttp_security import setup as setup_security
@@ -56,16 +56,17 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         self.secret_key = self.config['Space']['secret_key']
         self.domain = self.config['Space']['domain']
 
+        # NGAS parameters section - assumes that NGAS servers (if more than one)
+        # all point to the same storage, i.e they are federated
         # Choose an NGAS server, initially at random,
-        # there is probably a more elegant implementation
-        self.ngas_server_strings=self.config['Storage']['ngas_servers'].replace("\'","").replace("\"","").split("\n")
-        server_index=int(np.random.choice([n for n in range(0,len(self.ngas_server_strings))],1))
-        self.ngas_server_string=self.ngas_server_strings[server_index]
+        pdb.set_trace()
+        self.ngas_servers=json.loads(self.config['Storage']['ngas_servers'])
+        server_index=np.random.choice([n for n in range(0,len(self.ngas_servers))],1)[0]
+        self.ngas_server=self.ngas_servers[server_index]
 
         # Extract hostname and port
-        temp=self.ngas_server_string.rpartition(":")
-        self.ngas_hostname=temp[0].rpartition("/")[2]
-        self.ngas_port=int(temp[2])
+        self.ngas_hostname=self.ngas_server["hostname"]
+        self.ngas_port=int(self.ngas_server["port"])
         self.ngas_session = aiohttp.ClientSession()
 
         # Do I need a root_dir, probably not.
@@ -148,7 +149,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             for node in current_node.walk(current_node):
                 node_path=os.path.normpath('{stage_dir}/{node.path}')
                 if node.node_type==NodeType.ContainerNode:
-                    # Make a directory
+                    # Make a directory in the node path
                     await mkdir(node_path)
                 else:
                     # Make a local filename
@@ -222,7 +223,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             filename_ngas=f'{base_name}_{id}'
 
             # URL for retrieval from NGAS
-            url_ngas=self.ngas_server_string+"/RETRIEVE"
+            url_ngas=f'http://{self.ngas_hostname}:{self.ngas_port}/RETRIEVE'
 
             # Make up the filename for retrieval from NGAS
             # How can I get the uuid from the database?

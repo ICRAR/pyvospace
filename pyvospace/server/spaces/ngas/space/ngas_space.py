@@ -67,6 +67,17 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         self.name = self.config['Storage']['name']
         self.storage_parameters = json.loads(self.config['Storage']['parameters'])
 
+        # NGAS parameters section - assumes that NGAS servers (if more than one)
+        # all point to the same storage, i.e they are federated
+        self.ngas_servers=json.loads(self.config['Storage']['ngas_servers'])
+        server_index=np.random.choice([n for n in range(0,len(self.ngas_servers))],1)[0]
+        self.ngas_server=self.ngas_servers[server_index]
+
+        # Extract hostname and port
+        self.ngas_hostname=self.ngas_server["hostname"]
+        self.ngas_port=int(self.ngas_server["port"])
+        self.ngas_session = aiohttp.ClientSession()
+
         self.root_dir = self.storage_parameters['root_dir']
         #if not self.root_dir:
         #    raise Exception('root_dir not found.')

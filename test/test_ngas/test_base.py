@@ -69,14 +69,14 @@ class TestBase(unittest.TestCase):
                                'domain': '',
                                'use_ssl': 0
                                }
-
+            print("running this")
             config['Storage'] = {'name': 'ngas',
                                  'host': 'localhost',
                                  'port': 8083,
                                  'parameters': storage_details,
                                  'use_ssl': 0,
-                                 'ngas_servers' : 'http://localhost:7777'
-                                                  'http://localhost:7777'
+                                 'ngas_servers' : [{"hostname" : "localhost", "port" : 7777},
+                                                  {"hostname" : "localhost", "port" : 7777}]
                                  }
 
             with open(self.config_filename, 'w') as conf:

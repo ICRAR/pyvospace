@@ -2,8 +2,11 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="e9ffbe0f-d2d7-412d-b911-17e9f546c20b" name="Default Changelist" comment="">
+      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_base.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_vo_ngas.ini" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_vo_ngas.ini" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test_vo_ngas.ini" beforeDir="false" afterPath="$PROJECT_DIR$/test_vo_ngas.ini" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -12,96 +15,125 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="FileEditorManager">
-    <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="324">
-              <caret line="187" column="31" selection-start-line="187" selection-start-column="31" selection-end-line="187" selection-end-column="31" />
-              <folding>
-                <element signature="e#964#975#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="509">
-              <caret line="252" column="24" selection-start-line="252" selection-start-column="24" selection-end-line="252" selection-end-column="24" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="true">
-        <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="422">
-              <caret line="179" lean-forward="true" selection-start-line="179" selection-end-line="179" />
-              <folding>
-                <element signature="e#964#973#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/pyvospace/core/model.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="315">
-              <caret line="55" lean-forward="true" selection-start-line="55" selection-end-line="55" />
-              <folding>
-                <element signature="e#964#973#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/temptest/test_yield.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="75">
-              <caret line="5" column="11" lean-forward="true" selection-start-line="5" selection-start-column="11" selection-end-line="5" selection-end-column="11" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/test/test_ngas/test_simple.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="448">
-              <caret line="163" column="14" selection-start-line="163" selection-start-column="14" selection-end-line="163" selection-end-column="14" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/test/test_ngas/test_create.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="-3238" />
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/test/test_ngas/test_push_pull.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="611">
-              <caret line="87" column="87" selection-start-line="80" selection-start-column="12" selection-end-line="87" selection-end-column="87" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="132">
-              <caret line="207" column="86" lean-forward="true" selection-start-line="207" selection-start-column="10" selection-end-line="207" selection-end-column="86" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-    </leaf>
+    <splitter split-orientation="horizontal" split-proportion="0.6371033">
+      <split-first>
+        <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="174">
+                  <caret line="70" column="63" lean-forward="true" selection-start-line="69" selection-start-column="1" selection-end-line="70" selection-end-column="63" />
+                  <folding>
+                    <element signature="e#964#975#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/test_vo_ngas.ini">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="255">
+                  <caret line="17" column="43" selection-start-line="17" selection-start-column="43" selection-end-line="17" selection-end-column="43" />
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="304">
+                  <caret line="77" column="64" selection-start-line="77" selection-start-column="64" selection-end-line="77" selection-end-column="64" />
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="true">
+            <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="396">
+                  <caret line="164" column="63" selection-start-line="164" selection-start-column="63" selection-end-line="164" selection-end-column="63" />
+                  <folding>
+                    <element signature="e#964#973#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/pyvospace/core/model.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="315">
+                  <caret line="55" lean-forward="true" selection-start-line="55" selection-end-line="55" />
+                  <folding>
+                    <element signature="e#964#973#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/temptest/test_yield.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="75">
+                  <caret line="5" column="11" lean-forward="true" selection-start-line="5" selection-start-column="11" selection-end-line="5" selection-end-column="11" />
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/test/test_ngas/test_simple.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="448">
+                  <caret line="163" column="14" selection-start-line="163" selection-start-column="14" selection-end-line="163" selection-end-column="14" />
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/test/test_ngas/test_create.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="-3238" />
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/test/test_ngas/test_push_pull.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="623">
+                  <caret line="154" column="53" lean-forward="true" selection-start-line="154" selection-start-column="53" selection-end-line="154" selection-end-column="53" />
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="132">
+                  <caret line="207" column="86" lean-forward="true" selection-start-line="207" selection-start-column="10" selection-end-line="207" selection-end-column="86" />
+                </state>
+              </provider>
+            </entry>
+          </file>
+        </leaf>
+      </split-first>
+      <split-second>
+        <leaf>
+          <file pinned="false" current-in-tab="true">
+            <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="69">
+                  <caret line="65" column="7" lean-forward="true" selection-start-line="65" selection-start-column="7" selection-end-line="65" selection-end-column="7" />
+                  <folding>
+                    <element signature="e#964#973#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+        </leaf>
+      </split-second>
+    </splitter>
   </component>
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
@@ -130,6 +162,8 @@
       <find>nodes</find>
       <find>send_stre</find>
       <find>mkdir</find>
+      <find>parameters</find>
+      <find>ngas_server_string</find>
     </findStrings>
   </component>
   <component name="Git.Settings">
@@ -139,20 +173,22 @@
     <option name="CHANGED_PATHS">
       <list>
         <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/auth.py" />
-        <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" />
         <option value="$PROJECT_DIR$/test/test_ngas/test_simple.py" />
         <option value="$PROJECT_DIR$/temptest/test_yield.py" />
         <option value="$PROJECT_DIR$/pyvospace/core/model.py" />
         <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" />
+        <option value="$PROJECT_DIR$/test/test_ngas/test_base.py" />
+        <option value="$PROJECT_DIR$/test_vo_ngas.ini" />
+        <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" />
         <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" />
       </list>
     </option>
   </component>
   <component name="ProjectFrameBounds">
-    <option name="x" value="17" />
-    <option name="y" value="27" />
-    <option name="width" value="1313" />
-    <option name="height" value="872" />
+    <option name="x" value="199" />
+    <option name="y" value="23" />
+    <option name="width" value="1623" />
+    <option name="height" value="890" />
   </component>
   <component name="ProjectLevelVcsManager">
     <ConfirmationsSetting value="1" id="Add" />
@@ -248,11 +284,6 @@
             <path>
               <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
               <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="temptest" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
               <item name="test" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
@@ -298,10 +329,10 @@
     <servers />
   </component>
   <component name="ToolWindowManager">
-    <frame x="17" y="27" width="1313" height="872" extended-state="0" />
+    <frame x="199" y="23" width="1623" height="890" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info content_ui="combo" id="Project" order="0" weight="0.23297213" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.23283395" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
       <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
@@ -394,34 +425,10 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="324">
-          <caret line="187" column="31" selection-start-line="187" selection-start-column="31" selection-end-line="187" selection-end-column="31" />
-          <folding>
-            <element signature="e#964#975#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/test/test_ngas/test_push_pull.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="611">
-          <caret line="87" column="87" selection-start-line="80" selection-start-column="12" selection-end-line="87" selection-end-column="87" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/temptest/test_yield.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="75">
           <caret line="5" column="11" lean-forward="true" selection-start-line="5" selection-start-column="11" selection-end-line="5" selection-end-column="11" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="509">
-          <caret line="252" column="24" selection-start-line="252" selection-start-column="24" selection-end-line="252" selection-end-column="24" />
         </state>
       </provider>
     </entry>
@@ -442,10 +449,41 @@
         </state>
       </provider>
     </entry>
+    <entry file="file://$PROJECT_DIR$/test/test_ngas/test_push_pull.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="623">
+          <caret line="154" column="53" lean-forward="true" selection-start-line="154" selection-start-column="53" selection-end-line="154" selection-end-column="53" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/test_vo_ngas.ini">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="255">
+          <caret line="17" column="43" selection-start-line="17" selection-start-column="43" selection-end-line="17" selection-end-column="43" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="304">
+          <caret line="77" column="64" selection-start-line="77" selection-start-column="64" selection-end-line="77" selection-end-column="64" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="174">
+          <caret line="70" column="63" lean-forward="true" selection-start-line="69" selection-start-column="1" selection-end-line="70" selection-end-column="63" />
+          <folding>
+            <element signature="e#964#975#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="422">
-          <caret line="179" lean-forward="true" selection-start-line="179" selection-end-line="179" />
+        <state relative-caret-position="396">
+          <caret line="164" column="63" selection-start-line="164" selection-start-column="63" selection-end-line="164" selection-end-column="63" />
           <folding>
             <element signature="e#964#973#0" expanded="true" />
           </folding>
