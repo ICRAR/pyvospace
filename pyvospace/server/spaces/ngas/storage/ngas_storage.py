@@ -42,7 +42,7 @@ from pyvospace.core.model import NodeType, View
 
 # Not sure if I need these
 from pyvospace.server.spaces.ngas.utils import mkdir, remove, send_file, move, copy, rmtree, tar, untar
-from pyvospace.server.spaces.ngas.utils import send_stream_to_ngas, send_file_to_ngas
+from pyvospace.server.spaces.ngas.utils import send_stream_to_ngas, send_file_to_ngas, recv_file_from_ngas
 from pyvospace.server.storage import HTTPSpaceStorageServer
 from pyvospace.server import fuzz, fuzz01
 from pyvospace.server.spaces.ngas.auth import DBUserNodeAuthorizationPolicy
@@ -124,10 +124,93 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         path_tree = job.transfer.target.path
 
         if job.transfer.target.node_type == NodeType.ContainerNode:
-            raise NotImplementedError("Container support coming soon")
 
-            # Gather the files from NGAS, tar and send to client
-            # Streaming creation of the tarfile?
+            # Gather the files from NGAS, send to a directory,
+            # tar and send to client
+            # Should we implement a streaming creation of the tarfile?
+
+            # Make a directory in staging area
+            path_tree=job.transfer.target.path
+            stage_dir = os.path.normpath(f'{self.staging_dir}/{uuid.uuid4()}')
+
+            # make the stage directory
+            await mkdir(stage_dir)
+
+            # Now loop over each current node in NGAS and fetch files
+            current_node=job.transfer.target
+
+            # Current node
+            if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
+                return web.Response(status=400, text=f'Unsupported Container View. '
+                                                      f'View: {job.transfer.view}')
+
+            # Now loop over each node and download to file
+            for node in current_node.walk(current_node):
+                node_path=os.path.normpath('{stage_dir}/{node.path}')
+                if node.node_type==NodeType.ContainerNode:
+                    # Make a directory
+                    await mkdir(node_path)
+                else:
+                    # Make a local filename
+                    # Make an NGAS filename
+                    filename_local=node_path
+                    filename_ngas='f{os.path.basename(node_path)}_{node.id}'
+
+                    # Fetch a file from NGAS
+                    await recv_file_from_ngas(  self.ngas_session,
+                                                self.ngas_hostname,
+                                                self.ngas_port,
+                                                filename_ngas,
+                                                filename_local)
+
+            # Tar file
+            tar_file = os.path.normpath(f'{stage_dir}/{uuid.uuid4()}/{os.path.basename(path_tree)}.tar')
+
+            try:
+                # Tarring up the sources, I might need to ask the database for all
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(self.process_executor, tar,
+                                           stage_path, tar_file, os.path.basename(path_tree))
+                return await send_file(request, os.path.basename(tar_file), tar_file)
+            finally:
+                with suppress(Exception):
+                    await asyncio.shield(rmtree(os.path.dirname(tar_file)))
+                with suppress(Exception):
+                    await asyncio.shield(rmtree(os.path.dirname(stage_dir)))
+
+
+            # Handling connection errors?
+
+            # root_dir = self.root_dir
+            # path_tree = job.transfer.target.path
+            # if job.transfer.target.node_type == NodeType.ContainerNode:
+            #     # Checking if request wants a tar file
+            #     if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
+            #         return web.Response(status=400, text=f'Unsupported Container View. '
+            #                                              f'View: {job.transfer.view}')
+            #
+            #     tar_file = f'{self.staging_dir}/{uuid.uuid4()}/{os.path.basename(path_tree)}.tar'
+            #     stage_path = f'{self.staging_dir}/{uuid.uuid4()}/{path_tree}'
+            #     real_path = f'{self.root_dir}/{path_tree}'
+            #     async with job.transaction(exclusive=False):
+            #         await copy(real_path, stage_path)
+            #
+            #     try:
+            #         # Tarring up the sources, I might need to ask the database for all
+            #         loop = asyncio.get_event_loop()
+            #         await loop.run_in_executor(self.process_executor, tar,
+            #                                    stage_path, tar_file, os.path.basename(path_tree))
+            #         return await send_file(request, os.path.basename(tar_file), tar_file)
+            #     finally:
+            #         with suppress(Exception):
+            #             await asyncio.shield(rmtree(os.path.dirname(tar_file)))
+            #         with suppress(Exception):
+            #             await asyncio.shield(rmtree(os.path.dirname(stage_path)))
+            # else:
+            #     file_path = f'{root_dir}/{path_tree}'
+            #     return await send_file(request, os.path.basename(path_tree), file_path)
+
+
 
         else:
 
@@ -173,36 +256,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             await resp_client.write_eof()
             return(resp_client)
 
-            # Handling connection errors?
-
-            # root_dir = self.root_dir
-            # path_tree = job.transfer.target.path
-            # if job.transfer.target.node_type == NodeType.ContainerNode:
-            #     # Checking if request wants a tar file
-            #     if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
-            #         return web.Response(status=400, text=f'Unsupported Container View. '
-            #                                              f'View: {job.transfer.view}')
-            #
-            #     tar_file = f'{self.staging_dir}/{uuid.uuid4()}/{os.path.basename(path_tree)}.tar'
-            #     stage_path = f'{self.staging_dir}/{uuid.uuid4()}/{path_tree}'
-            #     real_path = f'{self.root_dir}/{path_tree}'
-            #     async with job.transaction(exclusive=False):
-            #         await copy(real_path, stage_path)
-            #
-            #     try:
-            #         # Tarring up the sources, I might need to ask the database for all
-            #         loop = asyncio.get_event_loop()
-            #         await loop.run_in_executor(self.process_executor, tar,
-            #                                    stage_path, tar_file, os.path.basename(path_tree))
-            #         return await send_file(request, os.path.basename(tar_file), tar_file)
-            #     finally:
-            #         with suppress(Exception):
-            #             await asyncio.shield(rmtree(os.path.dirname(tar_file)))
-            #         with suppress(Exception):
-            #             await asyncio.shield(rmtree(os.path.dirname(stage_path)))
-            # else:
-            #     file_path = f'{root_dir}/{path_tree}'
-            #     return await send_file(request, os.path.basename(path_tree), file_path)
 
     async def upload(self, job: StorageUWSJob, request: aiohttp.web.Request):
         # Upload file/s to the NGAS server
@@ -294,6 +347,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                         if new_node.path in old_node_paths:
                             index_old=old_node_paths.index(new_node.path)
                             old_node=old_nodes[index_old]
+                            # Copy ID's
                             new_node.id=old_node.id
 
                         if new_node.node_type != NodeType.ContainerNode:
@@ -306,6 +360,10 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                                                         filename_ngas,
                                                         filename_local)
                             new_node.size=nbytes_transfer
+                        else:
+                            # We have a container type, it doesn't contribute to the upload
+                            new_node.size=0
+
 
                     # Now notify the database
                     async with job.transaction() as tr:

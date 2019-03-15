@@ -205,6 +205,31 @@ async def send_file(request, file_name, file_path):
     finally:
         await asyncio.shield(response.write_eof())
 
+async def recv_file_from_ngas(session, hostname, port, filename_ngas, filename_local):
+
+    """Get a single file from NGAS and put it into filename_local"""
+
+    # The URL to contact the NGAS server
+    url = 'http://{hostname}:{port}/ARCHIVE'
+
+    # Make up the filename for retrieval from NGAS
+    # How can I get the uuid from the database?
+    params = {"file_id": filename_ngas}
+
+    # Connect to NGAS
+    resp_ngas = await session.get(url, params=params)
+
+    # Rudimentry error checking on the NGAS connection
+    if resp_ngas.status != 200:
+        raise aiohttp.web.HTTPServerError(reason="Error in connecting to NGAS server")
+
+    # Open the file for writing
+    async with aiofiles.open(filename_local, 'wb') as fd:
+        # Connect to the NGAS server and download the file
+        async for chunk in resp_ngas.content.iter_chunked(io.DEFAULT_BUFFER_SIZE):
+            if chunk:
+                await fd.write(chunk)
+
 
 async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_local):
 
@@ -216,7 +241,7 @@ async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_loc
                   "mime_type": "application/octet-stream"}
 
         # The URL to contact the NGAS server
-        url="http://"+str(hostname)+":"+str(port)+"/ARCHIVE"
+        url='http://{hostname}:{port}/ARCHIVE'
 
         # Make sure a the file exists
         if filename_local is None or not os.path.isfile(filename_local):

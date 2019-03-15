@@ -2,10 +2,8 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="e9ffbe0f-d2d7-412d-b911-17e9f546c20b" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_simple.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_simple.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -39,8 +37,8 @@
       <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="338">
-              <caret line="323" column="28" selection-start-line="323" selection-start-column="28" selection-end-line="323" selection-end-column="28" />
+            <state relative-caret-position="422">
+              <caret line="179" lean-forward="true" selection-start-line="179" selection-end-line="179" />
               <folding>
                 <element signature="e#964#973#0" expanded="true" />
               </folding>
@@ -51,8 +49,11 @@
       <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/pyvospace/core/model.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="-25">
-              <caret line="23" column="11" lean-forward="true" selection-start-line="23" selection-start-column="11" selection-end-line="23" selection-end-column="11" />
+            <state relative-caret-position="315">
+              <caret line="55" lean-forward="true" selection-start-line="55" selection-end-line="55" />
+              <folding>
+                <element signature="e#964#973#0" expanded="true" />
+              </folding>
             </state>
           </provider>
         </entry>
@@ -94,8 +95,8 @@
       <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="98">
-              <caret line="208" column="84" lean-forward="true" selection-start-line="208" selection-end-line="208" selection-end-column="84" />
+            <state relative-caret-position="132">
+              <caret line="207" column="86" lean-forward="true" selection-start-line="207" selection-start-column="10" selection-end-line="207" selection-end-column="86" />
             </state>
           </provider>
         </entry>
@@ -119,15 +120,16 @@
       <find>root_dir</find>
       <find>stagin_dir</find>
       <find>delete</find>
-      <find>nodes</find>
       <find>walk</find>
       <find>id</find>
       <find>Node</find>
       <find>size</find>
       <find>uuid</find>
-      <find>send_stre</find>
       <find>filename_ngas</find>
       <find>staging_dir</find>
+      <find>nodes</find>
+      <find>send_stre</find>
+      <find>mkdir</find>
     </findStrings>
   </component>
   <component name="Git.Settings">
@@ -137,17 +139,18 @@
     <option name="CHANGED_PATHS">
       <list>
         <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/auth.py" />
-        <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" />
         <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" />
         <option value="$PROJECT_DIR$/test/test_ngas/test_simple.py" />
         <option value="$PROJECT_DIR$/temptest/test_yield.py" />
+        <option value="$PROJECT_DIR$/pyvospace/core/model.py" />
+        <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" />
         <option value="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" />
       </list>
     </option>
   </component>
   <component name="ProjectFrameBounds">
-    <option name="x" value="-90" />
-    <option name="y" value="48" />
+    <option name="x" value="17" />
+    <option name="y" value="27" />
     <option name="width" value="1313" />
     <option name="height" value="872" />
   </component>
@@ -295,10 +298,10 @@
     <servers />
   </component>
   <component name="ToolWindowManager">
-    <frame x="-90" y="48" width="1313" height="872" extended-state="0" />
+    <frame x="17" y="27" width="1313" height="872" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.23297213" />
+      <window_info content_ui="combo" id="Project" order="0" weight="0.23297213" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
       <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
@@ -415,20 +418,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/pyvospace/core/model.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="-25">
-          <caret line="23" column="11" lean-forward="true" selection-start-line="23" selection-start-column="11" selection-end-line="23" selection-end-column="11" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="98">
-          <caret line="208" column="84" lean-forward="true" selection-start-line="208" selection-end-line="208" selection-end-column="84" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/test/test_ngas/test_base.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="509">
@@ -436,10 +425,27 @@
         </state>
       </provider>
     </entry>
+    <entry file="file://$PROJECT_DIR$/pyvospace/core/model.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="315">
+          <caret line="55" lean-forward="true" selection-start-line="55" selection-end-line="55" />
+          <folding>
+            <element signature="e#964#973#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="132">
+          <caret line="207" column="86" lean-forward="true" selection-start-line="207" selection-start-column="10" selection-end-line="207" selection-end-column="86" />
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="338">
-          <caret line="323" column="28" selection-start-line="323" selection-start-column="28" selection-end-line="323" selection-end-column="28" />
+        <state relative-caret-position="422">
+          <caret line="179" lean-forward="true" selection-start-line="179" selection-end-line="179" />
           <folding>
             <element signature="e#964#973#0" expanded="true" />
           </folding>
