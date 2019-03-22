@@ -27,7 +27,7 @@ from aiohttp import web
 from pyvospace.core.model import *
 from pyvospace.server import set_fuzz, set_busy_fuzz
 from pyvospace.server.spaces.ngas.storage.ngas_storage import NGASStorageServer
-from test.test_base import TestBase
+from test_base import TestBase
 
 
 class TestPushPull(TestBase):

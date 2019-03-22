@@ -20,8 +20,10 @@
 #    MA 02111-1307  USA
 
 import json
+import numpy as np
 
 from contextlib import suppress
+import aiohttp
 from aiohttp_security import setup as setup_security
 from aiohttp_security import SessionIdentityPolicy
 from aiohttp_session import setup as setup_session
@@ -112,6 +114,7 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
 
     async def shutdown(self):
         await super().shutdown()
+        await self.ngas_session.close()
 
     @classmethod
     async def create(cls, cfg_file, *args, **kwargs):

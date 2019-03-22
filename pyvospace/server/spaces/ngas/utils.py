@@ -28,6 +28,8 @@ import shutil
 import tarfile
 import urllib
 
+import pdb
+
 from pathlib import Path
 from aiofiles.os import stat
 from aiohttp import web
@@ -210,7 +212,7 @@ async def recv_file_from_ngas(session, hostname, port, filename_ngas, filename_l
     """Get a single file from NGAS and put it into filename_local"""
 
     # The URL to contact the NGAS server
-    url = 'http://{hostname}:{port}/ARCHIVE'
+    url = f'http://{hostname}:{port}/RETRIEVE'
 
     # Make up the filename for retrieval from NGAS
     # How can I get the uuid from the database?
@@ -233,6 +235,8 @@ async def recv_file_from_ngas(session, hostname, port, filename_ngas, filename_l
 
 async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_local):
 
+    #pdb.set_trace()
+
     """Send a single file to an NGAS server"""
     try:
 
@@ -241,7 +245,7 @@ async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_loc
                   "mime_type": "application/octet-stream"}
 
         # The URL to contact the NGAS server
-        url='http://{hostname}:{port}/ARCHIVE'
+        url=f'http://{hostname}:{port}/ARCHIVE'
 
         # Make sure a the file exists
         if filename_local is None or not os.path.isfile(filename_local):
