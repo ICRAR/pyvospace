@@ -40,6 +40,7 @@ from pyvospace.server.spaces.ngas.auth import DBUserAuthentication, DBUserNodeAu
 from pyvospace.core.exception import VOSpaceError
 
 import pdb
+import traceback
 
 
 ACCEPTS_VIEWS = {
@@ -176,17 +177,30 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         #    await touch(m_path)
 
     async def delete_storage_node(self, node : Node):
-        # Need to implement this?
-        raise NotImplementedError()
-#        m_path = f"{self.root_dir}/{node.path}"
-#        if node.node_type == NodeType.ContainerNode:
-#            # The directory should always exists unless
-#            # it has been deleted under us.
-#            await rmtree(m_path)
-#        else:
-#            # File may or may not exist as the user may not have upload
-#            if await exists(m_path):
-#                await remove(m_path)
+        """Remove a node that in the NGAS database"""
+
+        # Walk over nodes and remove all leaf nodes
+        for temp_node in node.walk(node):
+            if temp_node.node_type == NodeType.ContainerNode:
+                pass
+            else:
+                try:
+                    # Make up the NGAS filename
+                    filename_ngas=f'{os.path.basename(temp_node.path)}_{temp_node.id}'
+
+                    # Submit a post request in a try loop
+                    params = {"file_id": filename_ngas}
+
+                    # The URL to contact the NGAS server
+                    url = f'http://{self.ngas_hostname}:{self.ngas_port}/CACHEDEL'
+
+                    # Post a delete on the file using cachedel
+                    resp = await self.ngas_session.post(url, params=params)
+
+                    # Do we check for errors?
+
+                except Exception as e:
+                    traceback.print_exc()
 
     async def get_transfer_protocols(self, job: UWSJob) -> List[Protocol]:
         new_protocols = []
