@@ -27,6 +27,7 @@ import aiofiles
 import shutil
 import tarfile
 import urllib
+from datetime import datetime
 
 import pdb
 
@@ -77,6 +78,20 @@ class ControlledReader:
             buffer = await self._content.readexactly(bytes_to_read)
             self._bytes_read+=bytes_to_read
             return buffer
+
+def convert_to_epoch_seconds(date):
+    # Convert a specific date string or date object to a number of seconds since
+    # the UNIX epoch.
+    if isinstance(date, str):
+        dt = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%f")
+    elif isinstance(date, datetime.date):
+        dt=date
+    else:
+        return None
+
+    # Get the number of seconds since the UNIX epoch.
+    seconds=str(int((dt - datetime(1970, 1, 1)).total_seconds()))
+    return seconds
 
 def copytree(src, dst, symlinks=False, ignore=None):
     if not os.path.exists(dst):

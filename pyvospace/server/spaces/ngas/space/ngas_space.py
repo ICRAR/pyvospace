@@ -108,7 +108,12 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
 
         setup_security(self,
                        SessionIdentityPolicy(),
-                       DBUserNodeAuthorizationPolicy(self['space_name'], self['db_pool'], self.root_dir))
+                       DBUserNodeAuthorizationPolicy(self['space_name'],
+                                                     self['db_pool'],
+                                                     self.root_dir,
+                                                     self.ngas_hostname,
+                                                     self.ngas_port,
+                                                     self.ngas_session))
 
         self.router.add_route('POST', '/login', self.authentication.login, name='login')
         self.router.add_route('POST', '/logout', self.authentication.logout, name='logout')
@@ -197,7 +202,7 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
                     # Post a delete on the file using cachedel
                     resp = await self.ngas_session.post(url, params=params)
 
-                    # Do we check for errors?
+                    # Do we check for errors? Ask Dave
 
                 except Exception as e:
                     traceback.print_exc()

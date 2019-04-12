@@ -111,8 +111,12 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         # Does this need to be different?
         setup_security(self,
                        SessionIdentityPolicy(),
-                       DBUserNodeAuthorizationPolicy(self.name, self.db_pool, self.root_dir))
-
+                       DBUserNodeAuthorizationPolicy(   self.name,
+                                                        self.db_pool,
+                                                        self.root_dir,
+                                                        self.ngas_hostname,
+                                                        self.ngas_port,
+                                                        self.ngas_session))
 
     @classmethod
     async def create(cls, cfg_file, *args, **kwargs):
