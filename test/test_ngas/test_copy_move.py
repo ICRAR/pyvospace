@@ -22,7 +22,7 @@
 import unittest
 
 from pyvospace.core.model import *
-from test.test_base import TestBase
+from test_base import TestBase
 
 
 class TestCopyMove(TestBase):

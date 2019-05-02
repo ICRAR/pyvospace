@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 from xml.etree.ElementTree import tostring
 
-from test.test_base import TestBase
+from test_base import TestBase
 from pyvospace.core.model import *
 
 

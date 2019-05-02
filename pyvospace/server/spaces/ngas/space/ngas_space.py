@@ -21,6 +21,7 @@
 
 import json
 import numpy as np
+import os
 
 from contextlib import suppress
 import aiohttp
@@ -193,16 +194,25 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
                     # Make up the NGAS filename
                     filename_ngas=f'{os.path.basename(temp_node.path)}_{temp_node.id}'
 
-                    # Submit a post request in a try loop
-                    params = {"file_id": filename_ngas}
+                    # Get the details of all files in the NGAS server with this query
+                    params = {"query": "files_like", "like": filename_ngas, "format": "json"}
+                    url = f'http://{self.ngas_hostname}:{self.ngas_port}/QUERY'
+                    resp = await self.ngas_session.get(url, params=params)
+                    lines = await resp.content.read()
 
-                    # The URL to contact the NGAS server
-                    url = f'http://{self.ngas_hostname}:{self.ngas_port}/CACHEDEL'
+                    # List of file entries in JSON format
+                    file_entries = json.loads(lines)
 
-                    # Post a delete on the file using cachedel
-                    resp = await self.ngas_session.post(url, params=params)
+                    # Loop through each file entry and delete it from the server
+                    for file in file_entries:
 
-                    # Do we check for errors? Ask Dave
+                        if ("file_id" in file) and (file["file_id"] == filename_ngas):
+                            params = {"file_id": file["file_id"], "disk_id": file["disk_id"], "file_version": file["file_version"]}
+                            url = f'http://{self.ngas_hostname}:{self.ngas_port}/CACHEDEL'
+                            resp = await self.ngas_session.get(url, params=params)
+
+                            if (resp.status != 200):
+                                raise aiohttp.web.HTTPServerError(reason=f"File {filename_ngas} not deleted properly from NGAS server")
 
                 except Exception as e:
                     traceback.print_exc()

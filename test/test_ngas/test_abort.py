@@ -28,7 +28,7 @@ from contextlib import suppress
 from pyvospace.core.model import *
 from pyvospace.server import set_fuzz, set_fuzz01, wait_fuzz01
 from pyvospace.server.spaces.ngas.storage.ngas_storage import NGASStorageServer
-from test.test_base import TestBase
+from test_base import TestBase
 
 
 class TestAbort(TestBase):
@@ -40,7 +40,7 @@ class TestAbort(TestBase):
 
         self.ngas_runner = web.AppRunner(ngas_server)
         self.loop.run_until_complete(self.ngas_runner.setup())
-        self.ngas_site = web.TCPSite(self.ngas_runner, 'localhost', 8081)
+        self.ngas_site = web.TCPSite(self.ngas_runner, 'localhost', 8083)
         self.loop.run_until_complete(self.ngas_site.start())
 
     async def _setup(self):

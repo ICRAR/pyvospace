@@ -39,7 +39,7 @@ class TestPushPull(TestBase):
 
         self.ngas_runner = web.AppRunner(ngas_server)
         self.loop.run_until_complete(self.ngas_runner.setup())
-        self.ngas_site = web.TCPSite(self.ngas_runner, 'localhost', 8081)
+        self.ngas_site = web.TCPSite(self.ngas_runner, 'localhost', 8083)
         self.loop.run_until_complete(self.ngas_site.start())
 
     async def _setup(self):
@@ -184,7 +184,7 @@ class TestPushPull(TestBase):
             # Job that is not in the correct phase
             # This means that the node is not yet associated with the job.
             # It gets associated when the job is run.
-            await self.push_to_space(f'http://localhost:8081/vospace/pushToVoSpace/{job.job_id}',
+            await self.push_to_space(f'http://localhost:8083/vospace/pushToVoSpace/{job.job_id}',
                                      '/tmp/datafile.dat', expected_status=400)
 
             # Get transfer details, should be in invalid state because its not Executing
@@ -197,11 +197,11 @@ class TestPushPull(TestBase):
             end = transfer.protocols[0].endpoint.url
 
             # badly formed job id
-            await self.push_to_space('http://localhost:8081/vospace/pushToVoSpace/1234',
+            await self.push_to_space('http://localhost:8083/vospace/pushToVoSpace/1234',
                                      '/tmp/datafile.dat', expected_status=400)
 
             # job that doesn't exist
-            await self.push_to_space('http://localhost:8081/vospace/pushToVoSpace/1324a40b-4c6a-453b-a756-cd41ca4b7408',
+            await self.push_to_space('http://localhost:8083/vospace/pushToVoSpace/1324a40b-4c6a-453b-a756-cd41ca4b7408',
                                      '/tmp/datafile.dat', expected_status=404)
 
             tasks = [

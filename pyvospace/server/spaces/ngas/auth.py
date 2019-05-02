@@ -23,7 +23,7 @@ import os
 import json
 
 # XML passing
-import ElementTree
+import xml.etree.ElementTree as ElementTree
 from datetime import datetime
 
 from aiohttp import helpers, web
@@ -34,6 +34,7 @@ from passlib.hash import pbkdf2_sha256
 from pyvospace.core.model import PushToSpace, Property, NodeType
 from .utils import statvfs, lstat, convert_to_epoch_seconds
 import traceback
+import pdb
 
 PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
                  'ivo://ivoa.net/vospace/core#creator',
@@ -129,6 +130,9 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
                 # Check if we are using container types
                 if node.node_type != NodeType.ContainerNode:
 
+                    #pdb.set_trace()
+                    # Getting a node that doesn't exist?
+
                     # Do we work with container types?
                     ngas_filename=f"{os.path.basename(node.path)}_{node.id}"
 
@@ -142,10 +146,14 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
                     # Read all the response content and parse in as XML
                     lines = await resp.content.read()
 
+                    #print(lines)
+
                     xmltree=ElementTree.fromstring(lines)
 
                     # Create a dictionary of all XML elements in the tree
                     elements={t.tag : t for t in xmltree.iter()}
+
+                    #print(elements)
 
                     filestatus=elements["FileStatus"]
                     diskstatus=elements["DiskStatus"]

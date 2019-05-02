@@ -27,7 +27,8 @@ import aiofiles
 import shutil
 import tarfile
 import urllib
-from datetime import datetime
+import datetime
+import xml.etree.ElementTree as ElementTree
 
 import pdb
 
@@ -83,14 +84,14 @@ def convert_to_epoch_seconds(date):
     # Convert a specific date string or date object to a number of seconds since
     # the UNIX epoch.
     if isinstance(date, str):
-        dt = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%f")
+        dt = datetime.datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%f")
     elif isinstance(date, datetime.date):
         dt=date
     else:
         return None
 
     # Get the number of seconds since the UNIX epoch.
-    seconds=str(int((dt - datetime(1970, 1, 1)).total_seconds()))
+    seconds=str(int((dt - datetime.datetime(1970, 1, 1)).total_seconds()))
     return seconds
 
 def copytree(src, dst, symlinks=False, ignore=None):
@@ -257,6 +258,7 @@ async def send_file_to_ngas(session, hostname, port, filename_ngas, filename_loc
 
         # Create parameters for the upload
         params = {"filename": filename_ngas,
+                  "file_id" : filename_ngas,
                   "mime_type": "application/octet-stream"}
 
         # The URL to contact the NGAS server
@@ -294,6 +296,7 @@ async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, p
 
         # Create parameters for the upload
         params = {"filename": filename_ngas,
+                  "file_id" : filename_ngas,
                   "mime_type": "application/octet-stream"}
 
         # The URL to contact the NGAS server
@@ -321,10 +324,25 @@ async def send_stream_to_ngas(request: aiohttp.web.Request, session, hostname, p
                                     data=reader,
                                     headers={"content-length" : str(content_length)})
 
-        if resp.status!=200:
-            raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+        # Handle the response in a specific way, as requested
+        if resp.status==200:
+            # Dig into the XML response for output, we are looking for SUCCESS
+            feedback = await resp.text()
+            xmltree = ElementTree.fromstring(feedback)
 
-        return(content_length)
+            # Create a dictionary of all XML elements in the response
+            elements = {t.tag: t for t in xmltree.iter()}
+            # Status of the NGAS transaction
+            status=elements["Status"].get("Status")
+
+            if status=="SUCCESS":
+                return(content_length)
+            else:
+                raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+                return(None)
+        else:
+            raise aiohttp.ServerConnectionError("Error received in connecting to NGAS server")
+            return(None)
 
     except Exception as e:
         # Do we do anything here?
