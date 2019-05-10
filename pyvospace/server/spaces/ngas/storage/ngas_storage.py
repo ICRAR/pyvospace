@@ -283,15 +283,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         else:
             content_length=None
 
-        #pdb.set_trace()
-
         if job.transfer.target.node_type == NodeType.ContainerNode:
-            #raise NotImplementedError("Container support coming soon")
-            # Stream to file
-            # Unpack
-            # Check if nodes already exist in the tree
-            # Walk the tree
-            # Upload every file
 
             # Incoming content
             reader=request.content
@@ -405,80 +397,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                 traceback.print_exception(e, SyntaxError, None)
                 raise e
 
-
-            # # Stream on the content
-            # reader = request.content
-            # path_tree = job.transfer.target.path
-            # # this UUID is only used for temporary staging file
-            # target_id = uuid.uuid4()
-            # # Base name of the file
-            # base_name = f'{target_id}_{os.path.basename(path_tree)}'
-            # # File name without UUID?
-            # real_file_name = f'{self.root_dir}/{path_tree}'
-            # # File name with UUID
-            # stage_file_name = f'{self.staging_dir}/{base_name}'
-            # try:
-            #     # Read from buffer to temporary file
-            #     size = 0
-            #     async with aiofiles.open(stage_file_name, 'wb') as f:
-            #         while True:
-            #             buffer = await reader.read(io.DEFAULT_BUFFER_SIZE)
-            #             if not buffer:
-            #                 break
-            #             await fuzz()
-            #             await f.write(buffer)
-            #             size += len(buffer)
-            #
-            #     if job.transfer.target.node_type == NodeType.ContainerNode:
-            #         # Check if the upload is a tar file?
-            #         # What do I do about directory structures?
-            #         if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
-            #             return web.Response(status=400, text=f'Unsupported Container View. '
-            #                                                  f'View: {job.transfer.view}')
-            #         extract_dir = f'{self.staging_dir}/{target_id}/{path_tree}/'
-            #         try:
-            #
-            #             loop = asyncio.get_event_loop()
-            #             # Untarring process
-            #             root_node = await loop.run_in_executor(self.process_executor,
-            #                                                    untar,
-            #                                                    stage_file_name,
-            #                                                    extract_dir,
-            #                                                    job.transfer.target,
-            #                                                    self.storage)
-            #             async with job.transaction() as tr:
-            #                 node = tr.target
-            #                 node.size = size
-            #                 node.storage = self.storage
-            #                 node.nodes = root_node.nodes
-            #                 await asyncio.shield(node.save())
-            #                 await asyncio.shield(copy(extract_dir, real_file_name))
-            #         finally:
-            #             with suppress(Exception):
-            #                 await asyncio.shield(rmtree(f'{self.staging_dir}/{target_id}'))
-            #     else:
-            #         async with job.transaction() as tr:
-            #             node = tr.target # get the target node that is associated with the data
-            #             node.size = size # set the size
-            #             node.storage = self.storage # set the storage back end so it can be found
-            #             await asyncio.shield(fuzz01(2))
-            #             await asyncio.shield(node.save()) # save details to db
-            #             await asyncio.shield(move(stage_file_name, real_file_name)) # move in single transaction
-            #
-            #     # http OK?
-            #     return web.Response(status=200)
-            #
-            # except (asyncio.CancelledError, Exception):
-            #     # Handle a cancellation
-            #     raise
-            # finally:
-            #     # Remove stage file name no matter what
-            #     with suppress(Exception):
-            #         await asyncio.shield(remove(stage_file_name))
-
         else:
-
-            # pdb.set_trace()
 
             # Get the UUID for the node
             id = job.transfer.target.id

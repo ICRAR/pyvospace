@@ -88,6 +88,40 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
             return None
         return results['username']
 
+    def make_dummy_metadata(self, node):
+        # Special function to make dummy metadata for nodes that are in the
+        # database but not necessarily in NGAS
+        if node is not None:
+            # Set zero size and use now as the date?
+            st_size = 0
+
+            # Set creation and modification time to now?
+            st_mtime = convert_to_epoch_seconds(datetime.today())
+            st_ctime = convert_to_epoch_seconds(datetime.today())
+
+            # Make a zeroed out dictionary for now
+            struct_statvfs_dict = dict((key, 0) for key in ('f_bavail', 'f_bfree',
+                                                            'f_blocks', 'f_bsize',
+                                                            'f_favail', 'f_ffree',
+                                                            'f_files', 'f_flag',
+                                                            'f_frsize', 'f_namemax'))
+
+            prop_length = Property('ivo://ivoa.net/vospace/core#length', st_size)
+            prop_btime = Property('ivo://ivoa.net/vospace/core#btime', st_mtime)
+            prop_ctime = Property('ivo://ivoa.net/vospace/core#ctime', st_ctime)
+            prop_mtime = Property('ivo://ivoa.net/vospace/core#mtime', st_mtime)
+            prop_statfs = Property('ivo://icrar.org/vospace/core#statfs', json.dumps(struct_statvfs_dict))
+
+            node.add_property(prop_length)
+            node.add_property(prop_btime)
+            node.add_property(prop_ctime)
+            node.add_property(prop_mtime)
+            node.add_property(prop_statfs)
+
+            return True
+        else:
+            return False
+
     async def permits(self, identity, permission, context=None):
         async with self.db_pool.acquire() as conn:
             user = await conn.fetchrow("select * from users "
@@ -130,9 +164,6 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
                 # Check if we are using container types
                 if node.node_type != NodeType.ContainerNode:
 
-                    #pdb.set_trace()
-                    # Getting a node that doesn't exist?
-
                     # Do we work with container types?
                     ngas_filename=f"{os.path.basename(node.path)}_{node.id}"
 
@@ -146,17 +177,15 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
                     # Read all the response content and parse in as XML
                     lines = await resp.content.read()
 
-                    #print(lines)
-
                     xmltree=ElementTree.fromstring(lines)
 
                     # Create a dictionary of all XML elements in the tree
                     elements={t.tag : t for t in xmltree.iter()}
 
-                    #print(elements)
+                    if resp.status!=200 or "FileStatus" not in elements:
+                        return (self.make_dummy_metadata(node))
 
                     filestatus=elements["FileStatus"]
-                    diskstatus=elements["DiskStatus"]
 
                     # File size
                     st_size = int(filestatus.get('FileSize'))
@@ -193,33 +222,7 @@ class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
                     return True
 
                 else:
-                    # Set zero size and use now as the date?
-                    st_size=0
-
-                    # Set creation and modification time to now?
-                    st_mtime=convert_to_epoch_seconds(datetime.today())
-                    st_ctime=convert_to_epoch_seconds(datetime.today())
-
-                    # Make a zeroed out dictionary for now
-                    struct_statvfs_dict = dict((key, 0) for key in ('f_bavail', 'f_bfree',
-                                                                    'f_blocks', 'f_bsize',
-                                                                    'f_favail', 'f_ffree',
-                                                                    'f_files',  'f_flag',
-                                                                    'f_frsize', 'f_namemax'))
-
-                    prop_length = Property('ivo://ivoa.net/vospace/core#length', st_size)
-                    prop_btime = Property('ivo://ivoa.net/vospace/core#btime', st_mtime)
-                    prop_ctime = Property('ivo://ivoa.net/vospace/core#ctime', st_ctime)
-                    prop_mtime = Property('ivo://ivoa.net/vospace/core#mtime', st_mtime)
-                    prop_statfs = Property('ivo://icrar.org/vospace/core#statfs', json.dumps(struct_statvfs_dict))
-
-                    node.add_property(prop_length)
-                    node.add_property(prop_btime)
-                    node.add_property(prop_ctime)
-                    node.add_property(prop_mtime)
-                    node.add_property(prop_statfs)
-
-                    return True
+                    return self.make_dummy_metadata(node)
 
             except Exception as e:
                 traceback.print_exc()

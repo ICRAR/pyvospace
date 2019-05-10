@@ -24,7 +24,6 @@ import unittest
 from pyvospace.core.model import *
 from test_base import TestBase
 
-
 class TestCopyMove(TestBase):
 
     def tearDown(self):

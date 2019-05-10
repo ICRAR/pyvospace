@@ -164,7 +164,8 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         #await move(s_path, d_path)
 
     async def copy_storage_node(self, src, dest):
-        raise NotImplementedError
+        #raise NotImplementedError
+        pass
         #s_path = f"{self.root_dir}/{src.path}"
         #d_path = f"{self.root_dir}/{dest.path}"
         #await copy(s_path, d_path)

@@ -26,6 +26,7 @@ from xml.etree.ElementTree import tostring
 
 from test_base import TestBase
 from pyvospace.core.model import *
+import pdb
 
 
 class TestCreate(TestBase):
