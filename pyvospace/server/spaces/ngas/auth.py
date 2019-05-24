@@ -32,9 +32,8 @@ from aiohttp_security import remember, forget
 from passlib.hash import pbkdf2_sha256
 
 from pyvospace.core.model import PushToSpace, Property, NodeType
-from .utils import statvfs, lstat, convert_to_epoch_seconds
+from pyvospace.server.spaces.ngas.utils import convert_to_epoch_seconds
 import traceback
-import pdb
 
 PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
                  'ivo://ivoa.net/vospace/core#creator',

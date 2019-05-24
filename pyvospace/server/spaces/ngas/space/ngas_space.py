@@ -36,7 +36,7 @@ from pyvospace.core.model import Views, View, Protocols, \
     Node, NodeTextLookup, NodeType, Properties, Property, Protocol,\
     PushToSpace, PullFromSpace, HTTPGet, HTTPSGet, HTTPPut, HTTPSPut, Endpoint, SecurityMethod, UWSJob
 
-from pyvospace.server.spaces.ngas.utils import move, copy, mkdir, remove, rmtree, exists, touch
+from pyvospace.server.spaces.posix.utils import mkdir
 from pyvospace.server.spaces.ngas.auth import DBUserAuthentication, DBUserNodeAuthorizationPolicy
 from pyvospace.core.exception import VOSpaceError
 
@@ -95,8 +95,7 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
     async def setup_space(self):
         await super().setup(self)
 
-        # Needed?
-        #await mkdir(self.root_dir)
+        # Make the staging directory
         await mkdir(self.staging_dir)
 
         setup_session(self,
@@ -157,31 +156,16 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         return PROVIDES_VIEWS[NodeTextLookup[node.node_type]]
 
     async def move_storage_node(self, src, dest):
-        #raise NotImplementedError
+        # Files are not moved in NGAS
         pass
-        #s_path = f"{self.root_dir}/{src.path}"
-        #d_path = f"{self.root_dir}/{dest.path}"
-        #await move(s_path, d_path)
 
     async def copy_storage_node(self, src, dest):
-        #raise NotImplementedError
+        # Files are not copied in NGAS
         pass
-        #s_path = f"{self.root_dir}/{src.path}"
-        #d_path = f"{self.root_dir}/{dest.path}"
-        #await copy(s_path, d_path)
 
     async def create_storage_node(self, node: Node):
+        # Files are created when they are uploaded to NGAS
         pass
-        #m_path = f"{self.root_dir}/{node.path}"
-        # Remove what may be left over from a failed xfer.
-        # The only way this could happen if the storage server was
-        # shutdown forcibly during an upload leaving a partial file.
-        #with suppress(Exception):
-        #    await remove(m_path)
-        #if node.node_type == NodeType.ContainerNode:
-        #    await mkdir(m_path)
-        #else:
-        #    await touch(m_path)
 
     async def delete_storage_node(self, node : Node):
         """Remove a node that in the NGAS database"""

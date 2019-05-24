@@ -98,6 +98,17 @@ class TestPushPull(TestBase):
             pull_end = transfer.protocols[0].endpoint.url
             await self.pull_from_space(pull_end, '/tmp/download/')
 
+            # Do it again
+            transfer = await self.sync_transfer_node(push)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, test_file, expected_status=200)
+
+            # # Pull from leaf node
+            pull = PullFromSpace(node, [HTTPGet()])
+            transfer = await self.sync_transfer_node(pull)
+            pull_end = transfer.protocols[0].endpoint.url
+            await self.pull_from_space(pull_end, '/tmp/download/')
+            
             # Compare the two files
             result=filecmp.cmp(test_file, '/tmp/download/'+test_basename)
 
@@ -171,7 +182,13 @@ class TestPushPull(TestBase):
                                          view=View('ivo://ivoa.net/vospace/core#tar'),
                                          params=[Parameter("ivo://ivoa.net/vospace/core#length", 1234)])
 
+            #pdb.set_trace()
 
+            transfer = await self.sync_transfer_node(container_push)
+            put_end = transfer.protocols[0].endpoint.url
+            await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)
+
+            # Do it again
             transfer = await self.sync_transfer_node(container_push)
             put_end = transfer.protocols[0].endpoint.url
             await self.push_to_space(put_end, '/tmp/mytar.tar.gz', expected_status=200)

@@ -42,7 +42,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pyvospace.core.model import NodeType, View
 
 # Not sure if I need these
-from pyvospace.server.spaces.ngas.utils import mkdir, remove, send_file, move, copy, rmtree, tar, untar
+from pyvospace.server.spaces.posix.utils import mkdir, remove, send_file, rmtree, tar, untar
 from pyvospace.server.spaces.ngas.utils import send_stream_to_ngas, send_file_to_ngas, recv_file_from_ngas
 from pyvospace.server.storage import HTTPSpaceStorageServer
 from pyvospace.server import fuzz, fuzz01
@@ -59,8 +59,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
         # NGAS parameters section - assumes that NGAS servers (if more than one)
         # all point to the same storage, i.e they are federated
-        # Choose an NGAS server, initially at random,
-        # pdb.set_trace()
+        # Choose an NGAS server, initially at random
         self.ngas_servers=json.loads(self.config['Storage']['ngas_servers'])
         server_index=np.random.choice([n for n in range(0,len(self.ngas_servers))],1)[0]
         self.ngas_server=self.ngas_servers[server_index]
@@ -70,14 +69,10 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         self.ngas_port=int(self.ngas_server["port"])
         self.ngas_session = aiohttp.ClientSession()
 
-        # Do I need a root_dir, probably not.
+        # Do we need a root_dir, probably not.
         self.root_dir = self.parameters['root_dir']
 
-        #if not self.root_dir:
-            # Default way of raising an exception
-        #    raise Exception('root_dir not found.')
-
-        # Do I need a staging directory?
+        # We need a staging directory
         self.staging_dir = self.parameters['staging_dir']
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
@@ -131,10 +126,8 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
         if job.transfer.target.node_type == NodeType.ContainerNode:
 
-            #pdb.set_trace()
-
-            # Gather the files from NGAS, send to a directory,
-            # tar and send to client
+            # Download the files from NGAS to a directory,
+            # tar the directory and send to client
             # Should we implement a streaming creation of the tarfile?
 
             # Make a directory in staging area
@@ -160,9 +153,9 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                     # Make a directory in the node path
                     await mkdir(node_path)
                 else:
-                    # Make a local filename
-                    # Make an NGAS filename
+                    # Make the local filename
                     filename_local=node_path
+                    # Make the NGAS filename
                     filename_ngas=f'{os.path.basename(node_path)}_{node.id}'
 
                     # Fetch a file from NGAS
@@ -187,43 +180,9 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                 with suppress(Exception):
                     await asyncio.shield(rmtree(os.path.dirname(stage_dir)))
 
-
-            # Handling connection errors?
-
-            # root_dir = self.root_dir
-            # path_tree = job.transfer.target.path
-            # if job.transfer.target.node_type == NodeType.ContainerNode:
-            #     # Checking if request wants a tar file
-            #     if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
-            #         return web.Response(status=400, text=f'Unsupported Container View. '
-            #                                              f'View: {job.transfer.view}')
-            #
-            #     tar_file = f'{self.staging_dir}/{uuid.uuid4()}/{os.path.basename(path_tree)}.tar'
-            #     stage_path = f'{self.staging_dir}/{uuid.uuid4()}/{path_tree}'
-            #     real_path = f'{self.root_dir}/{path_tree}'
-            #     async with job.transaction(exclusive=False):
-            #         await copy(real_path, stage_path)
-            #
-            #     try:
-            #         # Tarring up the sources, I might need to ask the database for all
-            #         loop = asyncio.get_event_loop()
-            #         await loop.run_in_executor(self.process_executor, tar,
-            #                                    stage_path, tar_file, os.path.basename(path_tree))
-            #         return await send_file(request, os.path.basename(tar_file), tar_file)
-            #     finally:
-            #         with suppress(Exception):
-            #             await asyncio.shield(rmtree(os.path.dirname(tar_file)))
-            #         with suppress(Exception):
-            #             await asyncio.shield(rmtree(os.path.dirname(stage_path)))
-            # else:
-            #     file_path = f'{root_dir}/{path_tree}'
-            #     return await send_file(request, os.path.basename(path_tree), file_path)
-
         else:
 
-            #pdb.set_trace()
-
-            # Get the UUID on the transaction from the database
+            # Get the UUID on the node from the database
             id=job.transfer.target.id
 
             # Filename to be used with the NGAS object store
@@ -234,7 +193,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             url_ngas=f'http://{self.ngas_hostname}:{self.ngas_port}/RETRIEVE'
 
             # Make up the filename for retrieval from NGAS
-            # How can I get the uuid from the database?
             params={"file_id" : filename_ngas}
 
             # Connect to NGAS
@@ -267,17 +225,15 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
 
     async def upload(self, job: StorageUWSJob, request: aiohttp.web.Request):
-        # Upload file/s to the NGAS server
+        # Upload file or container contents from a client to the NGAS server
 
         # Get the path tree
         path_tree = job.transfer.target.path
         # Get the base filename
         base_name = os.path.basename(path_tree)
 
-        #pdb.set_trace()
-
         # Check for content length in the headers of the incoming request
-        # This will inform the user how we respond to the request
+        # This will inform how we respond to the request
         if 'content-length' in request.headers:
             content_length=request.headers['content-length']
         else:
@@ -285,7 +241,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
         if job.transfer.target.node_type == NodeType.ContainerNode:
 
-            # Incoming content
+            # Incoming client content
             reader=request.content
 
             # Temporary file to stage to
@@ -294,12 +250,11 @@ class NGASStorageServer(HTTPSpaceStorageServer):
             # Temporary UUID for staging the directory
             target_id = uuid.uuid4()
 
+            # Path to the top level directory of the node
             path_tree = job.transfer.target.path
 
             try:
-                # Read from buffer to temporary file
-                #pdb.set_trace()
-
+                # Read from incoming client buffer to temporary file
                 size = 0
                 async with aiofiles.open(stage_file_name, 'wb') as f:
                     while True:
@@ -311,15 +266,11 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                             await f.write(buffer)
                             size += len(buffer)
 
-                #pdb.set_trace()
-
                 if job.transfer.view != View('ivo://ivoa.net/vospace/core#tar'):
                     return web.Response(status=400, text=f'Unsupported Container View. '
                                                          f'View: {job.transfer.view}')
 
-                #pdb.set_trace()
-
-                # Path to extract to
+                # Directory to extract to
                 extract_dir = os.path.normpath(f'{self.staging_dir}/{target_id}')
 
                 try:
@@ -330,7 +281,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                     root_node = await loop.run_in_executor(self.process_executor,
                                                            untar,
                                                            stage_file_name,
-                                                           f'{extract_dir}{path_tree}',
+                                                           f'{extract_dir}/{path_tree}',
                                                            job.transfer.target,
                                                            self.storage)
 
@@ -338,8 +289,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                     # Walk the tree and upload each file to an NGAS flat object store
                     # Keep the ID's of old nodes through checking
                     oldnode=job.transfer.target
-
-                    #pdb.set_trace()
 
                     # Copy old id's across and upload to NGAS
 
@@ -351,15 +300,15 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                     # Loop over new nodes
                     for new_node in new_nodes:
                         if new_node.path in old_node_paths:
+                            # Get the index of the old node
                             index_old=old_node_paths.index(new_node.path)
                             old_node=old_nodes[index_old]
-                            # Copy ID's
+                            # Copy the ID from the old node to the new node
                             new_node.id=old_node.id
 
                         if new_node.node_type != NodeType.ContainerNode:
                             filename_local=os.path.normpath(f'{extract_dir}/{new_node.path}')
                             filename_ngas=f'{os.path.basename(new_node.path)}_{new_node.id}'
-
                             nbytes_transfer = await send_file_to_ngas(self.ngas_session,
                                                         self.ngas_hostname,
                                                         self.ngas_port,
@@ -368,10 +317,11 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                             new_node.size=nbytes_transfer
                         else:
                             # We have a container type, it doesn't contribute to the upload
+                            # so make it zero size
                             new_node.size=0
 
 
-                    # Now notify the database
+                    # Now update the database
                     async with job.transaction() as tr:
                         #pdb.set_trace()
                         node = tr.target
@@ -380,8 +330,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                         # This saves all nodes under the root node
                         node.nodes = root_node.nodes
                         await asyncio.shield(node.save())
-                        # real_file_name = f'{self.root_dir}/{path_tree}'
-                        #await asyncio.shield(copy(extract_dir, real_file_name))
                         # Let the client know the transaction was successful
                         return web.Response(status=200)
 
@@ -408,9 +356,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                 nbytes_transfer = await send_stream_to_ngas(request, self.ngas_session, self.ngas_hostname,
                                                             self.ngas_port, ngas_filename, self.logger)
             else:
-                # Send the stream to a file and upload it
-                #pdb.set_trace()
-
                 # Make up a uuid for the staging of a file
                 reader=request.content
 
@@ -432,8 +377,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                         else:
                             break
 
-                #pdb.set_trace()
-
                 # Now the file is on disk, send it
                 nbytes_transfer = await send_file_to_ngas(self.ngas_session, self.ngas_hostname, self.ngas_port,
                                                         ngas_filename, stage_file_name)
@@ -445,7 +388,7 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
             # Inform the database of new data if size
             async with job.transaction() as tr:
-                if nbytes_transfer:
+                if nbytes_transfer is not None:
                     node = tr.target # get the target node that is associated with the data
                     node.size = nbytes_transfer # set the size
                     node.storage = self.storage # set the storage back end so it can be found
