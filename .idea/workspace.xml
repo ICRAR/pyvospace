@@ -1,15 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="e9ffbe0f-d2d7-412d-b911-17e9f546c20b" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/auth.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/space/ngas_space.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/storage/ngas_storage.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/temptest/test_cachedel.py" beforeDir="false" afterPath="$PROJECT_DIR$/temptest/test_cachedel.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_base.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_base.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/test_ngas/test_simple.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_ngas/test_simple.py" afterDir="false" />
-    </list>
+    <list default="true" id="e9ffbe0f-d2d7-412d-b911-17e9f546c20b" name="Default Changelist" comment="" />
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -43,7 +35,7 @@
         <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py">
           <provider selected="true" editor-type-id="text-editor">
             <state relative-caret-position="209">
-              <caret line="30" column="16" lean-forward="true" selection-start-line="30" selection-start-column="16" selection-end-line="30" selection-end-column="16" />
+              <caret line="30" column="6" selection-start-line="30" selection-start-column="6" selection-end-line="30" selection-end-column="6" />
             </state>
           </provider>
         </entry>
@@ -185,11 +177,6 @@
               <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
               <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
               <item name="scripts" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
-              <item name="pyvospace" type="462c0819:PsiDirectoryNode" />
-              <item name="temptest" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
               <item name="pyvospace" type="b2602c69:ProjectViewProjectNode" />
@@ -528,7 +515,7 @@
     <entry file="file://$PROJECT_DIR$/pyvospace/server/spaces/ngas/utils.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="209">
-          <caret line="30" column="16" lean-forward="true" selection-start-line="30" selection-start-column="16" selection-end-line="30" selection-end-column="16" />
+          <caret line="30" column="6" selection-start-line="30" selection-start-column="6" selection-end-line="30" selection-end-column="6" />
         </state>
       </provider>
     </entry>
