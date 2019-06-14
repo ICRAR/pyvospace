@@ -69,9 +69,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
         self.ngas_port=int(self.ngas_server["port"])
         self.ngas_session = aiohttp.ClientSession()
 
-        # Do we need a root_dir, probably not.
-        self.root_dir = self.parameters['root_dir']
-
         # We need a staging directory
         self.staging_dir = self.parameters['staging_dir']
         if not self.staging_dir:
@@ -91,9 +88,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
     async def setup(self):
         await super().setup()
 
-        # await mkdir(self.root_dir)
-        # Probably don't need to make the root directory
-
         # We do need a staging directory
         await mkdir(self.staging_dir)
 
@@ -108,7 +102,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
                        SessionIdentityPolicy(),
                        DBUserNodeAuthorizationPolicy(   self.name,
                                                         self.db_pool,
-                                                        self.root_dir,
                                                         self.ngas_hostname,
                                                         self.ngas_port,
                                                         self.ngas_session))
@@ -121,7 +114,6 @@ class NGASStorageServer(HTTPSpaceStorageServer):
 
     async def download(self, job: StorageUWSJob, request: aiohttp.web.Request):
         """Download files from the NGAS server"""
-        root_dir = self.root_dir
         path_tree = job.transfer.target.path
 
         if job.transfer.target.node_type == NodeType.ContainerNode:

@@ -63,11 +63,10 @@ PROTECTED_URI = [#'ivo://ivoa.net/vospace/core#title',
 
 class DBUserNodeAuthorizationPolicy(AbstractAuthorizationPolicy):
 
-    def __init__(self, space_name, db_pool, root_dir, ngas_hostname, ngas_port, ngas_session):
+    def __init__(self, space_name, db_pool, ngas_hostname, ngas_port, ngas_session):
         super().__init__()
         self.space_name = space_name
         self.db_pool = db_pool
-        self.root_dir = root_dir
         self.ngas_hostname=ngas_hostname
         self.ngas_port=ngas_port
         self.ngas_session=ngas_session

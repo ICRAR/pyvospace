@@ -82,10 +82,6 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
         self.ngas_port=int(self.ngas_server["port"])
         self.ngas_session = aiohttp.ClientSession()
 
-        self.root_dir = self.storage_parameters['root_dir']
-        #if not self.root_dir:
-        #    raise Exception('root_dir not found.')
-
         self.staging_dir = self.storage_parameters['staging_dir']
         if not self.staging_dir:
             raise Exception('staging_dir not found.')
@@ -110,7 +106,6 @@ class NGASSpaceServer(SpaceServer, AbstractSpace):
                        SessionIdentityPolicy(),
                        DBUserNodeAuthorizationPolicy(self['space_name'],
                                                      self['db_pool'],
-                                                     self.root_dir,
                                                      self.ngas_hostname,
                                                      self.ngas_port,
                                                      self.ngas_session))
