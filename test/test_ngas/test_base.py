@@ -33,12 +33,13 @@ import xml.etree.ElementTree as ET
 import requests
 import socket
 import tarfile
+import pdb
 
 from aiohttp import web
 from urllib.parse import urlencode
 from passlib.hash import pbkdf2_sha256
 
-from pyvospace.server.spaces.posix import PosixSpaceServer
+from pyvospace.server.spaces.ngas.space.ngas_space import NGASSpaceServer
 from pyvospace.core.model import *
 
 
@@ -52,16 +53,16 @@ class TestBase(unittest.TestCase):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(None)
 
-        self.config_filename = 'test_vo.ini'
+        self.config_filename = 'test_vo_ngas.ini'
         config = configparser.ConfigParser()
         if not os.path.exists(self.config_filename):
             storage_details = json.dumps(
-                {'root_dir': '/tmp/posix/storage/',
-                 'staging_dir': '/tmp/posix/staging/'})
+                {'root_dir': '/tmp/ngas/storage/',
+                 'staging_dir': '/tmp/ngas/staging/'})
 
             config['Space'] = {'host': 'localhost',
-                               'port': 8080,
-                               'name': 'posix',
+                               'port': 8082,
+                               'name': 'ngas',
                                'uri': 'icrar.org',
                                'dsn': 'postgres://vos_user:vos_user@localhost:5435/vospace',
                                'parameters': '{}',
@@ -69,18 +70,20 @@ class TestBase(unittest.TestCase):
                                'domain': '',
                                'use_ssl': 0
                                }
-
-            config['Storage'] = {'name': 'posix',
+            print("running this")
+            config['Storage'] = {'name': 'ngas',
                                  'host': 'localhost',
-                                 'port': 8081,
+                                 'port': 8083,
                                  'parameters': storage_details,
-                                 'use_ssl': 0
-                                }
+                                 'use_ssl': 0,
+                                 'ngas_servers' : [{"hostname" : "localhost", "port" : 7777},
+                                                  {"hostname" : "localhost", "port" : 7777}]
+                                 }
 
             with open(self.config_filename, 'w') as conf:
                 config.write(conf)
 
-        self.app = self.loop.run_until_complete(PosixSpaceServer.create(self.config_filename))
+        self.app = self.loop.run_until_complete(NGASSpaceServer.create(self.config_filename))
         self.runner = web.AppRunner(self.app)
         self.loop.run_until_complete(self.runner.setup())
         if not hasattr(socket, 'SO_REUSEPORT'):
@@ -91,7 +94,7 @@ class TestBase(unittest.TestCase):
                            reuse_address=True, reuse_port=reuse_port)
         self.loop.run_until_complete(site.start())
 
-        user = ['test', pbkdf2_sha256.hash('test'), [], [], 'posix', True]
+        user = ['test', pbkdf2_sha256.hash('test'), [], [], 'ngas', True]
         self.loop.run_until_complete(self.create_user(self.app['db_pool'], *user))
         self.session = self.loop.run_until_complete(self._login('test', 'test'))
 
@@ -271,6 +274,14 @@ class TestBase(unittest.TestCase):
     async def push_to_space(self, url, file_path, expected_status=200):
         async with aiohttp.ClientSession(cookie_jar=self.session.cookie_jar) as session:
             async with session.put(url, data=self.file_sender(file_name=file_path)) as resp:
+                response = await resp.text()
+                self.assertEqual(resp.status, expected_status, msg=response)
+
+    async def push_to_space_with_content_length(self, url, file_path, expected_status=200):
+        async with aiohttp.ClientSession(cookie_jar=self.session.cookie_jar) as session:
+            async with session.put(url,
+                                    data=self.file_sender(file_name=file_path),
+                                    headers={'Content-Length': str(os.path.getsize(file_path))}) as resp:
                 response = await resp.text()
                 self.assertEqual(resp.status, expected_status, msg=response)
 
