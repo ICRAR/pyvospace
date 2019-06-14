@@ -12,7 +12,7 @@ This plugin provides a PyVOSpace implementation that uses an NGAS server as the 
 
 **Installation**
 
-For installation, including setting up the docker database instance, please see the main ICRAR PyVOSpace [documentation page](README.md).
+For installation, including setting up the docker database instance, please see the main ICRAR PyVOSpace [documentation page](https://github.com/ICRAR/pyvospace/blob/master/README.md).
 
 **Basic configuration**
 
